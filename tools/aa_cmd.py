@@ -32,13 +32,17 @@ from aa_lib import (  # noqa: E402
     create_opening,
     create_room,
     create_wall,
+    create_sheet,
+    export,
     merge_walls,
     normalize_around,
     openings_report,
     rooms_report,
     set_opening,
     set_room,
+    set_sheet,
     set_wall,
+    sheet_window,
     split_at_intersections,
 )
 
@@ -184,6 +188,35 @@ def main(argv: list[str] | None = None) -> int:
     p_rooms.add_argument("--table", default=None, help="在图上插入表格，给左下角 x,y")
     p_rooms.add_argument("--title", default="房间面积表")
 
+    p_sheet = sub.add_parser("sheet", help="图框 + 标题栏（GB/T 14689 幅面），默认自动居中排图")
+    p_sheet.add_argument("path")
+    p_sheet.add_argument("id", nargs="?", default="S001")
+    p_sheet.add_argument("--size", default="A3", choices=list("A0 A1 A2 A3 A4".split()))
+    p_sheet.add_argument("--scale", type=float, default=100.0, help="比例分母（1:100 填 100）")
+    p_sheet.add_argument("--at", default=None, help="图幅左下角 x,y；省略则按图形外廓自动排图")
+    p_sheet.add_argument("--margin", type=float, default=6000.0, help="自动排图时图形到内框的留白")
+    p_sheet.add_argument("--project", default="")
+    p_sheet.add_argument("--drawing", default="")
+    p_sheet.add_argument("--no", dest="number", default="", help="图号")
+    p_sheet.add_argument("--date", default="")
+    p_sheet.add_argument("--design", default="")
+    p_sheet.add_argument("--drawn", default="")
+    p_sheet.add_argument("--check", default="")
+    p_sheet.add_argument("--unit", default="")
+
+    p_setsheet = sub.add_parser("set-sheet", help="改标题栏内容（保持图幅与位置重画）")
+    p_setsheet.add_argument("path")
+    p_setsheet.add_argument("id")
+    for name in ("project", "drawing", "date", "design", "drawn", "check", "unit"):
+        p_setsheet.add_argument("--%s" % name, default=None)
+    p_setsheet.add_argument("--no", dest="number", default=None, help="图号")
+
+    p_export = sub.add_parser("export", help="出图：按扩展名导出 png/svg/pdf，可按图幅范围裁切")
+    p_export.add_argument("path")
+    p_export.add_argument("--out", required=True, help="输出文件（.png / .svg / .pdf）")
+    p_export.add_argument("--sheet", default=None, help="按图幅编号自动取窗口（推荐）")
+    p_export.add_argument("--window", default=None, help="手工窗口 x0,y0,x1,y1")
+
     args = ap.parse_args(argv)
 
     try:
@@ -246,6 +279,25 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **annotate(
                 session, args.opening_off, args.wall_off,
                 exterior_only=not args.all_walls)})
+        elif args.cmd == "sheet":
+            emit({"ok": True, **create_sheet(
+                session, args.id, args.size, args.scale,
+                _pt(args.at) if args.at else None,
+                args.project, args.drawing, args.number, args.date,
+                args.design, args.drawn, args.check, args.unit, args.margin)})
+        elif args.cmd == "set-sheet":
+            emit({"ok": True, **set_sheet(
+                session, args.id,
+                project=args.project, drawing=args.drawing, number=args.number,
+                date=args.date, design=args.design, drawn=args.drawn,
+                check=args.check, unit=args.unit)})
+        elif args.cmd == "export":
+            win = None
+            if args.window:
+                win = [float(v) for v in args.window.split(",")]
+            elif args.sheet:
+                win = sheet_window(session, args.sheet)
+            emit({"ok": True, **export(session, args.out, win)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

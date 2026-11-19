@@ -41,8 +41,8 @@ def main() -> int:
 
     # 1) 几何图元数量：7 条轴线 + 7 个轴号圆圈 + 7 个圈内轴号 = 21
     assert len(res["geom_handles"]) == 21, res["geom_handles"]
-    assert res["ver"] == "A;B;C;D", res["ver"]
-    assert res["hor"] == "1;2;3", res["hor"]
+    assert res["ver"] == "1;2;3;4", res["ver"]
+    assert res["hor"] == "A;B;C", res["hor"]
 
     # 2) 图元类型统计（模型空间只剩块参照，几何在块定义内）
     counts = s.info()["counts"]
@@ -61,7 +61,7 @@ def main() -> int:
     assert all(abs(g["r"] - 400.0) < 1e-9 for g in circles), [g["r"] for g in circles]
     texts = [g for g in geom if g["type"] == "TEXT"]
     assert len(texts) == 7, texts
-    assert sorted(g["text"] for g in texts) == ["1", "2", "3", "A", "B", "C", "D"], \
+    assert sorted(g["text"] for g in texts) == ["1", "2", "3", "4", "A", "B", "C"], \
         [g["text"] for g in texts]
     # 轴号文字落在圈内（距圆心不超过半径）
     for c in circles:
@@ -76,7 +76,7 @@ def main() -> int:
         "AA_TYPE": "AXGRID", "AA_ID": "AX001",
         "AA_XCOUNT": "4", "AA_YCOUNT": "3",
         "AA_XSPACE": "4000.0000", "AA_YSPACE": "5000.0000",
-        "AA_VER": "A;B;C;D", "AA_HOR": "1;2;3",
+        "AA_VER": "1;2;3;4", "AA_HOR": "A;B;C",
     }.items():
         assert attrs.get(k) == v, (k, attrs.get(k), v)
     print("attributes ok:", attrs)
@@ -103,7 +103,7 @@ def main() -> int:
                    capture_output=True, text=True, encoding="utf-8")
     s2 = Session(back)
     assert s2.block_exists("AA_AXGRID_AX001")
-    s2.expect_attributes("AA_AXGRID_AX001", {"AA_ID": "AX001", "AA_VER": "A;B;C;D"})
+    s2.expect_attributes("AA_AXGRID_AX001", {"AA_ID": "AX001", "AA_VER": "1;2;3;4"})
     print("dwg roundtrip ok")
 
     print("PASS test_axis")

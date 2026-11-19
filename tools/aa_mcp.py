@@ -29,6 +29,8 @@ from aa_lib import (  # noqa: E402
     create_opening,
     create_room,
     create_wall,
+    create_sheet,
+    export,
     merge_walls,
     normalize_around,
     opening_data,
@@ -37,12 +39,14 @@ from aa_lib import (  # noqa: E402
     rooms_report,
     set_opening,
     set_room,
+    set_sheet,
     set_wall,
+    sheet_window,
     split_at_intersections,
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.6.0"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.7.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -299,6 +303,67 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["path"],
         },
     },
+    {
+        "name": "aa_sheet",
+        "description": "图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏 9 格；不给 at 时按图形外廓自动居中排图。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "图幅编号", "default": "S001"},
+                "size": {"type": "string", "enum": ["A0", "A1", "A2", "A3", "A4"],
+                         "description": "图幅", "default": "A3"},
+                "scale": {"type": "number", "description": "比例分母（1:100 填 100）", "default": 100},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "图幅左下角 [x, y]；省略则自动排图"},
+                "margin": {"type": "number", "description": "自动排图留白（模型单位）", "default": 6000},
+                "project": {"type": "string", "description": "工程名称"},
+                "drawing": {"type": "string", "description": "图名"},
+                "number": {"type": "string", "description": "图号"},
+                "date": {"type": "string", "description": "日期"},
+                "design": {"type": "string", "description": "设计"},
+                "drawn": {"type": "string", "description": "制图"},
+                "check": {"type": "string", "description": "审核"},
+                "unit": {"type": "string", "description": "单位"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_set_sheet",
+        "description": "改标题栏内容：保持图幅/比例/位置重画，属性同步更新。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "图幅编号"},
+                "project": {"type": "string"},
+                "drawing": {"type": "string"},
+                "number": {"type": "string"},
+                "date": {"type": "string"},
+                "design": {"type": "string"},
+                "drawn": {"type": "string"},
+                "check": {"type": "string"},
+                "unit": {"type": "string"},
+            },
+            "required": ["path", "id"],
+        },
+    },
+    {
+        "name": "aa_export",
+        "description": "出图：按扩展名导出 png/svg/pdf；给 sheet 则按图幅范围裁切，否则给 window。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "out": {"type": "string", "description": "输出文件（.png/.svg/.pdf）"},
+                "sheet": {"type": "string", "description": "按图幅编号自动取导出窗口"},
+                "window": {"type": "array", "items": {"type": "number"},
+                           "description": "[x0, y0, x1, y1] 手工窗口"},
+            },
+            "required": ["path", "out"],
+        },
+    },
 ]
 
 TOOL_NAMES = [t["name"] for t in TOOLS]
@@ -392,6 +457,33 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _opt(a.get("pos")), _opt(a.get("width")),
             _opt(a.get("height")), _opt(a.get("sill")), a.get("kind"),
             _opt(a.get("frame")), a.get("no"), a.get("label_side"))}
+
+    if name == "aa_sheet":
+        s = _session(path)
+        return {"ok": True, **create_sheet(
+            s, a.get("id", "S001") or "S001", a.get("size", "A3"),
+            _num(a.get("scale", 100), "scale"),
+            _pt(a["at"], "at") if a.get("at") else None,
+            a.get("project", "") or "", a.get("drawing", "") or "",
+            a.get("number", "") or "", a.get("date", "") or "",
+            a.get("design", "") or "", a.get("drawn", "") or "",
+            a.get("check", "") or "", a.get("unit", "") or "",
+            _num(a.get("margin", 6000), "margin"))}
+
+    if name == "aa_set_sheet":
+        s = _session(path)
+        fields = {k: a[k] for k in ("project", "drawing", "number", "date",
+                                    "design", "drawn", "check", "unit") if k in a}
+        return {"ok": True, **set_sheet(s, a["id"], **fields)}
+
+    if name == "aa_export":
+        s = _session(path)
+        win = None
+        if a.get("window"):
+            win = [_num(v, "window") for v in a["window"]]
+        elif a.get("sheet"):
+            win = sheet_window(s, a["sheet"])
+        return {"ok": True, **export(s, a["out"], win)}
 
     if name == "aa_show":
         return {"ok": True, "walls": wall_data(s), "openings": opening_data(s),

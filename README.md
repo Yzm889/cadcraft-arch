@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v0.1，已实测跑通）
+## 现状（v0.7，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -22,12 +22,14 @@
 | 改门窗参数 | `set-opening` | 完成 | 改位置/宽度/类型/窗框厚/编号后重建符号并重排所属墙缺口；越界/重叠拒绝且文件字节不变 |
 | 门窗表 | `openings` | 完成 | 同编号合并计数，列洞口宽高/樘数/所在墙；CSV 与图上表格（6 列，编号窄、所在墙宽）|
 | 尺寸标注 | `dim` | 完成 | 外墙墙段长度标外层、洞口宽标内层，落在 `AA-DIM` 层；内墙自动跳过，重跑幂等、回读测量值 |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，15 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| 图框 + 标题栏 | `sheet` / `set-sheet` | 完成 | GB/T 14689 图幅（A0–A4）、装订边 25、其余边 A0/A1=10 其余 5；标题栏 180×56 九格（GB/T 10609.1）；不给位置按图形外廓自动居中排图，装不下直接报错；重复编号拒绝、改标题栏后块唯一且属性同步 |
+| 出图 | `export` | 完成 | 按扩展名导出 png/svg/pdf；`--sheet` 自动按图幅取窗口，PNG/PDF 均实测有产物（含 5% 余量、不裁切） |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，18 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (15 tests)
+python tests/run_all.py     # ALL PASS (16 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -81,7 +83,17 @@ python tools/aa_cmd.py set-opening out.dxf D001 --pos 1500 --width 900
 # 9. 尺寸标注（外墙墙段 + 洞口宽）
 python tools/aa_cmd.py dim out.dxf
 
-# 10. 回读全部构件
+# 10. 出图：A3@1:100 图框 + 标题栏（不给 --at 就按图形外廓自动居中排图）
+python tools/aa_cmd.py sheet out.dxf S001 --size A3 --scale 100 \
+    --project "某工程" --drawing "一层平面图" --no "建-01" --date 2026-11-20 --design 严
+
+# 11. 改标题栏内容（图幅/位置/比例不变，重画并同步属性）
+python tools/aa_cmd.py set-sheet out.dxf S001 --drawing "二层平面图" --no "建-02"
+
+# 12. 出图导出：按图幅范围裁切，扩展名决定 png/svg/pdf
+python tools/aa_cmd.py export out.dxf --out out.pdf --sheet S001
+
+# 13. 回读全部构件
 python tools/aa_cmd.py show out.dxf
 ```
 

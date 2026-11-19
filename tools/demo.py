@@ -15,10 +15,13 @@ from aa_lib import (  # noqa: E402
     create_axis_grid,
     create_opening,
     create_room,
+    create_sheet,
     create_wall,
+    export,
     normalize_around,
     openings_report,
     rooms_report,
+    sheet_window,
 )
 
 OUT = ROOT / "samples"
@@ -38,8 +41,8 @@ def main() -> int:
 
     ext = 240.0
     # 外墙（按房间分段的实际墙段）
-    create_wall(s, "W001", (0.0, 0.0), (6000.0, 0.0), thick=ext, kind="EXTERNAL", ax1="A", ax2="B")
-    create_wall(s, "W002", (6000.0, 0.0), (10800.0, 0.0), thick=ext, kind="EXTERNAL", ax1="B", ax2="D")
+    create_wall(s, "W001", (0.0, 0.0), (6000.0, 0.0), thick=ext, kind="EXTERNAL", ax1="1", ax2="2")
+    create_wall(s, "W002", (6000.0, 0.0), (10800.0, 0.0), thick=ext, kind="EXTERNAL", ax1="2", ax2="3")
     create_wall(s, "W003", (10800.0, 0.0), (10800.0, 4800.0), thick=ext, kind="EXTERNAL")
     create_wall(s, "W004", (10800.0, 4800.0), (6000.0, 4800.0), thick=ext, kind="EXTERNAL")
     create_wall(s, "W005", (6000.0, 4800.0), (0.0, 4800.0), thick=ext, kind="EXTERNAL")
@@ -73,10 +76,25 @@ def main() -> int:
     sf = Session(full)
     annotate(sf)
     rooms_report(sf, OUT / "demo_rooms.csv", (0.0, -3400.0), "房间面积表")
-    openings_report(sf, OUT / "demo_openings.csv", (6800.0, -3400.0), "门窗表")
+    openings_report(sf, OUT / "demo_openings.csv", (9900.0, -3400.0), "门窗表")
     subprocess.run([sf.cli, "run", str(full), "--export", str(OUT / "demo_full.png"),
                     "--window=-2600,-7100,13500,7300"],
                    capture_output=True, text=True, encoding="utf-8")
+
+    # 出图交付：A3@1:100 图框 + 标题栏，导出 PNG / PDF
+    sheet = OUT / "demo_sheet.dxf"
+    if sheet.exists():
+        sheet.unlink()
+    sheet.write_bytes(full.read_bytes())
+    ss = Session(sheet)
+    create_sheet(
+        ss, "S001", size="A3", scale=100,
+        project="CADCraft 演示工程", drawing="一层平面图", number="建-01",
+        date="2026-11-19", design="严", drawn="严", check="", unit="CADCraft",
+    )
+    win = sheet_window(ss, "S001")
+    export(ss, OUT / "demo_sheet.png", win)
+    export(ss, OUT / "demo_sheet.pdf", win)
 
     print("rooms: 客厅 %.0f mm²  卧室 %.0f mm²" % (r1["area"], r2["area"]))
     print("png:", png, png.exists())

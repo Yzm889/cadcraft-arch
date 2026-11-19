@@ -112,13 +112,13 @@ def main() -> int:
     rep2 = rooms_report(s, table_at=(0.0, -3200.0))
     table = rep2.get("table", {})
     print("table inserted:", table)
-    assert table.get("handle"), rep2
-    # 表格内容要能在图里回读到中文表头与房间名
-    tabs = [e for e in s.entities().get("entities", [])
-            if str(e.get("type", "")).lower() == "table"]
-    assert len(tabs) == 1, len(tabs)
-    cells = tabs[0]["geometry"]["cells"]
-    flat = [c["text"] for r in cells for c in r]
+    assert table.get("by") == "geometry", rep2
+    # 表格内容要能在图里回读到中文表头与房间名（几何绘制，走 AA-TABLE 层文字）
+    marks = [e for e in s.entities().get("entities", []) if e.get("layer") == "AA-TABLE"]
+    texts = [e for e in marks if str(e.get("type", "")).lower() in ("text", "mtext")]
+    assert len(texts) >= table["rows"] + table["cols"] - 1, len(texts)
+    flat = " ".join(str(t["geometry"].get("text", t["geometry"].get("value", "")))
+                    for t in texts)
     assert "房间面积表" in flat, flat
     assert "客厅A" in flat, flat
     assert "编号" in flat, flat

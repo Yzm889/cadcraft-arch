@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-TESTS = ["test_axis.py", "test_wall.py", "test_opening.py", "test_openings.py", "test_dim.py", "test_label.py", "test_room.py",
+TESTS = ["test_axis.py", "test_wall.py", "test_opening.py", "test_openings.py", "test_dim.py", "test_label.py", "test_sheet.py", "test_room.py",
          "test_corner.py", "test_layers.py", "test_split.py", "test_merge.py",
          "test_modify.py", "test_room_auto.py", "test_room_modify.py", "test_mcp.py"]
 

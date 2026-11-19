@@ -43,7 +43,7 @@
         right (+ xstart (* (- xcount 1) xspace))
         vl nil hl nil)
 
-  ;; 纵向轴线 + 顶端字母轴号（圆圈中心离轴线端 = label-gap + 半径）
+  ;; 纵向轴线（竖线）+ 顶端数字轴号 1、2、3（GB/T 50001：竖向轴线编数字）
   (setq i 0)
   (while (< i xcount)
     (setq x (+ xstart (* i xspace)))
@@ -51,11 +51,11 @@
                (aa:pt x (+ top ext))
                aa:*lay-axis* "CENTER")
     (setq cy (+ top ext aa:*axis-r*))              ; 圆与轴线端相切
-    (aa:axistag x cy (aa:letter (1+ i)))
-    (setq vl (cons (aa:letter (1+ i)) vl))
+    (aa:axistag x cy (itoa (1+ i)))
+    (setq vl (cons (itoa (1+ i)) vl))
     (setq i (1+ i)))
 
-  ;; 横向轴线 + 左端数字轴号
+  ;; 横向轴线（横线）+ 左端字母轴号 A、B、C（横向轴线编字母）
   (setq j 0)
   (while (< j ycount)
     (setq y (+ ystart (* j yspace)))
@@ -63,8 +63,8 @@
                (aa:pt (+ right ext) y)
                aa:*lay-axis* "CENTER")
     (setq cx (- xstart ext aa:*axis-r*))
-    (aa:axistag cx y (itoa (1+ j)))
-    (setq hl (cons (itoa (1+ j)) hl))
+    (aa:axistag cx y (aa:letter (1+ j)))
+    (setq hl (cons (aa:letter (1+ j)) hl))
     (setq j (1+ j)))
 
   (strcat (aa:joinc (reverse vl)) "#" (aa:joinc (reverse hl))))

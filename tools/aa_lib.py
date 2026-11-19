@@ -37,6 +37,9 @@ DEFAULT_LAYERS = {
     "opening": "AA-OPENING",
     "room": "AA-ROOM",
     "dim": "AA-DIM",
+    "sheet": "AA-SHEET",
+    "title": "AA-TITLE",
+    "table": "AA-TABLE",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -156,7 +159,7 @@ class Session:
         # 用户图档自己的图层标准优先：覆盖 aa_core 里的默认层名
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
-            for k in ("axis", "axistext", "wall", "opening", "room")
+            for k in ("axis", "axistext", "wall", "opening", "room", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -191,19 +194,16 @@ class Session:
             raise CadError("线型加载失败：图档里没有 CENTER 线型")
         self._lt_loaded = True
 
-    def ensure_table_style(self, name: str = "AA-TABLE", text_height: float = 180.0,
-                           margin: float = 50.0) -> None:
+    def ensure_table_style(self, name: str = "AA-TABLE", text_height: float = 250.0,
+                           margin: float = 60.0) -> None:
         """建/切一个表格样式：默认样式字高极小，直接插表会看不清。
 
-        图档内已有该样式就不重建，并把当前样式切过去，后续 table 命令沿用（幂等）。
+        反复执行时把字高/边距刷成目标值（旧图档里 1.8mm 的样式会被就地修正），再切为当前样式。
         """
         if getattr(self, "_ts_ready", False):
             return
-        styles = self.run([("tablestyle", {})], save=False).last().get("styles") or []
-        exist = {x.get("name") for x in styles if isinstance(x, dict)}
-        if name not in exist:
-            self.run([("tablestyle", {"name": name, "textHeight": text_height,
-                                      "margin": margin})], save=True)
+        self.run([("tablestyle", {"name": name, "textHeight": text_height,
+                                  "margin": margin})], save=True)
         self.run([("tablestyle", {"name": name, "current": True})], save=True)
         self._ts_ready = True
 
@@ -891,6 +891,7 @@ def wall_data(session: Session) -> list[dict[str, Any]]:
                 "p1": p1,
                 "p2": p2,
                 "len": length,
+                "rotation_rad": ang,
                 "thick": float(attrs.get("AA_THICK", "0") or 0),
                 "kind": attrs.get("AA_KIND", ""),
                 "mat": attrs.get("AA_MAT", ""),
@@ -2068,6 +2069,303 @@ def auto_rooms(session: Session, prefix: str = "R", name: str = "",
     }
 
 
+# ---------------- 图框 / 标题栏 / 出图（v0.7） ----------------
+
+# GB/T 14689 基本幅面（mm），图框内留边：装订边 a=25，其余 c（A0/A1 取 10，A2~A4 取 5）
+SHEETS: dict[str, tuple[float, float]] = {
+    "A0": (1189.0, 841.0),
+    "A1": (841.0, 594.0),
+    "A2": (594.0, 420.0),
+    "A3": (420.0, 297.0),
+    "A4": (297.0, 210.0),
+}
+SHEET_BIND = 25.0                        # 装订边 a
+SHEET_EDGE = {"A0": 10.0, "A1": 10.0, "A2": 5.0, "A3": 5.0, "A4": 5.0}
+TITLE_W, TITLE_H = 180.0, 56.0           # GB/T 10609.1 标题栏
+TITLE_BANDS = (36.0, 24.0, 12.0)         # 标题栏行分界（自下而上，mm）
+
+
+def _text_w(s: str, h: float) -> float:
+    """估算单行文字宽度：汉字按 1 个字高，西文数字按 0.55 字高。"""
+    return sum(h * (1.0 if ord(ch) > 127 else 0.55) for ch in s)
+
+
+def drawing_extent(session: Session, pad: float = 0.0) -> tuple[float, float, float, float] | None:
+    """图形外廓（墙 + 房间），不含图框/表格；用于自动排图。"""
+    xs: list[float] = []
+    ys: list[float] = []
+    for w in wall_data(session):
+        ang = w["rotation_rad"]
+        p = w["p1"]
+        t = w["thick"] / 2.0
+        for s in (0.0, w["len"]):
+            x = p[0] + math.cos(ang) * s
+            y = p[1] + math.sin(ang) * s
+            xs += [x - t, x + t]
+            ys += [y - t, y + t]
+    for r in room_data(session):
+        for x, y in r["pts"]:
+            xs.append(x)
+            ys.append(y)
+    if not xs:
+        return None
+    return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+
+
+def _title_cells() -> list[dict[str, Any]]:
+    """标题栏单元格（局部坐标，原点=标题栏左下角，单位 mm）。"""
+    return [
+        {"x": 0.0, "y": 36.0, "w": 180.0, "h": 20.0, "label": "", "key": "drawing", "size": 7.0},
+        {"x": 0.0, "y": 24.0, "w": 120.0, "h": 12.0, "label": "工程名称", "key": "project", "size": 4.0},
+        {"x": 120.0, "y": 24.0, "w": 60.0, "h": 12.0, "label": "图号", "key": "number", "size": 4.0},
+        {"x": 0.0, "y": 12.0, "w": 60.0, "h": 12.0, "label": "设计", "key": "design", "size": 4.0},
+        {"x": 60.0, "y": 12.0, "w": 60.0, "h": 12.0, "label": "制图", "key": "drawn", "size": 4.0},
+        {"x": 120.0, "y": 12.0, "w": 60.0, "h": 12.0, "label": "审核", "key": "check", "size": 4.0},
+        {"x": 0.0, "y": 0.0, "w": 60.0, "h": 12.0, "label": "比例", "key": "scale", "size": 4.0},
+        {"x": 60.0, "y": 0.0, "w": 60.0, "h": 12.0, "label": "日期", "key": "date", "size": 4.0},
+        {"x": 120.0, "y": 0.0, "w": 60.0, "h": 12.0, "label": "单位", "key": "unit", "size": 4.0},
+    ]
+
+
+def sheet_layout(size: str = "A3", scale: float = 100.0) -> dict[str, Any]:
+    """图框几何参数（全部换算到模型单位，即图纸 mm × 比例分母）。"""
+    size = size.upper()
+    if size not in SHEETS:
+        raise CadError("不支持的图幅：%s（可选 %s）" % (size, "、".join(SHEETS)))
+    if scale <= 0:
+        raise CadError("比例必须为正数")
+    w_mm, h_mm = SHEETS[size]
+    a = SHEET_BIND
+    c = SHEET_EDGE[size]
+    iw = (w_mm - a - c) * scale
+    ih = (h_mm - 2 * c) * scale
+    return {
+        "size": size,
+        "scale": float(scale),
+        "sheet_w": w_mm * scale,
+        "sheet_h": h_mm * scale,
+        "outer": (0.0, 0.0, w_mm * scale, h_mm * scale),
+        "inner_org": (a * scale, c * scale),
+        "inner_w": iw,
+        "inner_h": ih,
+        "title_w": TITLE_W * scale,
+        "title_h": TITLE_H * scale,
+    }
+
+
+def create_sheet(
+    session: Session,
+    sheet_id: str = "S001",
+    size: str = "A3",
+    scale: float = 100.0,
+    at: tuple[float, float] | None = None,
+    project: str = "",
+    drawing: str = "",
+    number: str = "",
+    date: str = "",
+    design: str = "",
+    drawn: str = "",
+    check: str = "",
+    unit: str = "",
+    pad: float = 6000.0,
+) -> dict[str, Any]:
+    """图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏按 GB/T 10609.1 简化为 9 格。
+
+    at = 内框左下角（模型坐标）。不给则按"墙+房间"外廓自动居中排图；
+    图形超出内框时报错，提示换大图幅或调小比例。
+    """
+    lay = sheet_layout(size, scale)
+    session.ensure_layers([LAYERS["sheet"], LAYERS["title"]])
+    block = "AA_SHEET_" + sheet_id
+    if session.block_exists(block):
+        raise CadError("图幅 %s 已存在，请用 set-sheet 修改或换编号" % sheet_id)
+
+    # 自动排图：把图形外廓居中放进内框
+    ext = drawing_extent(session, pad=0.0)
+    if at is None:
+        if ext:
+            cx = (ext[0] + ext[2]) / 2.0
+            cy = (ext[1] + ext[3]) / 2.0
+            need_w = (ext[2] - ext[0]) + 2 * pad
+            need_h = (ext[3] - ext[1]) + 2 * pad
+            if need_w > lay["inner_w"] or need_h > lay["inner_h"]:
+                raise CadError(
+                    "图形放不进 %s@1:%g 内框（需 %.0f×%.0f，可用 %.0f×%.0f）："
+                    "请换大图幅或调小比例" % (size, scale, need_w, need_h,
+                                          lay["inner_w"], lay["inner_h"])
+                )
+            w_mm = SHEETS[lay["size"]][0]
+            inner_cx = (w_mm + SHEET_BIND - SHEET_EDGE[lay["size"]]) * scale / 2.0
+            inner_cy = lay["sheet_h"] / 2.0
+            at = (cx - inner_cx, cy - inner_cy)
+        else:
+            at = (0.0, 0.0)
+    at = (float(at[0]), float(at[1]))
+
+    s = float(scale)
+    iw, ih = lay["inner_w"], lay["inner_h"]
+    ox0, oy0, ox1, oy1 = lay["outer"]          # 图幅外框：局部原点=图幅左下角
+    ix, iy = lay["inner_org"]                  # 内框左下角（装订边 a / 其余边 c）
+    segs: list[tuple[tuple[float, float], tuple[float, float], str]] = []
+
+    def rect(x0: float, y0: float, x1: float, y1: float, layer: str) -> None:
+        segs.append(((x0, y0), (x1, y0), layer))
+        segs.append(((x1, y0), (x1, y1), layer))
+        segs.append(((x1, y1), (x0, y1), layer))
+        segs.append(((x0, y1), (x0, y0), layer))
+
+    rect(ox0, oy0, ox1, oy1, LAYERS["sheet"])
+    rect(ix, iy, ix + iw, iy + ih, LAYERS["sheet"])
+
+    # 标题栏：贴内框右下角，尺寸按图纸 mm × 比例
+    tx0 = ix + iw - lay["title_w"]
+    ty0 = iy
+    tw, th = TITLE_W * s, TITLE_H * s
+    rect(tx0, ty0, tx0 + tw, ty0 + th, LAYERS["title"])
+    for y in TITLE_BANDS:
+        segs.append(((tx0, ty0 + y * s), (tx0 + tw, ty0 + y * s), LAYERS["title"]))
+    for x in (60.0, 120.0):
+        segs.append(((tx0 + x * s, ty0), (tx0 + x * s, ty0 + 24.0 * s), LAYERS["title"]))
+    # 工程名称行（24~36）的 120 宽分格界线
+    segs.append(((tx0 + 120.0 * s, ty0 + 24.0 * s), (tx0 + 120.0 * s, ty0 + 36.0 * s),
+                 LAYERS["title"]))
+
+    values = {"drawing": drawing, "project": project, "number": number, "design": design,
+              "drawn": drawn, "check": check, "scale": ("1:%g" % scale), "date": date,
+              "unit": unit}
+    texts: list[tuple[tuple[float, float], str, str, float]] = []
+    for cell in _title_cells():
+        cx = tx0 + cell["x"] * s
+        cy = ty0 + cell["y"] * s
+        if cell["label"]:
+            texts.append(((cx + 2.0 * s, cy + (cell["h"] - 4.5) * s),
+                          cell["label"], LAYERS["title"], 2.5 * s))
+        val = str(values.get(cell["key"], "") or "")
+        if not val:
+            continue
+        hgt = cell["size"] * s
+        w = _text_w(val, hgt)
+        px = cx + max(2.0 * s, (cell["w"] * s - w) / 2.0)
+        py = cy + (cell["h"] * s - hgt) / 2.0 + ((1.5 * s) if cell["label"] else 0.0)
+        texts.append(((px, py), val, LAYERS["title"], hgt))
+
+    before = session.snapshot()
+    body = []
+    for p1, p2, layer in segs:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (p1[0], p1[1], p2[0], p2[1], layer))
+    for pt, txt, layer, hgt in texts:
+        safe = txt.replace('"', "'")
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f 0.0)'
+                    % (pt[0], pt[1], safe, layer, hgt))
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body), libraries=("aa_core.lisp",))
+    handles = session.new_handles(before)
+
+    att_defs = [
+        ("AA_TYPE", "component type", "SHEET"),
+        ("AA_ID", "component id", sheet_id),
+        ("AA_SIZE", "paper size", lay["size"]),
+        ("AA_SCALE", "plot scale 1:n", "%g" % scale),
+        ("AA_PROJECT", "project name", project),
+        ("AA_DRAWING", "drawing title", drawing),
+        ("AA_NO", "drawing number", number),
+        ("AA_DATE", "date", date),
+        ("AA_DESIGN", "designer", design),
+        ("AA_DRAWN", "draftsman", drawn),
+        ("AA_CHECK", "checker", check),
+        ("AA_UNIT", "company", unit),
+        ("AA_BIND", "binding margin", "%.1f" % SHEET_BIND),
+    ]
+    att_handles = session.define_attributes(att_defs)
+    att_vals = {t: v for t, _d, v in att_defs}
+
+    base_local = at
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, base_local, att_vals, layer=LAYERS["sheet"])
+    session.expect_attributes(block, {"AA_ID": sheet_id, "AA_TYPE": "SHEET",
+                                      "AA_SIZE": lay["size"], "AA_SCALE": "%g" % scale})
+
+    # 回读：外框几何 = 图幅换算值，标题栏落在内框右下
+    geom = block_geometry(session.path, block)
+    xs = [p[0] for g in geom for p in g["pts"]]
+    ys = [p[1] for g in geom for p in g["pts"]]
+    got_w = max(xs) - min(xs)
+    got_h = max(ys) - min(ys)
+    if abs(got_w - lay["sheet_w"]) > 0.5 or abs(got_h - lay["sheet_h"]) > 0.5:
+        raise CadError("图框尺寸回读不符：期望 %.0f×%.0f，实际 %.0f×%.0f"
+                       % (lay["sheet_w"], lay["sheet_h"], got_w, got_h))
+    n_lines = sum(1 for g in geom if g["type"] == "LINE")
+    if n_lines != len(segs):
+        raise CadError("图框线数回读不符：期望 %d，实际 %d" % (len(segs), n_lines))
+
+    return {
+        "block": block,
+        "handle": handle,
+        "size": lay["size"],
+        "scale": float(scale),
+        "at": list(at),
+        "inner": [lay["inner_w"], lay["inner_h"]],
+        "outer_wh": [lay["sheet_w"], lay["sheet_h"]],
+        "lines": n_lines,
+        "texts": sum(1 for g in geom if g["type"] == "TEXT"),
+        "extent": ext,
+    }
+
+
+def set_sheet(session: Session, sheet_id: str, **fields: Any) -> dict[str, Any]:
+    """改标题栏内容：删旧图框重画（保持同一编号、同一位置、同一图幅比例）。"""
+    block = "AA_SHEET_" + sheet_id
+    ref = session.reference(block)
+    if not ref:
+        raise CadError("找不到图幅 %s" % sheet_id)
+    attrs = {a["tag"]: a.get("text", {}).get("value", "") for a in ref["geometry"].get("attribs", [])}
+    params = {
+        "size": attrs.get("AA_SIZE", "A3"),
+        "scale": float(attrs.get("AA_SCALE", "100") or 100),
+        "at": (ref["geometry"]["insert"]["x"], ref["geometry"]["insert"]["y"]),
+        "project": attrs.get("AA_PROJECT", ""),
+        "drawing": attrs.get("AA_DRAWING", ""),
+        "number": attrs.get("AA_NO", ""),
+        "date": attrs.get("AA_DATE", ""),
+        "design": attrs.get("AA_DESIGN", ""),
+        "drawn": attrs.get("AA_DRAWN", ""),
+        "check": attrs.get("AA_CHECK", ""),
+        "unit": attrs.get("AA_UNIT", ""),
+    }
+    params.update({k: v for k, v in fields.items() if v is not None})
+    delete_component(session, block)
+    return create_sheet(session, sheet_id, **params)
+
+
+def export(session: Session, out: str | Path, window: Sequence[float] | None = None) -> dict[str, Any]:
+    """出图：png / svg / pdf 由扩展名决定；window=(x0,y0,x1,y1) 限定图幅范围。"""
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    argv = ["run", str(session.path), "--export", str(out)]
+    if window:
+        argv += ["--window=%g,%g,%g,%g" % tuple(window)]
+    session._exec(argv)
+    if not out.exists() or out.stat().st_size < 2048:
+        raise CadError("导出失败或产物异常：%s" % out)
+    return {"path": str(out), "bytes": out.stat().st_size}
+
+
+def sheet_window(session: Session, sheet_id: str) -> list[float]:
+    """图幅的导出窗口：外框四条边（含 5% 余量）。"""
+    block = "AA_SHEET_" + sheet_id
+    ref = session.reference(block)
+    if not ref:
+        raise CadError("找不到图幅 %s" % sheet_id)
+    attrs = {a["tag"]: a.get("text", {}).get("value", "") for a in ref["geometry"].get("attribs", [])}
+    lay = sheet_layout(attrs.get("AA_SIZE", "A3"), float(attrs.get("AA_SCALE", "100") or 100))
+    ip = ref["geometry"]["insert"]
+    x, y = ip["x"], ip["y"]
+    w = lay["sheet_w"]
+    h = lay["sheet_h"]
+    m = 0.05 * max(w, h)
+    return [x - m, y - m, x + w + m, y + h + m]
+
+
 # ---------------- 参数变更重绘（v0.4） ----------------
 
 def _validate_opening_slot(session: Session, wall_len: float, pos: float, width: float,
@@ -2254,50 +2552,71 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
 
 def draw_table(session: Session, table_at: tuple[float, float], title: str,
                header: list[str], body: list[list[str]], widths: list[float],
-               row_height: float = 340.0) -> dict[str, Any]:
-    """在图上画一张表：标题行合并居中、表头居中、分列宽度。
+               row_height: float = 400.0, text_height: float = 250.0,
+               table_id: str = "") -> dict[str, Any]:
+    """在图上画一张表：纯几何（线框 + 居中文字），列宽行高完全按图纸 mm 控制。
 
-    table 的 colWidth 只收标量，所以先用 1 列建表，再按目标宽度
-    table.insertcol 加列、table.set 逐格填字，最后 merge + cellstyle（实测可用）。
+    原生 table 命令的列宽不受控（文字会溢出到邻列），所以这里用线 + 文字自绘；
+    at 仍然是表格**左上角**，表格向下生长。
     """
-    session.ensure_table_style()
+    lay = LAYERS.get("table", LAYERS["dim"])
+    session.ensure_layers([lay])
     ncol = len(widths)
-    grid = [[title] + [""] * (ncol - 1), list(header)] + [list(r) for r in body]
-    res = session.run([("table", {
-        "at": [float(table_at[0]), float(table_at[1])],
-        "rows": len(grid),
-        "cols": 1,
-        "rowHeight": row_height,
-        "colWidth": float(widths[0]),
-        "cells": [[r[0]] for r in grid],
-    })], save=True).last()
-    if res.get("error"):
-        raise CadError("插入表格失败：%s" % res["error"])
-    handle = res["handle"]
-    for w in widths[1:]:
-        r2 = session.run([("table.insertcol", {"handle": handle, "width": float(w)})],
-                         save=True).last()
-        if r2.get("error"):
-            raise CadError("表格加列失败：%s" % r2["error"])
-    for ri, line in enumerate(grid):
-        for ci in range(1, ncol):
-            if line[ci]:
-                r3 = session.run([("table.set", {"handle": handle, "row": ri,
-                                                 "col": ci, "text": line[ci]})],
-                                 save=True).last()
-                if r3.get("error"):
-                    raise CadError("表格填字失败：%s" % r3["error"])
-    r4 = session.run([("table.merge", {"handle": handle, "row": 0, "col": 0,
-                                       "rows": 1, "cols": ncol})], save=True).last()
-    if r4.get("error"):
-        raise CadError("表格标题合并失败：%s" % r4["error"])
-    for style, row in (("Title", 0), ("Header", 1)):
-        r5 = session.run([("table.cellstyle", {"handle": handle, "style": style,
-                                               "row": row})], save=True).last()
-        if r5.get("error"):
-            raise CadError("表格样式失败（%s）：%s" % (style, r5["error"]))
-    return {"handle": handle, "cols": list(widths), "rows": len(grid),
-            "header": list(header)}
+    title_h = row_height * 1.15
+    rows = [[title], list(header)] + [list(r) for r in body]
+    heights = [title_h, row_height] + [row_height] * len(body)
+    total_w = sum(widths)
+    total_h = sum(heights)
+    x0 = float(table_at[0])
+    y0 = float(table_at[1])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(cx: float, cy: float, s: str, hgt: float) -> None:
+        if not s:
+            return
+        w = _text_w(s, hgt)
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f 0.0)'
+                    % (cx - w / 2.0, cy - hgt / 2.0, s.replace('"', "'"), lay, hgt))
+
+    # 横线（每行分界 + 上下边）
+    y = y0
+    seg(x0, y, x0 + total_w, y)
+    for h in heights:
+        y -= h
+        seg(x0, y, x0 + total_w, y)
+
+    # 竖线：标题行整格，其余按列宽分
+    seg(x0, y0, x0, y0 - total_h)
+    seg(x0 + total_w, y0, x0 + total_w, y0 - total_h)
+    col_x = [x0]
+    for w in widths:
+        col_x.append(col_x[-1] + w)
+    for x in col_x[1:-1]:
+        seg(x, y0 - title_h, x, y0 - total_h)
+
+    # 文字
+    y_top = y0
+    for ri, line in enumerate(rows):
+        h = heights[ri]
+        cy = y_top - h / 2.0
+        if ri == 0:
+            txt(x0 + total_w / 2.0, cy, title, text_height * 1.25)
+        else:
+            hgt = text_height * (1.1 if ri == 1 else 1.0)
+            for ci in range(ncol):
+                cell = line[ci] if ci < len(line) else ""
+                if str(cell).strip():
+                    txt((col_x[ci] + col_x[ci + 1]) / 2.0, cy, str(cell), hgt)
+        y_top -= h
+
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body), libraries=("aa_core.lisp",))
+    return {"at": [x0, y0], "width": total_w, "height": total_h,
+            "by": "geometry", "rows": len(rows), "cols": ncol}
 
 
 def openings_report(session: Session, csv_path: str | Path | None = None,
@@ -2359,7 +2678,7 @@ def openings_report(session: Session, csv_path: str | Path | None = None,
             session, table_at, title,
             header=["编号", "类型", "宽(mm)", "高(mm)", "樘数", "所在墙"],
             body=body,
-            widths=[1300.0, 1100.0, 1200.0, 1200.0, 900.0, 2200.0],
+            widths=[1800.0, 1600.0, 1900.0, 1700.0, 1300.0, 2900.0],
         )
     return out
 
@@ -2411,7 +2730,7 @@ def rooms_report(session: Session, csv_path: str | Path | None = None,
             session, table_at, title,
             header=["编号", "名称", "净面积(m²)", "周长(mm)"],
             body=grid[2:],
-            widths=[1000.0, 2000.0, 1800.0, 1800.0],
+            widths=[1600.0, 2600.0, 2600.0, 2300.0],
         )
     return out
 

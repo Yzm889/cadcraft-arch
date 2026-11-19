@@ -2421,7 +2421,7 @@ AcDbText
  40
 300.0
   1
-A
+1
   7
 Standard
 100
@@ -2493,7 +2493,7 @@ AcDbText
  40
 300.0
   1
-B
+2
   7
 Standard
 100
@@ -2565,7 +2565,7 @@ AcDbText
  40
 300.0
   1
-1
+A
   7
 Standard
 100
@@ -2637,7 +2637,7 @@ AcDbText
  40
 300.0
   1
-2
+B
   7
 Standard
 100
@@ -2951,7 +2951,7 @@ AcDbText
  40
 200.0
   1
-A;B
+1;2
   7
 Standard
 100
@@ -2987,7 +2987,7 @@ AcDbText
  40
 200.0
   1
-1;2
+A;B
   7
 Standard
 100
@@ -5905,7 +5905,7 @@ AcDbText
  40
 200.0
   1
-A;B
+1;2
   7
 Standard
 100
@@ -5939,7 +5939,7 @@ AcDbText
  40
 200.0
   1
-1;2
+A;B
   7
 Standard
 100

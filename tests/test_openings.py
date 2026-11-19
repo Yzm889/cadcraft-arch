@@ -87,17 +87,19 @@ def main() -> int:
     assert text.splitlines()[-1].startswith("合计,2 种"), text
     assert "\ufeff\ufeff" not in text, "BOM 只能写一份"
 
-    # 6) 图上门窗表：标题/表头/数据都能被 entities 回读
+    # 6) 图上门窗表：改为几何绘制后，回读 AA-TABLE 层里的文字与线框
     rep2 = openings_report(s, table_at=(0.0, -3200.0))
-    assert rep2.get("table", {}).get("handle"), rep2
-    tabs = [e for e in s.entities().get("entities", [])
-            if str(e.get("type", "")).lower() == "table"]
-    assert len(tabs) == 1, len(tabs)
-    flat = [c["text"] for r in tabs[0]["geometry"]["cells"] for c in r]
-    assert "门窗表" in flat, flat
-    assert "编号" in flat and "樘数" in flat, flat
+    tab = rep2.get("table", {})
+    assert tab.get("by") == "geometry" and tab.get("cols") == 6, rep2
+    marks = [e for e in s.entities().get("entities", [])
+             if e.get("layer") == "AA-TABLE"]
+    texts = [e for e in marks if str(e.get("type", "")).lower() in ("text", "mtext")]
+    assert len(texts) >= tab["rows"] + tab["cols"] - 1, len(texts)
+    flat = " ".join(str(t["geometry"].get("text", t["geometry"].get("value", "")))
+                    for t in texts)
+    assert "门窗表" in flat and "樘数" in flat, flat
     assert "C1515" in flat and "M-1" in flat, flat
-    print("图上门窗表 ok:", tabs[0]["geometry"]["cells"][1])
+    print("图上门窗表 ok: %d 行 %d 列" % (tab["rows"], tab["cols"]))
 
     print("PASS test_openings")
     return 0
