@@ -316,7 +316,7 @@ TOOLS: list[dict[str, Any]] = [
                 "scale": {"type": "number", "description": "比例分母（1:100 填 100）", "default": 100},
                 "at": {"type": "array", "items": {"type": "number"},
                        "description": "图幅左下角 [x, y]；省略则自动排图"},
-                "margin": {"type": "number", "description": "自动排图留白（模型单位）", "default": 6000},
+                "margin": {"type": "number", "description": "自动排图留白（模型单位）", "default": 1500},
                 "project": {"type": "string", "description": "工程名称"},
                 "drawing": {"type": "string", "description": "图名"},
                 "number": {"type": "string", "description": "图号"},
@@ -468,7 +468,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             a.get("number", "") or "", a.get("date", "") or "",
             a.get("design", "") or "", a.get("drawn", "") or "",
             a.get("check", "") or "", a.get("unit", "") or "",
-            _num(a.get("margin", 6000), "margin"))}
+            _num(a.get("margin", 1500), "margin"))}
 
     if name == "aa_set_sheet":
         s = _session(path)

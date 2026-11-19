@@ -2090,23 +2090,78 @@ def _text_w(s: str, h: float) -> float:
     return sum(h * (1.0 if ord(ch) > 127 else 0.55) for ch in s)
 
 
-def drawing_extent(session: Session, pad: float = 0.0) -> tuple[float, float, float, float] | None:
-    """图形外廓（墙 + 房间），不含图框/表格；用于自动排图。"""
+def _insert_tf(pt: tuple[float, float], ref: dict[str, Any]) -> tuple[float, float]:
+    """块内局部点 -> 世界坐标（按 INSERT 的插入点/旋转/缩放）。"""
+    g = ref["geometry"]
+    ip = g["insert"]
+    sc = g.get("scale") or {"x": 1.0, "y": 1.0}
+    rot = float(g.get("rotation") or 0.0)
+    c, s = math.cos(rot), math.sin(rot)
+    x = float(pt[0]) * float(sc.get("x", 1.0) or 1.0)
+    y = float(pt[1]) * float(sc.get("y", 1.0) or 1.0)
+    return (ip["x"] + x * c - y * s, ip["y"] + x * s + y * c)
+
+
+def drawing_extent(session: Session, pad: float = 0.0,
+                   include_sheets: bool = False) -> tuple[float, float, float, float] | None:
+    """整张图的外廓：墙、房间、门窗、轴号、尺寸线、表格文字全算进去（图幅自身默认排除）。
+
+    自动排图必须按这个外廓走，否则尺寸线/轴号圈/表格会跑到图框外。
+    """
     xs: list[float] = []
     ys: list[float] = []
-    for w in wall_data(session):
-        ang = w["rotation_rad"]
-        p = w["p1"]
-        t = w["thick"] / 2.0
-        for s in (0.0, w["len"]):
-            x = p[0] + math.cos(ang) * s
-            y = p[1] + math.sin(ang) * s
-            xs += [x - t, x + t]
-            ys += [y - t, y + t]
-    for r in room_data(session):
-        for x, y in r["pts"]:
-            xs.append(x)
-            ys.append(y)
+
+    def add(x: float, y: float) -> None:
+        xs.append(float(x))
+        ys.append(float(y))
+
+    cache: dict[str, list[dict[str, Any]]] = {}
+
+    def block_pts(name: str) -> list[dict[str, Any]]:
+        if name not in cache:
+            cache[name] = block_geometry(session.path, name)
+        return cache[name]
+
+    for e in session.entities().get("entities", []):
+        t = str(e.get("type", "")).lower()
+        g = e.get("geometry") or {}
+        if t == "line":
+            for k in ("a", "b"):
+                p = g.get(k)
+                if p:
+                    add(p["x"], p["y"])
+        elif t in ("text", "mtext"):
+            p = g.get("insert") or g.get("position")
+            if p:
+                h = float(g.get("height", 200) or 200)
+                w = _text_w(str(g.get("value", "")), h)
+                add(p["x"], p["y"])
+                add(p["x"] + w, p["y"] + h)
+        elif t == "circle":
+            c = g.get("center") or {}
+            r = float(g.get("radius", 0) or 0)
+            if c:
+                add(c["x"] - r, c["y"] - r)
+                add(c["x"] + r, c["y"] + r)
+        elif t == "block reference":
+            name = str(g.get("block", ""))
+            if not include_sheets and name.startswith("AA_SHEET_"):
+                continue
+            for gi in block_pts(name):
+                for p in gi.get("pts") or []:
+                    if p:
+                        add(*_insert_tf(p, e))
+                r = float(gi.get("r") or 0)
+                for p in gi.get("pts") or []:
+                    if p and r:
+                        add(_insert_tf(p, e)[0] - r, _insert_tf(p, e)[1] - r)
+                        add(_insert_tf(p, e)[0] + r, _insert_tf(p, e)[1] + r)
+        elif t == "dimension":
+            for k in ("p13", "p14", "defpt", "textMid"):
+                p = g.get(k)
+                if p and (abs(p.get("x", 0)) > 1e-9 or abs(p.get("y", 0)) > 1e-9):
+                    add(p["x"], p["y"])
+
     if not xs:
         return None
     return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
@@ -2167,7 +2222,7 @@ def create_sheet(
     drawn: str = "",
     check: str = "",
     unit: str = "",
-    pad: float = 6000.0,
+    pad: float = 1500.0,
 ) -> dict[str, Any]:
     """图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏按 GB/T 10609.1 简化为 9 格。
 

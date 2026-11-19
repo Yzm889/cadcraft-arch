@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     p_sheet.add_argument("--size", default="A3", choices=list("A0 A1 A2 A3 A4".split()))
     p_sheet.add_argument("--scale", type=float, default=100.0, help="比例分母（1:100 填 100）")
     p_sheet.add_argument("--at", default=None, help="图幅左下角 x,y；省略则按图形外廓自动排图")
-    p_sheet.add_argument("--margin", type=float, default=6000.0, help="自动排图时图形到内框的留白")
+    p_sheet.add_argument("--margin", type=float, default=1500.0, help="自动排图时图形到内框的留白")
     p_sheet.add_argument("--project", default="")
     p_sheet.add_argument("--drawing", default="")
     p_sheet.add_argument("--no", dest="number", default="", help="图号")

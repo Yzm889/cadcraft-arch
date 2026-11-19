@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aa_lib import (  # noqa: E402
-    CadError, Session, block_geometry, create_room, create_sheet, create_wall,
+    CadError, Session, block_geometry, create_room, create_sheet, create_wall, draw_table,
     export, set_sheet, sheet_layout, sheet_window, LAYERS,
 )
 
@@ -83,13 +83,21 @@ def main() -> int:
     assert texts.count("TEXT") >= 12
 
     # 5) 自动排图：另建一页，不给 at，图形外廓必须落在内框内
+    #    先在墙下方 12m 处摆一张表 —— 表格在图框外的老实现会漏算，这里专门盯它
+    draw_table(s, (0.0, -12000.0), "房间面积表", ["编号", "名称", "净面积(m2)"],
+               [["R001", "客厅", "26.27"]], [1600.0, 2600.0, 2600.0])
     auto = create_sheet(s, "S003", "A3", 100, project="自动排图")
     ref3 = [e for e in s.references() if e["geometry"]["block"] == "AA_SHEET_S003"][0]
     ip3 = ref3["geometry"]["insert"]
     for x, y in ((0.0, 0.0), (6000.0, 4800.0)):
         assert ip3["x"] + 2500 <= x <= ip3["x"] + 41500, (x, ip3["x"])
         assert ip3["y"] + 500 <= y <= ip3["y"] + 29200, (y, ip3["y"])
-    assert auto["extent"] is not None
+    # 表格底边（-12000 - 总高）也必须在内框里
+    tab_y = -12000.0 - (400.0 * 1.15 + 400.0 * 2)
+    assert ip3["y"] + 500 <= tab_y, (tab_y, ip3["y"])
+    assert ip3["x"] <= 0.0 <= ip3["x"] + 39000
+    ext = auto["extent"]
+    assert ext is not None and ext[1] <= tab_y, (ext, tab_y)
 
     # 6) 图幅过小：A4 留白 20m 时 6000×4800 装不下
     try:
