@@ -1,0 +1,88 @@
+"""生成演示平面图：轴网 + 外墙 + 隔墙 + 门窗 + 两个房间，并导出 PNG 供目视检查。"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+
+from aa_lib import (  # noqa: E402
+    Session,
+    annotate,
+    create_axis_grid,
+    create_opening,
+    create_room,
+    create_wall,
+    normalize_around,
+    openings_report,
+    rooms_report,
+)
+
+OUT = ROOT / "samples"
+OUT.mkdir(exist_ok=True)
+
+
+def main() -> int:
+    path = OUT / "demo_floorplan.dxf"
+    if path.exists():
+        path.unlink()
+
+    s = Session(path)
+    s.new_metric()
+
+    # 轴网：3 道纵轴 @3600，2 道横轴 @4800
+    create_axis_grid(s, "AX001", 3, 3600.0, 2, 4800.0, 0.0, 0.0, 2400.0)
+
+    ext = 240.0
+    # 外墙（按房间分段的实际墙段）
+    create_wall(s, "W001", (0.0, 0.0), (6000.0, 0.0), thick=ext, kind="EXTERNAL", ax1="A", ax2="B")
+    create_wall(s, "W002", (6000.0, 0.0), (10800.0, 0.0), thick=ext, kind="EXTERNAL", ax1="B", ax2="D")
+    create_wall(s, "W003", (10800.0, 0.0), (10800.0, 4800.0), thick=ext, kind="EXTERNAL")
+    create_wall(s, "W004", (10800.0, 4800.0), (6000.0, 4800.0), thick=ext, kind="EXTERNAL")
+    create_wall(s, "W005", (6000.0, 4800.0), (0.0, 4800.0), thick=ext, kind="EXTERNAL")
+    create_wall(s, "W006", (0.0, 4800.0), (0.0, 0.0), thick=ext, kind="EXTERNAL")
+    # 中间隔墙
+    create_wall(s, "W007", (6000.0, 0.0), (6000.0, 4800.0), thick=ext, kind="PARTITION")
+
+    # 墙画完先规整一遍：转角合角 + 相交处墙线裁剪
+    for wid in ("W001", "W002", "W003", "W004", "W005", "W006", "W007"):
+        normalize_around(s, wid)
+
+    # 门窗
+    create_opening(s, "D001", "W001", "DOOR", width=1000.0, pos=1000.0)
+    create_opening(s, "D002", "W004", "DOOR", width=900.0, pos=2400.0)
+    create_opening(s, "C001", "W002", "WINDOW", width=1800.0, pos=2400.0)
+    create_opening(s, "C002", "W005", "WINDOW", width=1800.0, pos=3000.0)
+
+    # 房间（墙环闭合校验 + 内偏移面积）
+    r1 = create_room(s, "R001", ["W001", "W007", "W005", "W006"], name="客厅")
+    r2 = create_room(s, "R002", ["W002", "W003", "W004", "W007"], name="卧室")
+
+    png = OUT / "demo_floorplan.png"
+    subprocess.run([s.cli, "run", str(path), "--export", str(png)],
+                   capture_output=True, text=True, encoding="utf-8")
+
+    # 全套交付图：加尺寸标注 + 房间表 + 门窗表
+    full = OUT / "demo_full.dxf"
+    if full.exists():
+        full.unlink()
+    full.write_bytes(path.read_bytes())
+    sf = Session(full)
+    annotate(sf)
+    rooms_report(sf, OUT / "demo_rooms.csv", (0.0, -3400.0), "房间面积表")
+    openings_report(sf, OUT / "demo_openings.csv", (6800.0, -3400.0), "门窗表")
+    subprocess.run([sf.cli, "run", str(full), "--export", str(OUT / "demo_full.png"),
+                    "--window=-2600,-7100,13500,7300"],
+                   capture_output=True, text=True, encoding="utf-8")
+
+    print("rooms: 客厅 %.0f mm²  卧室 %.0f mm²" % (r1["area"], r2["area"]))
+    print("png:", png, png.exists())
+    print("components:", len(s.components("AA_")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

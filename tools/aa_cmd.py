@@ -1,0 +1,258 @@
+"""cadcraft-arch 命令行入口。
+
+AI 或用户直接用它驱动 CADCraft 画建筑平面：
+
+  python tools/aa_cmd.py new    out.dxf
+  python tools/aa_cmd.py axis   out.dxf AX001 --xcount 4 --xspace 4000 --ycount 3 --yspace 5000
+  python tools/aa_cmd.py wall   out.dxf W001 --p1 0,0 --p2 3600,0 --thick 240
+  python tools/aa_cmd.py opening out.dxf D001 --wall W001 --kind DOOR --width 1800 --pos 900
+  python tools/aa_cmd.py room   out.dxf R001 --walls W001,W002,W003,W004 --name 客厅
+  python tools/aa_cmd.py split  out.dxf
+  python tools/aa_cmd.py merge  out.dxf [--walls W001,W003]
+  python tools/aa_cmd.py show   out.dxf
+
+所有命令输出一行 JSON；失败时输出 {"ok":false,"error":...} 并以非零码退出。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from aa_lib import (  # noqa: E402
+    CadError,
+    Session,
+    annotate,
+    auto_rooms,
+    create_axis_grid,
+    create_opening,
+    create_room,
+    create_wall,
+    merge_walls,
+    normalize_around,
+    openings_report,
+    rooms_report,
+    set_opening,
+    set_room,
+    set_wall,
+    split_at_intersections,
+)
+
+
+def _pt(text: str) -> tuple[float, float]:
+    a, b = text.split(",")
+    return float(a), float(b)
+
+
+def _csv(text: str) -> list[str]:
+    return [x.strip() for x in text.split(",") if x.strip()]
+
+
+def emit(obj) -> None:
+    print(json.dumps(obj, ensure_ascii=False))
+
+
+def components_report(session: Session) -> list[dict]:
+    out = []
+    for e in session.references():
+        g = e["geometry"]
+        name = g.get("block", "")
+        if not name.startswith("AA_"):
+            continue
+        attrs = {a["tag"].replace("AA_", "").lower(): a.get("text", {}).get("value", "")
+                 for a in g.get("attribs", [])}
+        out.append({
+            "block": name,
+            "handle": e["handle"],
+            "at": [g["insert"]["x"], g["insert"]["y"]],
+            "rotation_deg": round(g.get("rotation", 0.0) * 57.29577951308232, 4),
+            "attrs": attrs,
+        })
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="aa_cmd", description="cadcraft-arch 命令行")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_new = sub.add_parser("new", help="新建公制图纸")
+    p_new.add_argument("path")
+
+    p_axis = sub.add_parser("axis", help="生成轴网")
+    p_axis.add_argument("path")
+    p_axis.add_argument("id")
+    p_axis.add_argument("--xcount", type=int, required=True)
+    p_axis.add_argument("--xspace", type=float, required=True)
+    p_axis.add_argument("--ycount", type=int, required=True)
+    p_axis.add_argument("--yspace", type=float, required=True)
+    p_axis.add_argument("--xstart", type=float, default=0.0)
+    p_axis.add_argument("--ystart", type=float, default=0.0)
+    p_axis.add_argument("--ext", type=float, default=1000.0)
+
+    p_wall = sub.add_parser("wall", help="绘制墙体")
+    p_wall.add_argument("path")
+    p_wall.add_argument("id")
+    p_wall.add_argument("--p1", required=True, help="起点 x,y")
+    p_wall.add_argument("--p2", required=True, help="终点 x,y")
+    p_wall.add_argument("--thick", type=float, default=240.0)
+    p_wall.add_argument("--kind", default="INTERNAL",
+                        choices=["EXTERNAL", "INTERNAL", "PARTITION"])
+    p_wall.add_argument("--mat", default="")
+    p_wall.add_argument("--ax1", default="")
+    p_wall.add_argument("--ax2", default="")
+
+    p_op = sub.add_parser("opening", help="门窗开洞")
+    p_op.add_argument("path")
+    p_op.add_argument("id")
+    p_op.add_argument("--wall", required=True, help="所属墙编号")
+    p_op.add_argument("--kind", default="DOOR", choices=["DOOR", "WINDOW", "DOORWIN"])
+    p_op.add_argument("--width", type=float, required=True)
+    p_op.add_argument("--pos", type=float, required=True, help="洞口中心到墙起点的距离")
+    p_op.add_argument("--height", type=float, default=None)
+    p_op.add_argument("--sill", type=float, default=0.0)
+    p_op.add_argument("--frame", type=float, default=60.0, help="窗框厚，默认 60")
+    p_op.add_argument("--no", default="", help="门窗编号，缺省按尺寸自动生成（M0921 / C1215）")
+    p_op.add_argument("--label-side", default="in", choices=["in", "out", "auto"],
+                      help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
+
+    p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
+    p_room.add_argument("path")
+    p_room.add_argument("id", nargs="?", default=None)
+    p_room.add_argument("--walls", default="", help="按环形顺序的墙编号，逗号分隔（--auto 时忽略）")
+    p_room.add_argument("--name", default="")
+    p_room.add_argument("--auto", action="store_true", help="自动枚举闭合墙环并逐个建房间")
+    p_room.add_argument("--prefix", default="R", help="自动编号前缀，默认 R")
+    p_room.add_argument("--min-area", type=float, default=1.0, help="自动搜环时忽略的最小面积 mm²")
+
+    p_show = sub.add_parser("show", help="列出全部 AA_ 构件与属性")
+    p_show.add_argument("path")
+
+    p_setw = sub.add_parser("set-wall", help="改墙厚/类型/材质/轴号并重绘（洞口与邻墙同步重建）")
+    p_setw.add_argument("path")
+    p_setw.add_argument("id")
+    p_setw.add_argument("--thick", type=float, default=None)
+    p_setw.add_argument("--kind", default=None,
+                        choices=["EXTERNAL", "INTERNAL", "PARTITION"])
+    p_setw.add_argument("--mat", default=None)
+    p_setw.add_argument("--ax1", default=None)
+    p_setw.add_argument("--ax2", default=None)
+
+    p_seto = sub.add_parser("set-opening", help="改门窗位置/宽度/类型并重绘")
+    p_seto.add_argument("path")
+    p_seto.add_argument("id")
+    p_seto.add_argument("--pos", type=float, default=None)
+    p_seto.add_argument("--width", type=float, default=None)
+    p_seto.add_argument("--height", type=float, default=None)
+    p_seto.add_argument("--sill", type=float, default=None)
+    p_seto.add_argument("--kind", default=None, choices=["DOOR", "WINDOW", "DOORWIN"])
+    p_seto.add_argument("--frame", type=float, default=None)
+    p_seto.add_argument("--no", default=None)
+    p_seto.add_argument("--label-side", default=None, choices=["in", "out", "auto"],
+                        help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
+
+    p_openings = sub.add_parser("openings", help="门窗表：按编号汇总尺寸与数量，可导出 CSV / 图上表格")
+    p_openings.add_argument("path")
+    p_openings.add_argument("--csv", default=None, help="导出 CSV 路径（UTF-8 BOM）")
+    p_openings.add_argument("--table", default=None, help="在图上插入表格，给左下角 x,y")
+    p_openings.add_argument("--title", default="门窗表")
+
+    p_dim = sub.add_parser("dim", help="尺寸标注：外墙墙段长度 + 洞口宽，标在建筑外侧")
+    p_dim.add_argument("path")
+    p_dim.add_argument("--opening-off", type=float, default=700.0, help="洞口尺寸线离墙面距离")
+    p_dim.add_argument("--wall-off", type=float, default=1150.0, help="墙段尺寸线离墙面距离")
+    p_dim.add_argument("--all-walls", action="store_true", help="连内墙一起标（默认只标外墙）")
+
+    p_split = sub.add_parser("split", help="墙体相交自动切断")
+    p_split.add_argument("path")
+
+    p_merge = sub.add_parser("merge", help="合并共线相接的墙段")
+    p_merge.add_argument("path")
+    p_merge.add_argument("--walls", default="", help="指定要合并的墙编号（逗号分隔）；省略则按 AA_ROOT 自动聚合")
+
+    p_setroom = sub.add_parser("set-room", help="改房间名称并重绘名称文字")
+    p_setroom.add_argument("path")
+    p_setroom.add_argument("id")
+    p_setroom.add_argument("--name", required=True, help="新名称（空串表示清空）")
+
+    p_rooms = sub.add_parser("rooms", help="房间汇总：面积/周长/墙环，可导出 CSV 或插入图上表格")
+    p_rooms.add_argument("path")
+    p_rooms.add_argument("--csv", default=None, help="导出 CSV 路径（UTF-8 BOM）")
+    p_rooms.add_argument("--table", default=None, help="在图上插入表格，给左下角 x,y")
+    p_rooms.add_argument("--title", default="房间面积表")
+
+    args = ap.parse_args(argv)
+
+    try:
+        session = Session(args.path)
+        if args.cmd == "new":
+            session.new_metric()
+            emit({"ok": True, "path": str(session.path)})
+            return 0
+
+        if not session.path.exists():
+            raise CadError("图纸不存在：%s" % session.path)
+
+        if args.cmd == "axis":
+            emit({"ok": True, **create_axis_grid(
+                session, args.id, args.xcount, args.xspace,
+                args.ycount, args.yspace, args.xstart, args.ystart, args.ext)})
+        elif args.cmd == "wall":
+            res = create_wall(
+                session, args.id, _pt(args.p1), _pt(args.p2),
+                args.thick, args.kind, args.mat, args.ax1, args.ax2)
+            # 画完墙立刻规整它自己与相邻墙的裁剪/合角
+            res["normalized"] = normalize_around(session, args.id)
+            emit({"ok": True, **res})
+        elif args.cmd == "opening":
+            emit({"ok": True, **create_opening(
+                session, args.id, args.wall, args.kind,
+                args.width, args.pos, args.height, args.sill,
+                args.frame, args.no, args.label_side)})
+        elif args.cmd == "room":
+            if args.auto:
+                emit({"ok": True, **auto_rooms(
+                    session, args.prefix, args.name, args.min_area)})
+            else:
+                if not args.id or not args.walls:
+                    raise CadError("room 需要给出房间编号与 --walls，或用 --auto 自动搜环")
+                emit({"ok": True, **create_room(
+                    session, args.id, _csv(args.walls), args.name)})
+        elif args.cmd == "split":
+            emit({"ok": True, **split_at_intersections(session)})
+        elif args.cmd == "set-wall":
+            emit({"ok": True, **set_wall(
+                session, args.id, args.thick, args.kind, args.mat, args.ax1, args.ax2)})
+        elif args.cmd == "set-opening":
+            emit({"ok": True, **set_opening(
+                session, args.id, args.pos, args.width,
+                args.height, args.sill, args.kind, args.frame, args.no,
+                args.label_side)})
+        elif args.cmd == "merge":
+            emit({"ok": True, **merge_walls(
+                session, _csv(args.walls) or None)})
+        elif args.cmd == "set-room":
+            emit({"ok": True, **set_room(session, args.id, args.name)})
+        elif args.cmd == "rooms":
+            emit({"ok": True, **rooms_report(
+                session, args.csv, _pt(args.table) if args.table else None, args.title)})
+        elif args.cmd == "openings":
+            emit({"ok": True, **openings_report(
+                session, args.csv, _pt(args.table) if args.table else None, args.title)})
+        elif args.cmd == "dim":
+            emit({"ok": True, **annotate(
+                session, args.opening_off, args.wall_off,
+                exterior_only=not args.all_walls)})
+        elif args.cmd == "show":
+            emit({"ok": True, "components": components_report(session)})
+        return 0
+    except CadError as e:
+        emit({"ok": False, "error": str(e)})
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

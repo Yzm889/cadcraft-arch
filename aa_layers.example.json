@@ -1,0 +1,8 @@
+{
+  "_说明": "把本文件改名为 aa_layers.json 放在项目根，或设环境变量 AA_LAYERS_FILE 指向它，即可用自己图档的图层标准替换默认层名。键不可增删。",
+  "axis": "AA-AXIS",
+  "axistext": "AA-AXISTEXT",
+  "wall": "AA-WALL",
+  "opening": "AA-OPENING",
+  "room": "AA-ROOM"
+}

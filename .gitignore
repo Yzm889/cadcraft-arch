@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.bak
+*.tmp
+scratch_*
+samples/*.bak
+.venv/

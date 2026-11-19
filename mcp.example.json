@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cadcraft-arch": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\tools\\aa_mcp.py",
+        "--serve"
+      ]
+    }
+  }
+}
