@@ -17,6 +17,7 @@ from aa_lib import (  # noqa: E402
     create_room,
     create_sheet,
     create_wall,
+    drawing_extent,
     export,
     normalize_around,
     openings_report,
@@ -77,9 +78,8 @@ def main() -> int:
     annotate(sf)
     rooms_report(sf, OUT / "demo_rooms.csv", (0.0, -3400.0), "房间面积表")
     openings_report(sf, OUT / "demo_openings.csv", (9900.0, -3400.0), "门窗表")
-    subprocess.run([sf.cli, "run", str(full), "--export", str(OUT / "demo_full.png"),
-                    "--window=-2600,-7100,13500,7300"],
-                   capture_output=True, text=True, encoding="utf-8")
+    win_full = drawing_extent(sf, pad=1500.0)
+    export(sf, OUT / "demo_full.png", win_full)
 
     # 出图交付：A3@1:100 图框 + 标题栏，导出 PNG / PDF
     sheet = OUT / "demo_sheet.dxf"
