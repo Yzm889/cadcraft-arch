@@ -24,6 +24,7 @@ from aa_lib import (  # noqa: E402
     CadError,
     Session,
     annotate,
+    auto_axis,
     auto_rooms,
     create_axis_grid,
     create_opening,
@@ -46,7 +47,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.7.0"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.8.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -101,6 +102,22 @@ TOOLS: list[dict[str, Any]] = [
                 "ext": {"type": "number", "description": "轴线两端出头长度 mm", "default": 1000},
             },
             "required": ["path", "id", "xcount", "xspace", "ycount", "yspace"],
+        },
+    },
+    {
+        "name": "aa_axis_auto",
+        "description": "按现有墙段自动生成轴网：竖墙推纵向轴线（编 1/2/3），横墙推横向轴线（编 A/B/C），"
+                       "同轴墙段按 tol 聚类，轴线两端外伸 ext；斜墙跳过并在 skipped 中返回。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "轴网编号，如 AX001", "default": "AX001"},
+                "tol": {"type": "number", "description": "同一根轴上的墙段位置聚类容差 mm", "default": 50},
+                "ext": {"type": "number", "description": "轴线端伸出最外轴的距离 mm", "default": 2400},
+                "min_len": {"type": "number", "description": "忽略短于该长度的墙 mm", "default": 0},
+            },
+            "required": ["path"],
         },
     },
     {
@@ -386,6 +403,11 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "path": str(s.path), "units": "mm"}
 
     s = _session(path)
+
+    if name == "aa_axis_auto":
+        return {"ok": True, **auto_axis(
+            s, a.get("id", "AX001"), _num(a.get("tol", 50), "tol"),
+            _num(a.get("ext", 2400), "ext"), _num(a.get("min_len", 0), "min_len"))}
 
     if name == "aa_axis":
         return {"ok": True, **create_axis_grid(

@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from aa_lib import (  # noqa: E402
     Session,
     annotate,
-    create_axis_grid,
+    auto_axis,
     create_opening,
     create_room,
     create_sheet,
@@ -36,9 +36,6 @@ def main() -> int:
     s = Session(path)
     s.new_metric()
 
-    # 轴网：3 道纵轴 @3600，2 道横轴 @4800
-    create_axis_grid(s, "AX001", 3, 3600.0, 2, 4800.0, 0.0, 0.0, 2400.0)
-
     ext = 240.0
     # 外墙（按房间分段的实际墙段）
     create_wall(s, "W001", (0.0, 0.0), (6000.0, 0.0), thick=ext, kind="EXTERNAL", ax1="1", ax2="2")
@@ -53,6 +50,9 @@ def main() -> int:
     # 墙画完先规整一遍：转角合角 + 相交处墙线裁剪
     for wid in ("W001", "W002", "W003", "W004", "W005", "W006", "W007"):
         normalize_around(s, wid)
+
+    # 轴网：按墙自动推断（竖墙 0/6000/10800 -> 1/2/3，横墙 0/4800 -> A/B）
+    grid = auto_axis(s, "AX001", tol=50.0, ext=2400.0)
 
     # 门窗
     create_opening(s, "D001", "W001", "DOOR", width=1000.0, pos=1000.0)
@@ -98,6 +98,7 @@ def main() -> int:
 
     print("rooms: 客厅 %.0f mm²  卧室 %.0f mm²" % (r1["area"], r2["area"]))
     print("png:", png, png.exists())
+    print("grid: %s  ver=%s hor=%s" % (grid["xpos"], grid["ver"], grid["hor"]))
     print("components:", len(s.components("AA_")))
     return 0
 

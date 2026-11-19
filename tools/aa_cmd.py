@@ -27,6 +27,7 @@ from aa_lib import (  # noqa: E402
     CadError,
     Session,
     annotate,
+    auto_axis,
     auto_rooms,
     create_axis_grid,
     create_opening,
@@ -96,6 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     p_axis.add_argument("--xstart", type=float, default=0.0)
     p_axis.add_argument("--ystart", type=float, default=0.0)
     p_axis.add_argument("--ext", type=float, default=1000.0)
+
+    p_axis_auto = sub.add_parser("axis-auto", help="按现有墙段自动生成轴网（竖轴 1/2/3、横轴 A/B/C）")
+    p_axis_auto.add_argument("path")
+    p_axis_auto.add_argument("id", nargs="?", default="AX001")
+    p_axis_auto.add_argument("--tol", type=float, default=50.0,
+                            help="同一根轴上的墙段位置聚类容差（mm）")
+    p_axis_auto.add_argument("--ext", type=float, default=2400.0, help="轴线端伸出最外轴的距离")
+    p_axis_auto.add_argument("--min-len", type=float, default=0.0, help="忽略短于该长度的墙")
 
     p_wall = sub.add_parser("wall", help="绘制墙体")
     p_wall.add_argument("path")
@@ -233,6 +242,9 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_axis_grid(
                 session, args.id, args.xcount, args.xspace,
                 args.ycount, args.yspace, args.xstart, args.ystart, args.ext)})
+        elif args.cmd == "axis-auto":
+            emit({"ok": True, **auto_axis(
+                session, args.id, args.tol, args.ext, args.min_len)})
         elif args.cmd == "wall":
             res = create_wall(
                 session, args.id, _pt(args.p1), _pt(args.p2),

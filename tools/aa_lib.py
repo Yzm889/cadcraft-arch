@@ -438,6 +438,143 @@ def create_axis_grid(
     return {"block": block, "handle": handle, "ver": ver, "hor": hor, "geom_handles": handles}
 
 
+def _axis_letters(n: int) -> list[str]:
+    """轴号字母序列：A、B…Z、AA、AB…（跳过 I/O/Z 这类易混字符的国标做法暂不启用）。"""
+    out = []
+    for i in range(n):
+        letters = ""
+        k = i
+        while True:
+            letters = chr(ord("A") + k % 26) + letters
+            k = k // 26 - 1
+            if k < 0:
+                break
+        out.append(letters)
+    return out
+
+
+def _cluster(values: Sequence[float], tol: float) -> list[float]:
+    """把位置按容差聚类，返回每簇的中心（处理"同一根轴上有两段墙但端点差几毫米"）。"""
+    if not values:
+        return []
+    out: list[list[float]] = []
+    for v in sorted(values):
+        if out and abs(v - out[-1][-1]) <= tol:
+            out[-1].append(v)
+        else:
+            out.append([v])
+    return [sum(g) / len(g) for g in out]
+
+
+def auto_axis(
+    session: Session,
+    grid_id: str = "AX001",
+    tol: float = 50.0,
+    ext: float = 2400.0,
+    min_len: float = 0.0,
+) -> dict[str, Any]:
+    """按现有墙段自动生成轴网：竖墙 -> 纵向轴线（编 1、2、3…），横墙 -> 横向轴线（编 A、B、C…）。
+
+    规则：
+      · 只认正交墙（走向与 X/Y 轴夹角 ≤ 0.1°，可调 tol 只管位置聚类）；斜墙跳过并在结果里列出；
+      · 同一根轴上的墙段按 `tol`（默认 50mm）合并成一根轴；
+      · 轴线长度 = 最外侧轴线 ± `ext`；轴号圈贴在轴线端外侧，与端部相切；
+      · 轴号编号：纵向自左向右 1、2、3…，横向自下向上 A、B、C…（GB/T 50001）；
+      · 编号已存在同名的轴网块 -> 拒绝（换编号重来，避免两套轴线叠在一起）。
+    """
+    block = "AA_AXGRID_" + grid_id
+    if session.block_exists(block):
+        raise CadError("轴网 %s 已存在，请换编号（自动轴网不会覆盖已有轴网）" % grid_id)
+
+    xs_raw: list[float] = []
+    ys_raw: list[float] = []
+    skipped: list[dict[str, Any]] = []
+    for w in wall_data(session):
+        if w["len"] < min_len:
+            continue
+        ang = w["rotation_rad"] % math.pi
+        dx, dy = abs(math.cos(ang)), abs(math.sin(ang))
+        if dy <= 1e-3:                      # 水平墙
+            ys_raw.append(w["p1"][1])
+        elif dx <= 1e-3:                    # 竖直墙
+            xs_raw.append(w["p1"][0])
+        else:
+            skipped.append({"id": w["id"], "angle_deg": round(math.degrees(ang), 2)})
+
+    xs = _cluster(xs_raw, tol)
+    ys = _cluster(ys_raw, tol)
+    if not xs and not ys:
+        raise CadError("没有任何正交墙可用于生成轴网（斜墙 %d 段）" % len(skipped))
+
+    ver = [str(i + 1) for i in range(len(xs))]
+    hor = _axis_letters(len(ys))
+    x0, x1 = (min(xs), max(xs)) if xs else (0.0, 0.0)
+    y0, y1 = (min(ys), max(ys)) if ys else (0.0, 0.0)
+
+    session.ensure_layers([LAYERS["axis"], LAYERS["axistext"]])
+    session.ensure_linetypes()
+    before = session.snapshot()
+    body: list[str] = []
+    for x, lab in zip(xs, ver):
+        body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
+                    % (x, y0 - ext, x, y1 + ext, LAYERS["axis"]))
+        body.append('(aa:axistag %.3f %.3f "%s")' % (x, y1 + ext + 400.0, lab))
+    for y, lab in zip(ys, hor):
+        body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
+                    % (x0 - ext, y, x1 + ext, y, LAYERS["axis"]))
+        body.append('(aa:axistag %.3f %.3f "%s")' % (x0 - ext - 400.0, y, lab))
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_axis.lisp"))
+    handles = session.new_handles(before)
+
+    def fmt(v: Sequence[float]) -> str:
+        return ";".join("%.2f" % x for x in v)
+
+    att_defs = [
+        ("AA_TYPE", "component type", "AXGRID"),
+        ("AA_ID", "component id", grid_id),
+        ("AA_MODE", "grid mode", "AUTO"),
+        ("AA_XCOUNT", "x axis count", str(len(xs))),
+        ("AA_YCOUNT", "y axis count", str(len(ys))),
+        ("AA_XPOS", "vertical axis positions", fmt(xs)),
+        ("AA_YPOS", "horizontal axis positions", fmt(ys)),
+        ("AA_VER", "vertical labels", ";".join(ver)),
+        ("AA_HOR", "horizontal labels", ";".join(hor)),
+        ("AA_SKIP", "skipped slanted walls", ";".join(s["id"] for s in skipped)),
+    ]
+    att_vals = {t: v for t, _d, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["axis"])
+    session.expect_attributes(block, {"AA_ID": grid_id, "AA_TYPE": "AXGRID",
+                                      "AA_VER": ";".join(ver), "AA_HOR": ";".join(hor)})
+
+    # 回读：线数 / 圈数 / 轴号文字必须与推理结果一致
+    geom = block_geometry(session.path, block)
+    n_line = sum(1 for g in geom if g["type"] == "LINE")
+    n_circ = sum(1 for g in geom if g["type"] == "CIRCLE")
+    texts = [g["text"] for g in geom if g["type"] == "TEXT"]
+    if n_line != len(xs) + len(ys) or n_circ != len(xs) + len(ys):
+        raise CadError("轴网回读不符：线 %d / 圈 %d，期望 %d"
+                       % (n_line, n_circ, len(xs) + len(ys)))
+    if sorted(texts) != sorted(ver + hor):
+        raise CadError("轴号回读不符：%s，期望 %s" % (texts, ver + hor))
+    if not all(g["lt"] == "CENTER" for g in geom if g["type"] == "LINE"):
+        raise CadError("轴线线型回读不符：应全部为 CENTER")
+
+    return {
+        "block": block,
+        "handle": handle,
+        "xpos": [round(v, 3) for v in xs],
+        "ypos": [round(v, 3) for v in ys],
+        "ver": ";".join(ver),
+        "hor": ";".join(hor),
+        "lines": n_line,
+        "skipped": skipped,
+        "geom_handles": handles,
+    }
+
+
 def wall_info(session: Session, wall_id: str) -> dict[str, Any]:
     """读取墙参照的定位信息与属性；墙不存在直接报错。"""
     block = "AA_WALL_" + wall_id
@@ -1772,6 +1909,38 @@ def create_wall(
         "angle_deg": float(angle) * 57.29577951308232,
         "geom_handles": handles,
     }
+
+
+def layer_of_block(path, block_name: str) -> set[str]:
+    """块定义内出现过的图层名集合（DXF 组 8），用于核对构件是否落对层。"""
+    lines_in = [ln.strip() for ln in Path(path).read_text(encoding="utf-8",
+                                                          errors="replace").splitlines()]
+    out: set[str] = set()
+    section = cur = None
+    i = 0
+    while i < len(lines_in) - 1:
+        code, val = lines_in[i], lines_in[i + 1]
+        i += 2
+        if code == "0":
+            if val == "SECTION":
+                section = None
+            elif val == "ENDSEC":
+                section, cur = None, None
+            elif section == "BLOCKS":
+                if val == "BLOCK":
+                    cur = None
+                elif val == "ENDBLK":
+                    cur = None
+            continue
+        if code == "2":
+            if section is None:
+                section = val
+            elif section == "BLOCKS" and cur is None:
+                cur = val
+            continue
+        if section == "BLOCKS" and cur == block_name and code == "8" and val:
+            out.add(val)
+    return out
 
 
 def block_geometry(path, block_name: str) -> list[dict[str, Any]]:

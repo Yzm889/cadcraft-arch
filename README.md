@@ -4,12 +4,13 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v0.7，已实测跑通）
+## 现状（v0.8，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
 | 新建公制图纸 | `new` | 完成 | — |
-| 轴网 | `axis` | 完成 | 4 纵 + 3 横、14 个图元、10 项属性、DWG 往返 |
+| 轴网（等距） | `axis` | 完成 | 4 纵 + 3 横、14 个图元、10 项属性、DWG 往返 |
+| **轴网自动** | `axis-auto` | 完成 | 由墙反推轴线：竖墙 x 聚类、横墙 y 聚类（`--tol` 50mm 合同轴）、竖轴编 1/2/3、横轴编 A/B/C、轴线端外伸 2400、斜墙跳过并记 `AA_SKIP`；回读校验线数/圈数/文字/线型（全 CENTER） |
 | 墙体 | `wall` | 完成 | 水平/斜墙长度与角度、厚度属性、包围盒；相交处墙线裁剪 + **转角合角** |
 | 门窗 | `opening` | 完成 | 依附墙、越界拒绝、重叠拒绝、宽度校验；**洞口在墙身真实开洞**（侧线断开） |
 | 房间 | `room` | 完成 | 闭合墙环校验、内偏移净面积（3360×4560 实测）；只落名称文字，不画与墙面重合的轮廓 |
@@ -24,12 +25,12 @@
 | 尺寸标注 | `dim` | 完成 | 外墙墙段长度标外层、洞口宽标内层，落在 `AA-DIM` 层；内墙自动跳过，重跑幂等、回读测量值 |
 | 图框 + 标题栏 | `sheet` / `set-sheet` | 完成 | GB/T 14689 图幅（A0–A4）、装订边 25、其余边 A0/A1=10 其余 5；标题栏 180×56 九格（GB/T 10609.1）；不给位置按全图外廓（墙/房间/轴号/尺寸/表格）自动居中排图，装不下直接报错；重复编号拒绝、改标题栏后块唯一且属性同步 |
 | 出图 | `export` | 完成 | 按扩展名导出 png/svg/pdf；`--sheet` 自动按图幅取窗口，PNG/PDF 均实测有产物（含 5% 余量、不裁切） |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，18 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，19 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (16 tests)
+python tests/run_all.py     # ALL PASS (17 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -53,8 +54,11 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 # 1. 新建图纸
 python tools/aa_cmd.py new out.dxf
 
-# 2. 轴网：3 道纵轴 @3600，2 道横轴 @4800
+# 2a. 轴网（等距）：3 道纵轴 @3600，2 道横轴 @4800
 python tools/aa_cmd.py axis out.dxf AX001 --xcount 3 --xspace 3600 --ycount 2 --yspace 4800
+
+# 2b. 轴网（自动）：墙都画完后按墙反推轴线，编号自动排（tol 合同轴，ext 端外伸）
+python tools/aa_cmd.py axis-auto out.dxf AX001 --tol 50 --ext 2400
 
 # 3. 墙：起点 -> 终点，墙厚 240
 python tools/aa_cmd.py wall out.dxf W001 --p1 0,0 --p2 6000,0 --thick 240 --kind EXTERNAL
@@ -182,7 +186,8 @@ CADCraft 0.20.1 没有 XData，因此每个构件是一个**独立块参照**，
 
 | 类型 | 块名 | 关键属性 |
 |---|---|---|
-| 轴网 | `AA_AXGRID_AX001` | `AA_TYPE` `AA_ID` `AA_XCOUNT` `AA_YCOUNT` `AA_XSPACE` `AA_YSPACE` `AA_XSTART` `AA_YSTART` `AA_VER` `AA_HOR` |
+| 轴网（等距） | `AA_AXGRID_AX001` | `AA_TYPE` `AA_ID` `AA_XCOUNT` `AA_YCOUNT` `AA_XSPACE` `AA_YSPACE` `AA_XSTART` `AA_YSTART` `AA_VER` `AA_HOR` |
+| **轴网（自动）** | `AA_AXGRID_AX001` | 同上 + `AA_MODE=AUTO` `AA_XPOS` `AA_YPOS` `AA_SKIP`（`;` 分隔的实际轴位/被跳过斜墙） |
 | 墙 | `AA_WALL_W001` | `AA_TYPE` `AA_ID` `AA_THICK` `AA_KIND` `AA_MAT` `AA_AX1` `AA_AX2` `AA_LEN` `AA_ROOT` |
 | 门窗 | `AA_OPENING_D001` | `AA_TYPE` `AA_ID` `AA_KIND` `AA_WIDTH` `AA_HEIGHT` `AA_SILL` `AA_WALLID` `AA_POS` `AA_FRAME` `AA_NO` |
 | 房间 | `AA_ROOM_R001` | `AA_TYPE` `AA_ID` `AA_NAME` `AA_AREA` `AA_PERIMETER` `AA_WALLS` `AA_PTS` |
@@ -201,6 +206,7 @@ Agent 不必拼命令行：`tools/aa_mcp.py` 是一个标准 **stdio MCP 服务�
 |---|---|
 | `aa_new` / `aa_show` | 新建公制图纸 / 回读全部构件 |
 | `aa_axis` | 轴网（纵轴 + 横轴 + 轴号） |
+| `aa_axis_auto` | **轴网自动**：按现有墙段反推轴线位置并自动编号 |
 | `aa_wall` | 画墙，画完自动规整邻墙裁剪与合角 |
 | `aa_opening` | 墙体真实开洞 + 门窗符号 + 自动编号（`frame` 窗框厚、`no` 编号可覆盖）|
 | `aa_room` / `aa_room_auto` | 显式墙环建房间 / 自动搜环建房间 |
