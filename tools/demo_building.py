@@ -26,6 +26,7 @@ from aa_lib import (
     create_wall,
     drawing_extent,
     export,
+    read_cut_openings,
     read_facade_openings,
     read_floors,
     set_drawing_scale,
@@ -67,42 +68,47 @@ def main() -> int:
     create_opening(s, "C002", "W003", "WINDOW", width=1200.0, pos=5600.0,
                     height=1500.0, sill=900.0, no="C0915")
     create_room(s, "R001", ["W001", "W002", "W003", "W004"], name="客厅")
-    # 1-1 剖切符号：切在 X=2000（正好穿过首层门的中间），往下（左）看
-    create_section_mark(s, "SM1", (2000.0, -1200.0), (2000.0, 5700.0),
+    # 1-1 剖切符号：切在 X=1500（正好穿过首层门中心，也切到北墙的 C0915），往左看
+    create_section_mark(s, "SM1", (1500.0, -1200.0), (1500.0, 5700.0),
                         direction="left", no="1", scale=SCALE)
 
-    # 屋顶平面（同建筑外轮廓 + 檐口外挑）
+    # 屋顶平面（同建筑外轮廓 + 檐口外挑），并补轴网：证明与一层平面同轴
     create_roof(s, "RF1", (0.0, 9500.0), kind="GABLE", width=7200.0, depth=4500.0,
                 overhang=600.0, ridge="X")
+    create_axis_grid(s, "AX002", 3, 3600.0, 2, 4500.0,
+                     xstart=0.0, ystart=9500.0, ext=annot_size(14.0, SCALE))
 
     # 楼层表放平面右侧
     create_floor_table(s, "FT1", (8500.0, 1500.0), FLOORS, scale=SCALE)
 
     # 立面 / 剖面 放下方
-    # 一层门窗不再手填坐标：直接读平面 W001 上的 AA_OPENING（x = 洞口左边距）
+    # 一层门窗不再手填坐标：直接读平面 W001 上的 AA_OPENING（左边距 = 中心 - 半宽）
     plan_ops = read_facade_openings(s, "W001")
-    want = [(1500.0, 900.0, 2100.0, 0.0), (5000.0, 1500.0, 1500.0, 900.0)]
+    want = [(1050.0, 900.0, 2100.0, 0.0), (4250.0, 1500.0, 1500.0, 900.0)]
     got = [(o["x"], o["w"], o["h"], o["sill"]) for o in plan_ops]
     assert got == want, "平面门窗与立面口径对不上：%r != %r" % (got, want)
 
     elev_ops = plan_ops + [
-        {"floor": 2, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-        {"floor": 2, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-        {"floor": 3, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-        {"floor": 3, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 2, "x": 1050.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 2, "x": 4250.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 3, "x": 1050.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 3, "x": 4250.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
     ]
     create_elevation(
         s, "E1", (0.0, -16000.0), 7200.0, FLOORS,
         openings=elev_ops,
         roof="EAVE", parapet=0.0, rise=1800.0, overhang=600.0)
+    # 剖面门窗不再手填：沿 1-1 剖切线（X=1500）反取被切到的洞口——
+    # 南墙首层门中心正好在 X=1500 → LEFT；北墙 C0915 跨 1000..2200，也切到 → RIGHT。
+    cut_ops = read_cut_openings(s, (1500.0, -1200.0), (1500.0, 5700.0))
+    assert [(o["side"], o["kind"], o["h"], o["sill"]) for o in cut_ops] == \
+        [("LEFT", "DOOR", 2100.0, 0.0),
+         ("RIGHT", "WINDOW", 1500.0, 900.0)], "剖面取数与剖切位置对不上：%r" % (cut_ops,)
+
     create_section(
         s, "P1", (9000.0, -16000.0), 4500.0, FLOORS,
-        openings=[
-            {"floor": 1, "h": 2100.0, "sill": 0.0, "kind": "DOOR"},
-            {"floor": 2, "h": 1500.0, "sill": 900.0},
-            {"floor": 3, "h": 1500.0, "sill": 900.0},
-        ],
-        side="LEFT", slab=100.0, roof="GABLE", parapet=0.0, rise=1800.0,
+        openings=cut_ops,
+        side="BOTH", slab=100.0, roof="GABLE", parapet=0.0, rise=1800.0,
         wall=240.0)
 
     for tid, (x, y), label in (

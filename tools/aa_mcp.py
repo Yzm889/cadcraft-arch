@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.23"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.24"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -738,6 +738,8 @@ TOOLS: list[dict[str, Any]] = [
                                        },
                                        "required": ["h"]}},
                 "slab": {"type": "number", "description": "楼板厚 mm", "default": 100},
+                "side": {"type": "string", "enum": ["BOTH", "LEFT", "RIGHT"],
+                         "description": "BOTH 两端外墙都剖（默认）；LEFT/RIGHT 半剖，只在那一端画墙带", "default": "BOTH"},
                 "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
                          "description": "平屋顶 / 双坡 / 不加", "default": "FLAT"},
                 "parapet": {"type": "number", "description": "女儿墙高 mm", "default": 1200},
@@ -941,7 +943,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "aa_profile":
         return {"ok": True, **create_section(
             s, a["id"], _pt(a["at"], "at"), _num(a["width"], "width"),
-            a["floors"], a.get("openings", []) or [], "LEFT",
+            a["floors"], a.get("openings", []) or [], a.get("side", "BOTH"),
             _num(a.get("slab", 100), "slab"), a.get("roof", "FLAT"),
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("wall", 240), "wall"), bool(a.get("marks", True)),

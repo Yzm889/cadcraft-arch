@@ -246,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
     p_profile.add_argument("--rise", type=float, default=0.0, help="双坡脊高（mm）")
     p_profile.add_argument("--no-marks", action="store_true", help="不注标高")
     p_profile.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
+    p_profile.add_argument("--side", dest="side", default="BOTH",
+                           choices=["BOTH", "LEFT", "RIGHT"],
+                           help="BOTH 两端外墙都剖（默认）；LEFT/RIGHT 半剖，只在那一端画墙带")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -543,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
                     op["side"] = parts[4]
                 ops.append(op)
             emit({"ok": True, **create_section(
-                session, args.id, _pt(args.at), args.w, floors, ops, "LEFT",
+                session, args.id, _pt(args.at), args.w, floors, ops, args.side,
                 args.slab, args.roof, args.parapet, args.rise, args.wallth,
                 not args.no_marks, args.angle)})
         elif args.cmd == "title":

@@ -19,6 +19,7 @@ from aa_lib import (  # noqa: E402
     create_elevation,
     create_opening,
     create_wall,
+    read_cut_openings,
     read_facade_openings,
 )
 
@@ -39,18 +40,18 @@ def main() -> int:
     create_opening(s, "C002", "W003", "WINDOW", 1200.0, 5600.0,
                    height=1500.0, sill=900.0, no="C0915")
 
-    # 南墙（起点在左手边）：x 就等于 AA_POS
+    # 南墙（起点在左手边）：x = 中心 - 半宽
     south = read_facade_openings(s, "W001")
     assert [(o["x"], o["w"], o["h"], o["sill"], o["kind"]) for o in south] == [
-        (1500.0, 900.0, 2100.0, 0.0, "DOOR"),
-        (5000.0, 1500.0, 1500.0, 900.0, "WINDOW"),
+        (1050.0, 900.0, 2100.0, 0.0, "DOOR"),
+        (4250.0, 1500.0, 1500.0, 900.0, "WINDOW"),
     ], south
     assert [o["no"] for o in south] == ["M0921", "C1215"], south
 
-    # 北墙（墙从右往左画，起点在右手边）：x = 7200 - 5600 - 1200 = 400
+    # 北墙（墙从右往左画，起点在右手边）：x = 7200 - 5600 - 600 = 1000
     north = read_facade_openings(s, "W003", flip=True)
-    assert [(o["x"], o["w"]) for o in north] == [(400.0, 1200.0)], north
-    assert read_facade_openings(s, "W003")[0]["x"] == 5600.0, "不 flip 时应是 AA_POS"
+    assert [(o["x"], o["w"]) for o in north] == [(1000.0, 1200.0)], north
+    assert read_facade_openings(s, "W003")[0]["x"] == 5000.0, "不 flip 时应是 中心-半宽"
 
     # 派生清单直接喂给立面：洞口在立面上就落在这些 x 上
     elev = create_elevation(s, "E1", (0.0, 0.0), 7200.0,
@@ -64,12 +65,18 @@ def main() -> int:
     # wall= 直接把平面门窗并进立面：2 樘来自平面 + 1 樘手填二层
     mixed = create_elevation(s, "E2", (0.0, 8000.0), 7200.0,
                              [{"height": 3600.0}, {"height": 3300.0}],
-                             [{"floor": 2, "x": 5000.0, "w": 1500.0, "h": 1500.0,
+                             [{"floor": 2, "x": 4250.0, "w": 1500.0, "h": 1500.0,
                                "sill": 900.0}],
                              "NONE", marks=False, wall="W001")
     assert mixed["openings"] == 3, mixed
 
-    print("平面→立面联动: 南墙 2 樘 (x=1500/5000) / 北墙 1 樘 (x=400) 校验通过")
+    # 剖切线取洞口：X=1500 切到南墙门（中心 1500）、北墙 C0915（跨 1000..2200）
+    cut = read_cut_openings(s, (1500.0, -1200.0), (1500.0, 5700.0))
+    assert [(o["side"], o["kind"]) for o in cut] == [("LEFT", "DOOR"), ("RIGHT", "WINDOW")], cut
+    # 切在墙身上（X=3000，两樘都不在洞口宽度内）→ 一个洞口都不给
+    assert read_cut_openings(s, (3000.0, -1200.0), (3000.0, 5700.0)) == []
+
+    print("平面→立面联动: 南墙 2 樘 (x=1050/4250) / 北墙 flip 后 1 樘 (x=1000) / 剖切线取洞口 2 樘 校验通过")
     print("PASS test_link")
     return 0
 

@@ -2401,7 +2401,7 @@ def create_section(
     width: float,
     floors: Sequence[Any],
     openings: Sequence[dict[str, Any]] = (),
-    side: str = "LEFT",
+    side: str = "BOTH",
     slab: float = 100.0,
     roof: str = "FLAT",
     parapet: float = 1200.0,
@@ -2412,11 +2412,12 @@ def create_section(
 ) -> dict[str, Any]:
     """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
 
-    `at` = 剖面左端室内地坪点（±0.000）；`width` = 剖面宽；
-    `floors` 同 `create_elevation`；`slab` 楼板厚（默认 100）；`wall` 外墙厚——
-    剖面里外墙按墙厚画成窄带（外皮 + 内皮两道）。
-    `openings` = 剖到的门窗 `[{floor, h, sill, kind, side?}]`：在剖切的墙带上断开墙线，
-    画窗框双线 + 玻璃（窗）或门上亮子（门）；`side` 默认 LEFT（另一侧对称）。
+    `at` = 剖面左端室内地坪点（±0.000）；`width` = 剖面宽（两端墙内皮之间）；
+    `floors` 同 `create_elevation`；`slab` 楼板厚（默认 100）；`wall` 外墙厚。
+    `side`：BOTH（默认）= 剖切面穿过两端外墙，两端都按墙厚画成被剖的窄带（带门窗断口）；
+    LEFT / RIGHT 为特殊需求下的"半剖"——只画那一端的墙带，另一端按看到的内表面画细线。
+    `openings` = 剖到的门窗 `[{floor, h, sill, kind, side?}]`：在墙带上断开墙线，
+    画窗框双线 + 玻璃（窗）或门上亮子（门）；`side` 默认 LEFT（另一端给 RIGHT）。
     `roof`：FLAT 平屋顶（屋面板 + 女儿墙）/ GABLE 双坡（斜屋面板 + 脊）/ NONE。
     剖面暂不画梁、楼梯、基础、材料图例。
     """
@@ -2461,10 +2462,12 @@ def create_section(
     det = LAYERS["elevdetail"]
     ext = annot_size(5.0, sc)
 
-    # 剖到的门窗：只给层号/高/窗台高/类型，竖向位置由层高定，横向由"剖在哪道墙"决定。
-    # 剖面只剖一道墙（即被剖的那一端），对面墙是"看到的"，不落洞口。
+    # 剖到的门窗：只给层号/高/窗台高/类型/侧别，竖向位置由层高定。
+    # 剖切面穿过两端外墙，两端都是"被剖到"，各自可挂洞口。
     ops_cut: list[dict[str, Any]] = []
     cut = str(side).upper()
+    if cut not in ("BOTH", "LEFT", "RIGHT"):
+        raise CadError("剖面 side 只能是 BOTH / LEFT / RIGHT（收到 %r）" % side)
     for i, op in enumerate(openings or ()):
         if not isinstance(op, dict):
             raise CadError("剖面门窗必须是对象（收到 %r）" % (op,))
@@ -2482,22 +2485,26 @@ def create_section(
         kd = str(op.get("kind", "WINDOW")).upper()
         if kd not in ("WINDOW", "DOOR"):
             raise CadError("第 %d 个剖面洞口类型只能是 WINDOW / DOOR（收到 %r）" % (i + 1, kd))
-        sd = str(op.get("side", cut)).upper()
+        sd = str(op.get("side", "LEFT")).upper()
         if sd not in ("LEFT", "RIGHT"):
             raise CadError("第 %d 个剖面洞口侧别只能是 LEFT / RIGHT（收到 %r）" % (i + 1, sd))
-        if sd != cut:
-            raise CadError("第 %d 个剖面洞口在 %s 侧，但剖面剖到的是 %s 侧："
-                           "只有被剖到的那道墙才有洞口（对面墙是看到的，不落洞口）"
+        if cut != "BOTH" and sd != cut:
+            raise CadError("第 %d 个剖面洞口在 %s 侧，但只画了 %s 端的墙带："
+                           "那一端的墙没有剖开，不能落洞口（用 side=BOTH，或删掉这个洞口）"
                            % (i + 1, sd, cut))
-        ops_cut.append({"kind": kd, "h": hh,
+        ops_cut.append({"kind": kd, "h": hh, "side": sd,
                         "elev0": rows[fl - 1]["elev"] + sill,
                         "elev1": rows[fl - 1]["elev"] + sill + hh})
+    # 同侧洞口不得竖向重叠（不同侧是两道墙，各自独立）
     for a in range(len(ops_cut)):
         for b in range(a + 1, len(ops_cut)):
+            if ops_cut[a]["side"] != ops_cut[b]["side"]:
+                continue
             if min(ops_cut[a]["elev1"], ops_cut[b]["elev1"]) - \
                     max(ops_cut[a]["elev0"], ops_cut[b]["elev0"]) > 1e-6:
-                raise CadError("剖面同一道墙上有两个洞口竖向重叠（%s 与 %s）"
-                               % (ops_cut[a]["elev0"], ops_cut[b]["elev0"]))
+                raise CadError("剖面%s侧同一道墙上有两个洞口竖向重叠（%s 与 %s）"
+                               % ("左" if ops_cut[a]["side"] == "LEFT" else "右",
+                                  ops_cut[a]["elev0"], ops_cut[b]["elev0"]))
 
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
@@ -2506,16 +2513,18 @@ def create_section(
     # 室内地坪（两端出头）
     code.append(L(-ext, 0.0, width + ext, 0.0, lev))
 
-    # 剖面只"剖到"一侧外墙：被剖的那一端画墙厚窄带（遇洞口断墙），
-    # 另一端是"看到的"对面墙内表面，只画一条细线（GB/T 50104 的剖面读法）。
+    # 剖切面穿过两端外墙：默认两端都画墙厚窄带（遇洞口断墙）；
+    # side=LEFT/RIGHT 是"半剖"的特殊需求，另一端只画看到的内表面一条细线。
     frame_s = 60.0
-    cut_left = str(side).upper() == "LEFT"
-    gaps_cut = [(op["elev0"], op["elev1"]) for op in ops_cut]
+    cut_left = cut in ("BOTH", "LEFT")
+    cut_right = cut in ("BOTH", "RIGHT")
+    gaps = {"LEFT": [(o["elev0"], o["elev1"]) for o in ops_cut if o["side"] == "LEFT"],
+            "RIGHT": [(o["elev0"], o["elev1"]) for o in ops_cut if o["side"] == "RIGHT"]}
 
-    def wall_segments(x, gaps):
+    def wall_segments(x, gaps_):
         out = []
         cursor = 0.0
-        for g0, g1 in sorted(gaps):
+        for g0, g1 in sorted(gaps_):
             if g0 > cursor + 1e-6:
                 out.append(L(x, cursor, x, g0, lev))
             cursor = max(cursor, g1)
@@ -2524,16 +2533,18 @@ def create_section(
         return out
 
     if cut_left:
-        code += wall_segments(0.0, gaps_cut) + wall_segments(wall, gaps_cut)
-        code.append(L(width - wall, 0.0, width - wall, top, det))   # 对面墙内表面（看到）
+        code += wall_segments(0.0, gaps["LEFT"]) + wall_segments(wall, gaps["LEFT"])
     else:
-        code.append(L(wall, 0.0, wall, top, det))
-        code += wall_segments(width - wall, gaps_cut) + wall_segments(width, gaps_cut)
+        code.append(L(wall, 0.0, wall, top, det))          # 看到的对面墙内表面
+    if cut_right:
+        code += wall_segments(width - wall, gaps["RIGHT"]) + wall_segments(width, gaps["RIGHT"])
+    else:
+        code.append(L(width - wall, 0.0, width - wall, top, det))
 
-    # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门上亮子 + 窗台板挑出
-    box = (0.0, wall, 1.0) if cut_left else (width - wall, width, -1.0)
+    # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门扇冒头线 + 窗台板向室内挑出
+    boxes = {"LEFT": (0.0, wall, 1.0), "RIGHT": (width - wall, width, -1.0)}
     for op in ops_cut:
-        x0, x1, prot = box
+        x0, x1, prot = boxes[op["side"]]
         b, t2 = op["elev0"], op["elev1"]
         if b > 1e-6:
             code.append(L(x0, b, x1, b, det))
@@ -2550,8 +2561,8 @@ def create_section(
                               x1 - frame_s, t2 - min(500.0, op["h"] / 4.0), det))
 
     # 楼板（每层楼面一条板顶 + 一条板底；首层地面即地坪，不重复）
-    # 剖到的一侧从墙带画起，看到的一侧止于对面墙内表面（不穿进墙里）
-    x_lo, x_hi = (0.0, width - wall) if cut_left else (wall, width)
+    # 两端被剖到的墙之间净宽内画，不穿进墙带
+    x_lo, x_hi = wall, width - wall
     for r in rows[1:]:
         code.append(L(x_lo, r["elev"], x_hi, r["elev"], lev))
         code.append(L(x_lo, r["elev"] - slab, x_hi, r["elev"] - slab, det))
@@ -2560,19 +2571,15 @@ def create_section(
         code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
         code.append(L(0.0, roof_top, width, roof_top, lev))            # 屋面板顶
         if parapet > 0:
-            # 女儿墙：剖到的那一端是窄矩形（带压顶），对面一端只画看到的内表面
+            # 女儿墙：两端都是剖到的，画成窄矩形 + 压顶线
             cap = annot_size(1.5, sc)
-            if cut_left:
-                outer, inner, far = 0.0, wall, width - wall
-            else:
-                outer, inner, far = width, width - wall, wall
-            code.append(L(outer, roof_top, outer, roof_top + parapet, lev))
-            code.append(L(inner, roof_top, inner, roof_top + parapet, lev))
-            code.append(L(outer, roof_top + parapet, inner, roof_top + parapet, lev))
-            code.append(L(far, roof_top, far, roof_top + parapet, det))
-            if parapet >= 2 * cap:
-                code.append(L(outer, roof_top + parapet - cap, inner,
-                              roof_top + parapet - cap, det))
+            for outer, inner in ((0.0, wall), (width, width - wall)):
+                code.append(L(outer, roof_top, outer, roof_top + parapet, lev))
+                code.append(L(inner, roof_top, inner, roof_top + parapet, lev))
+                code.append(L(outer, roof_top + parapet, inner, roof_top + parapet, lev))
+                if parapet >= 2 * cap:
+                    code.append(L(outer, roof_top + parapet - cap, inner,
+                                  roof_top + parapet - cap, det))
     elif roof_u == "GABLE":
         code.append(L(0.0, roof_bottom, width / 2.0, roof_bottom + rise, det))
         code.append(L(width / 2.0, roof_bottom + rise, width, roof_bottom, det))
@@ -2788,10 +2795,10 @@ def read_facade_openings(
 ) -> list[dict[str, Any]]:
     """把平面上一道墙的门窗反解成立面可用的洞口清单（x 为洞口左边距）。
 
-    `x` 的零点取"站在室外看这面墙时的左下角"：
-      · 墙的起点在人的左手边 → flip=False，x = AA_POS；
+    `AA_POS` 是"洞口中心到墙起点的距离"，所以左边距要减掉半个洞宽：
+      · 墙的起点在人的左手边 → flip=False，x = AA_POS - 洞宽/2；
       · 墙的起点在人的右手边（如朝北的墙，从左往右看是墙的终点）→ flip=True，
-        x = 墙长 - AA_POS - 洞宽。
+        x = 墙长 - AA_POS - 洞宽/2。
     这样立面门窗位置与平面是同一套数据，不用手填坐标。
     """
     info = wall_info(session, wall_id)
@@ -2801,11 +2808,72 @@ def read_facade_openings(
         if o["wallid"] != wall_id:
             continue
         w = float(o["width"])
-        x = (length - float(o["pos"]) - w) if flip else float(o["pos"])
+        half = w / 2.0
+        x = (length - float(o["pos"]) - half) if flip else (float(o["pos"]) - half)
         out.append({"floor": int(floor), "x": x, "w": w,
                     "h": float(o["height"]), "sill": float(o["sill"]),
                     "kind": o["kind"], "no": o["no"]})
     out.sort(key=lambda d: d["x"])
+    return out
+
+
+def read_cut_openings(
+    session: Session,
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    floor: int = 1,
+    tol: float = 1.0,
+) -> list[dict[str, Any]]:
+    """沿剖切线找被切到的墙与洞口，直接给 `create_section` 的 `openings`。
+
+    `p1` = 剖面图上左端在平面上的对应点，`p2` = 右端对应点（剖切符号的两个端点）。
+    剖切线穿过墙身时，才把墙上的门窗算进来；洞口被切到（切点落在洞口宽度内）才出。
+    侧别按"离 p1 近还是离 p2 近"判：近 p1 → LEFT，近 p2 → RIGHT。
+    """
+    a, b = (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1]))
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        raise CadError("剖切线的两个端点重合了，给不出剖切方向")
+    ux, uy = dx / length, dy / length
+
+    ops_all = opening_data(session)
+    out: list[dict[str, Any]] = []
+    for e in session.components("AA_WALL_"):
+        wid = e["geometry"]["block"][len("AA_WALL_"):]
+        info = wall_info(session, wid)
+        wl = float(info["length"])
+        if wl <= 1e-9:
+            continue
+        ang = info["rotation_rad"]
+        wu = (math.cos(ang), math.sin(ang))
+        w0 = info["at"]
+        w1 = (w0[0] + wu[0] * wl, w0[1] + wu[1] * wl)
+        # 两线段求交（参数式），交点同时在两段之内才算"切到"
+        den = dx * (w1[1] - w0[1]) - dy * (w1[0] - w0[0])
+        if abs(den) < 1e-9:
+            continue
+        t = ((w0[0] - a[0]) * (w1[1] - w0[1]) - (w0[1] - a[1]) * (w1[0] - w0[0])) / den
+        s = ((w0[0] - a[0]) * dy - (w0[1] - a[1]) * dx) / den
+        px, py = a[0] + dx * t, a[1] + dy * t
+        if not (0.0 <= s <= 1.0):
+            continue
+        if math.hypot(px - w0[0], py - w0[1]) > wl + tol:
+            continue
+        along = s * wl
+        side = "LEFT" if math.hypot(px - a[0], py - a[1]) <= \
+            math.hypot(px - b[0], py - b[1]) else "RIGHT"
+        for o in ops_all:
+            if o["wallid"] != wid:
+                continue
+            half = float(o["width"]) / 2.0
+            if abs(along - float(o["pos"])) > half + tol:
+                continue                       # 切在墙身上、没切进洞口
+            kd = "WINDOW" if str(o["kind"]).upper() in ("WINDOW", "DOORWIN") else "DOOR"
+            out.append({"floor": int(floor), "h": float(o["height"]),
+                        "sill": float(o["sill"]), "kind": kd, "side": side,
+                        "no": o["no"], "wall": wid})
+    out.sort(key=lambda d: (d["side"], d["sill"]))
     return out
 
 

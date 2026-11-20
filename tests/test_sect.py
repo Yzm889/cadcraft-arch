@@ -41,12 +41,12 @@ def main() -> int:
     floors = [{"no": "1", "height": 3600.0},
               {"no": "2", "height": 3600.0},
               {"no": "3", "height": 3300.0}]
-    r = create_section(s, "P1", (0.0, 0.0), 6000.0, floors, (), "LEFT", 100.0, "FLAT", 1200.0)
+    r = create_section(s, "P1", (0.0, 0.0), 6000.0, floors, (), "BOTH", 100.0, "FLAT", 1200.0)
     assert r["floors"] == 3 and abs(r["top"] - 10500.0) < 1e-6, r
     assert abs(r["total"] - 11800.0) < 1e-6, r   # 10500 + 板 100 + 女儿墙 1200
     g = block_geometry(path, "AA_SECTION_P1")
     nl, nt = counts(g)
-    assert (nl, nt) == (31, 4), (nl, nt, [x["type"] for x in g])
+    assert (nl, nt) == (35, 4), (nl, nt, [x["type"] for x in g])
 
     layers = layer_of_block(path, "AA_SECTION_P1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
@@ -55,25 +55,36 @@ def main() -> int:
     assert attrs["AA_ROWS"].split("~")[0] == "1", attrs["AA_ROWS"]
 
     # 双坡：檐口/屋脊共 4 条 + 6（地坪/墙/楼板/分界）= ...
-    gable = create_section(s, "P2", (8000.0, 0.0), 6000.0, floors, (), "LEFT",
+    gable = create_section(s, "P2", (8000.0, 0.0), 6000.0, floors, (), "BOTH",
                            100.0, "GABLE", 0.0, 1800.0)
     assert abs(gable["total"] - 12400.0) < 1e-6, gable    # 10500 + 1800 + 100
     g = block_geometry(path, "AA_SECTION_P2")
     nl, nt = counts(g)
     # 1 地坪 + 4 墙带 + 4 楼板 + 4 坡屋面 + 20 标高（4 楼层 + 檐口 + 屋脊）
-    assert (nl, nt) == (32, 5), (nl, nt)
+    assert (nl, nt) == (33, 5), (nl, nt)
 
     # 剖到的门窗：剖在哪道墙就在那道墙带上断墙 + 窗框 + 玻璃 / 门上亮子 + 窗台挑出
     ops = [{"floor": 1, "h": 2100.0, "sill": 0.0, "kind": "DOOR"},
            {"floor": 2, "h": 1500.0, "sill": 900.0},
            {"floor": 3, "h": 1500.0, "sill": 900.0}]
     cut = create_section(s, "P3", (0.0, 15000.0), 6000.0, floors, ops,
-                         "LEFT", 100.0, "FLAT", 1200.0)
+                         "BOTH", 100.0, "FLAT", 1200.0)
     assert cut["openings"] == 3, cut
     g = block_geometry(path, "AA_SECTION_P3")
     nl, nt = counts(g)
-    assert (nl, nt) == (51, 4), (nl, nt)
+    assert (nl, nt) == (55, 4), (nl, nt)
     assert s.attributes("AA_SECTION_P3")["AA_OPENINGS"] == "3"
+
+    # 剖切面穿过两端外墙：两端各挂一樘（BOTH），互不干扰
+    both = create_section(s, "P4", (0.0, 30000.0), 6000.0, floors,
+                          [{"floor": 1, "h": 2100.0, "sill": 0.0, "kind": "DOOR",
+                            "side": "LEFT"},
+                           {"floor": 2, "h": 1500.0, "sill": 900.0, "side": "RIGHT"}],
+                          "BOTH", 100.0, "FLAT", 1200.0)
+    assert both["openings"] == 2, both
+    g = block_geometry(path, "AA_SECTION_P4")
+    nl, nt = counts(g)
+    assert (nl, nt) == (47, 4), (nl, nt)
 
     # 同一道墙上两个洞口竖向叠着 -> 拒绝
     try:
@@ -85,19 +96,19 @@ def main() -> int:
     else:
         raise AssertionError("剖面同墙洞口重叠应被拒绝")
 
-    # 洞口落在"看到的那一侧"（没剖到）→ 拒绝
+    # 半剖（side=LEFT）时，落在右端（没画墙带）的洞口 → 拒绝
     try:
         create_section(s, "PX", (0.0, 0.0), 6000.0, floors,
                        [{"floor": 2, "h": 1500.0, "sill": 900.0, "side": "RIGHT"}],
                        "LEFT", 100.0, "FLAT", 1200.0)
     except CadError as e:
-        assert "只有被剖到的那道墙" in str(e), e
+        assert "没有剖开" in str(e), e
     else:
-        raise AssertionError("非剖侧洞口应被拒绝")
+        raise AssertionError("半剖下落在未剖端的洞口应被拒绝")
 
     # 剖到右侧（side=RIGHT）：墙带落在 宽-墙厚..宽，对侧只留一条细线
     pr = create_section(s, "P9", (0.0, 7000.0), 6000.0, floors,
-                        [{"floor": 2, "h": 1500.0, "sill": 900.0}],
+                        [{"floor": 2, "h": 1500.0, "sill": 900.0, "side": "RIGHT"}],
                         "RIGHT", 100.0, "FLAT", 1200.0)
     assert pr["openings"] == 1, pr
     assert s.attributes("AA_SECTION_P9")["AA_OPENINGS"] == "1"
