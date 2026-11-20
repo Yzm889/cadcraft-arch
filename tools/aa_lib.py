@@ -5194,6 +5194,108 @@ def sheet_window(session: Session, sheet_id: str) -> list[float]:
     return [x - m, y - m, x + w + m, y + h + m]
 
 
+# ---------------- 楼层复制（v1.0.34） ----------------
+
+def copy_floor(session: Session, src_floor: int, dst_floor: int,
+               offset: Sequence[float] = (0.0, 0.0),
+               prefix: str = "") -> dict[str, Any]:
+    """整层复制：把源层的墙 / 门窗 / 房间按偏移复制到目标层，层号自动改写。
+
+    做法是"按构件数据重建"而不是拷贝图元：源层从 `AA_FLOOR` 过滤墙，
+    逐堵墙 `create_wall`（新编号、新层号）、逐樘门 `create_opening`（宿主墙换成新墙）、
+    逐个房间 `create_room`（墙号换成新墙，面积重算并校验与源层一致），
+    所以新层是完整的可回读构件，不是一堆断开的线。
+
+    prefix 是新编号前缀（强烈建议按层给，如 "2" → 2W001 / 2M001 / 2R001）；
+    留空且与源层编号冲突时直接报错，不静默改号。目标层已有构件也拒绝（避免叠图）。
+    楼梯、柱、台阶、散水暂不复制（它们没有 AA_FLOOR，见文档 §33.4）。
+    """
+    src = int(src_floor)
+    dst = int(dst_floor)
+    if src < 1 or dst < 1:
+        raise CadError("层号必须 ≥ 1（收到 源 %r / 目标 %r）" % (src_floor, dst_floor))
+    if src == dst:
+        raise CadError("源层与目标层不能相同（都是 %d 层）" % src)
+    if len(offset) != 2:
+        raise CadError("偏移要给 dx,dy 两个数：%r" % (offset,))
+    dx, dy = float(offset[0]), float(offset[1])
+    walls = [w for w in wall_data(session) if w["floor"] == src]
+    if not walls:
+        raise CadError("源层 %d 没有墙（AA_FLOOR）可复制" % src)
+    if any(w["floor"] == dst for w in wall_data(session)):
+        raise CadError("目标层 %d 已有墙，拒绝叠图（先删旧层或换层号）" % dst)
+    pre = str(prefix)
+
+    def new_id(old: str) -> str:
+        return pre + old
+
+    existing = {w["id"] for w in wall_data(session)}
+    clash = [w["id"] for w in walls if new_id(w["id"]) in existing]
+    if clash:
+        raise CadError("新墙编号与图上已有墙冲突（给 prefix 换号）：%s" % ", ".join(clash[:4]))
+
+    wall_map: dict[str, str] = {}
+    made_walls = []
+    for w in walls:
+        nid = new_id(w["id"])
+        res = create_wall(session, nid,
+                          (w["p1"][0] + dx, w["p1"][1] + dy),
+                          (w["p2"][0] + dx, w["p2"][1] + dy),
+                          thick=w["thick"], kind=w["kind"], mat=w["mat"],
+                          ax1=w["ax1"], ax2=w["ax2"], floor=dst)
+        wall_map[w["id"]] = nid
+        made_walls.append(nid)
+
+    made_ops, skipped_ops = [], []
+    for o in opening_data(session):
+        if o["floor"] != src:
+            continue
+        host = wall_map.get(o["wallid"])
+        if not host:
+            skipped_ops.append({"id": o["id"], "why": "宿主墙不在源层"})
+            continue
+        nid = new_id(o["id"])
+        create_opening(session, nid, host, o["kind"], o["width"], o["pos"],
+                       height=o["height"], sill=o["sill"], frame=o["frame"],
+                       no=o["no"], label_side=o["labelside"])
+        made_ops.append(nid)
+
+    src_rooms = [r for r in room_data(session)
+                 if r["walls"] and all(w in wall_map for w in r["walls"])]
+    made_rooms, skipped_rooms = [], []
+    for r in room_data(session):
+        if not r["walls"]:
+            continue
+        if not all(w in wall_map for w in r["walls"]):
+            skipped_rooms.append({"id": r["id"], "why": "围合墙不在源层"})
+            continue
+        nid = new_id(r["id"])
+        create_room(session, nid, [wall_map[w] for w in r["walls"]],
+                    name=r["name"], show_area=r["show_area"])
+        made_rooms.append(nid)
+
+    # 回读校验：层号、数量、面积
+    back_walls = [w for w in wall_data(session) if w["floor"] == dst]
+    if sorted(w["id"] for w in back_walls) != sorted(made_walls):
+        raise CadError("楼层复制回读不符：写 %d 堵 / 读 %d 堵" % (len(made_walls), len(back_walls)))
+    back_ops = [o for o in opening_data(session) if o["floor"] == dst]
+    if len(back_ops) != len(made_ops):
+        raise CadError("楼层复制回读不符：门窗 写 %d / 读 %d" % (len(made_ops), len(back_ops)))
+    area_ok = True
+    for old, nid in zip(src_rooms, made_rooms):
+        new_area = next((r["area"] for r in room_data(session) if r["id"] == nid), None)
+        if new_area is None or abs(new_area - old["area"]) > 1.0:
+            area_ok = False
+    if not area_ok:
+        raise CadError("复制后房间面积与源层不一致（墙厚/偏移把环弄断了）")
+
+    return {"ok": True, "src": src, "dst": dst, "offset": [dx, dy],
+            "walls": made_walls, "openings": made_ops, "rooms": made_rooms,
+            "counts": {"walls": len(made_walls), "openings": len(made_ops),
+                       "rooms": len(made_rooms)},
+            "skipped_openings": skipped_ops, "skipped_rooms": skipped_rooms}
+
+
 # ---------------- 图纸集 / 图纸目录 / 批量出图（v1.0.33） ----------------
 
 SHEET_INDEX_HEADER = ["序号", "图号", "图名", "图幅", "比例", "备注"]

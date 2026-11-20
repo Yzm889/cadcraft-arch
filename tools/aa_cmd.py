@@ -38,6 +38,7 @@ from aa_lib import (  # noqa: E402
     create_room,
     create_wall,
     create_sheet,
+    copy_floor,
     create_sheet_index,
     create_sheet_set,
     export_sheet_set,
@@ -495,6 +496,16 @@ def main(argv: list[str] | None = None) -> int:
     p_expset.add_argument("--fmt", default="png", choices=["png", "svg", "pdf"])
     p_expset.add_argument("--prefix", default="", help="文件名前缀（如 建施）")
 
+    p_copyfloor = sub.add_parser("copy-floor",
+                                 help="整层复制：源层的墙/门窗/房间按偏移复制到目标层，层号自动改写")
+    p_copyfloor.add_argument("path")
+    p_copyfloor.add_argument("--from", dest="src_floor", type=int, required=True,
+                             help="源层层号（墙的 AA_FLOOR）")
+    p_copyfloor.add_argument("--to", dest="dst_floor", type=int, required=True,
+                             help="目标层层号")
+    p_copyfloor.add_argument("--offset", default="0,0", help="平移 dx,dy（把新层挪到另一处平面位置）")
+    p_copyfloor.add_argument("--prefix", default="", help="新构件编号前缀（如 2 → 2W001）")
+
     args = ap.parse_args(argv)
 
     try:
@@ -791,6 +802,9 @@ def main(argv: list[str] | None = None) -> int:
                                         args.title, args.note))
         elif args.cmd == "export-set":
             emit(export_sheet_set(session, args.id, args.outdir, args.fmt, args.prefix))
+        elif args.cmd == "copy-floor":
+            off = [float(v) for v in args.offset.split(",")]
+            emit(copy_floor(session, args.src_floor, args.dst_floor, off, args.prefix))
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

@@ -42,10 +42,10 @@ def main() -> int:
     # 2) 工具表完整、每项都有 inputSchema 与 description
     tools = rpc("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 44, names
+    assert len(names) == 45, names
     for n in ("aa_new", "aa_axis", "aa_wall", "aa_opening", "aa_room",
               "aa_room_auto", "aa_split", "aa_merge", "aa_set_wall",
-              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
+              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
         assert n in names, n
     for t in tools:
         assert t["inputSchema"]["type"] == "object", t["name"]
@@ -143,6 +143,15 @@ def main() -> int:
     is_err, q = call("aa_sheet_index", {"path": str(dxf), "show": "ML1"})
     assert not is_err and q["rows"][0]["no"] == "建施-01", q
 
+    # 5d) 楼层复制：1 层 → 2 层（4 墙 1 门 1 房间）
+    is_err, q = call("aa_copy_floor", {"path": str(dxf), "from": 1, "to": 2,
+                                       "offset": [0, 6000], "prefix": "2"})
+    assert not is_err and q["ok"], q
+    assert q["counts"] == {"walls": 4, "openings": 1, "rooms": 1}, q
+    is_err, q = call("aa_copy_floor", {"path": str(dxf), "from": 1, "to": 2,
+                                       "offset": [0, 6000], "prefix": "2"})
+    assert is_err and "已有墙" in q["error"], q
+
     # 6) 真走 stdio：拉起子进程，发 initialize + tools/list，读回两行 JSON
     proc = subprocess.Popen([sys.executable, str(MCP), "--serve"],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -157,7 +166,7 @@ def main() -> int:
         lines = [proc.stdout.readline(), proc.stdout.readline()]
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
-        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 44, r2
+        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 45, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:
         proc.stdin.close()

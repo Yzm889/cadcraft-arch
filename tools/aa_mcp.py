@@ -44,6 +44,7 @@ from aa_lib import (  # noqa: E402
     create_opening_table,
     create_sheet_index,
     create_sheet_set,
+    copy_floor,
     export_sheet_set,
     read_floors,
     read_opening_table,
@@ -75,7 +76,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.33"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.34"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -864,6 +865,22 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_copy_floor",
+        "description": "整层复制：把源层（按墙的 AA_FLOOR 过滤）的墙/门窗/房间按偏移复制到目标层，层号自动改写、门窗宿主墙与房间围合墙同步换号；目标层已有墙则拒绝叠图。楼梯/柱/台阶/散水暂不复制。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "from": {"type": "integer", "description": "源层层号"},
+                "to": {"type": "integer", "description": "目标层层号"},
+                "offset": {"type": "array", "items": {"type": "number"},
+                           "description": "平移 [dx, dy]，把新层挪到另一处平面位置", "default": [0, 0]},
+                "prefix": {"type": "string", "description": "新构件编号前缀（如 2 → 2W001）", "default": ""},
+            },
+            "required": ["path", "from", "to"],
+        },
+    },
+    {
         "name": "aa_sheet_set",
         "description": "图纸集：登记每张图的\"图号 / 图名 / 图幅编号 / 备注\"，图幅与比例从图框读（不手填）；是图纸目录与批量出图的唯一数据源。图号重复、图幅被占用、图幅不存在都拒绝。",
         "inputSchema": {
@@ -1110,6 +1127,11 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_copy_floor":
+        cf = _session(path)
+        return copy_floor(cf, int(a["from"]), int(a["to"]),
+                          a.get("offset", [0, 0]) or [0, 0], a.get("prefix", ""))
 
     if name == "aa_sheet_set":
         ss = _session(path)
