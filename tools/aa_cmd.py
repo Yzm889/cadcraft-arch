@@ -38,6 +38,11 @@ from aa_lib import (  # noqa: E402
     create_room,
     create_wall,
     create_sheet,
+    create_sheet_index,
+    create_sheet_set,
+    export_sheet_set,
+    read_sheet_index,
+    read_sheet_set,
     create_title_mark,
     create_north_arrow,
     create_column,
@@ -467,6 +472,29 @@ def main(argv: list[str] | None = None) -> int:
     p_export.add_argument("--sheet", default=None, help="按图幅编号自动取窗口（推荐）")
     p_export.add_argument("--window", default=None, help="手工窗口 x0,y0,x1,y1")
 
+    p_sheetset = sub.add_parser("sheet-set", help="图纸集：登记图号→图名→图幅（批量出图与图纸目录的数据源）")
+    p_sheetset.add_argument("path")
+    p_sheetset.add_argument("id")
+    p_sheetset.add_argument("--item", action="append", default=[],
+                            help='一张图一条："图号,图名,图幅编号[,备注]"；可重复')
+    p_sheetset.add_argument("--show", default=None, help="只回读已有图纸集（给图纸集编号）")
+
+    p_sheetidx = sub.add_parser("sheet-index", help="图纸目录：按图纸集生成表格（序号/图号/图名/图幅/比例/备注）")
+    p_sheetidx.add_argument("path")
+    p_sheetidx.add_argument("id")
+    p_sheetidx.add_argument("--at", default=None, help="表格左上角 x,y（建表必给；--show 可省）")
+    p_sheetidx.add_argument("--table", default="ML1", help="目录表编号（图纸内唯一）")
+    p_sheetidx.add_argument("--title", default="图纸目录")
+    p_sheetidx.add_argument("--note", default="")
+    p_sheetidx.add_argument("--show", default=None, help="只回读已有目录（给表编号）")
+
+    p_expset = sub.add_parser("export-set", help="批量出图：按图纸集逐张出 PNG/SVG/PDF，一张图幅一个文件")
+    p_expset.add_argument("path")
+    p_expset.add_argument("id")
+    p_expset.add_argument("--outdir", required=True, help="输出目录")
+    p_expset.add_argument("--fmt", default="png", choices=["png", "svg", "pdf"])
+    p_expset.add_argument("--prefix", default="", help="文件名前缀（如 建施）")
+
     args = ap.parse_args(argv)
 
     try:
@@ -739,6 +767,30 @@ def main(argv: list[str] | None = None) -> int:
             elif args.sheet:
                 win = sheet_window(session, args.sheet)
             emit({"ok": True, **export(session, args.out, win)})
+        elif args.cmd == "sheet-set":
+            if args.show:
+                st = read_sheet_set(session, args.show)
+                emit({"ok": True, **st})
+            else:
+                if not args.item:
+                    raise CadError("图纸集要至少一条 --item \"图号,图名,图幅[,备注]\"")
+                items = []
+                for spec in args.item:
+                    parts = [x.strip() for x in spec.split(",")]
+                    parts += [""] * (4 - len(parts))
+                    items.append({"no": parts[0], "name": parts[1],
+                                  "sheet": parts[2], "note": parts[3]})
+                emit(create_sheet_set(session, args.id, items))
+        elif args.cmd == "sheet-index":
+            if args.show:
+                emit({"ok": True, "rows": read_sheet_index(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建目录需要 --at（或只用 --show 回读）")
+                emit(create_sheet_index(session, args.id, args.table, _pt(args.at),
+                                        args.title, args.note))
+        elif args.cmd == "export-set":
+            emit(export_sheet_set(session, args.id, args.outdir, args.fmt, args.prefix))
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

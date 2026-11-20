@@ -5128,7 +5128,10 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
                     break
 
     # 5) 图形外廓是否在图幅内框里
+    # 多图幅（图纸集）时不能拿全图外廓去比单张图幅——各图并排在同一模型空间，
+    # 改判"外廓落在所有图幅内框的并集里"，并检查图幅之间不重叠。
     ext = drawing_extent(session, pad=0.0)
+    frames = []
     for e in session.components("AA_SHEET_"):
         attrs = {a["tag"]: a.get("text", {}).get("value", "")
                  for a in e["geometry"].get("attribs", [])}
@@ -5136,12 +5139,37 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
                            float(attrs.get("AA_SCALE", "100") or 100))
         ip = e["geometry"]["insert"]
         x0, y0 = ip["x"], ip["y"]        # insert 点是内框左下角
-        x1, y1 = x0 + lay["inner_w"], y0 + lay["inner_h"]
-        if ext and (ext[0] < x0 - tol or ext[1] < y0 - tol
-                    or ext[2] > x1 + tol or ext[3] > y1 + tol):
+        frames.append({"id": attrs.get("AA_ID", e["geometry"]["block"]),
+                       "handle": e.get("handle", ""),
+                       "box": (x0, y0, x0 + lay["inner_w"], y0 + lay["inner_h"])})
+    if len(frames) == 1:
+        b = frames[0]["box"]
+        if ext and (ext[0] < b[0] - tol or ext[1] < b[1] - tol
+                    or ext[2] > b[2] + tol or ext[3] > b[3] + tol):
             add("outside_sheet", "error",
-                "图形外廓超出图幅 %s 的外框" % attrs.get("AA_ID", e["geometry"]["block"]),
-                handles=[e.get("handle", "")], detail="ext=%r sheet=%r" % (ext, (x0, y0, x1, y1)))
+                "图形外廓超出图幅 %s 的外框" % frames[0]["id"],
+                handles=[frames[0]["handle"]], detail="ext=%r sheet=%r" % (ext, b))
+    elif len(frames) > 1:
+        ux0 = min(f["box"][0] for f in frames)
+        uy0 = min(f["box"][1] for f in frames)
+        ux1 = max(f["box"][2] for f in frames)
+        uy1 = max(f["box"][3] for f in frames)
+        if ext and (ext[0] < ux0 - tol or ext[1] < uy0 - tol
+                    or ext[2] > ux1 + tol or ext[3] > uy1 + tol):
+            add("outside_sheet", "error",
+                "图形外廓超出图纸集全部图幅的并集",
+                detail="ext=%r union=%r" % (ext, (ux0, uy0, ux1, uy1)))
+        for i, a in enumerate(frames):
+            for b in frames[i + 1:]:
+                ov = (min(a["box"][2], b["box"][2]) - max(a["box"][0], b["box"][0])
+                      > tol and min(a["box"][3], b["box"][3])
+                      - max(a["box"][1], b["box"][1]) > tol)
+                if ov:
+                    add("sheet_overlap", "error",
+                        "图幅 %s 与 %s 的外框重叠（出图会互相框进来）"
+                        % (a["id"], b["id"]),
+                        handles=[a["handle"], b["handle"]],
+                        detail="%r vs %r" % (a["box"], b["box"]))
 
     by_kind: dict[str, int] = {}
     for it in issues:
@@ -5164,6 +5192,195 @@ def sheet_window(session: Session, sheet_id: str) -> list[float]:
     h = lay["sheet_h"]
     m = 0.05 * max(w, h)
     return [x - m, y - m, x + w + m, y + h + m]
+
+
+# ---------------- 图纸集 / 图纸目录 / 批量出图（v1.0.33） ----------------
+
+SHEET_INDEX_HEADER = ["序号", "图号", "图名", "图幅", "比例", "备注"]
+
+
+def _sheet_info(session: Session, sheet_id: str) -> dict[str, Any]:
+    """读一张图幅的幅面与比例（图纸集校验/目录用）。"""
+    ref = session.reference("AA_SHEET_" + sheet_id)
+    if not ref:
+        raise CadError("找不到图幅 %s" % sheet_id)
+    attrs = {a["tag"]: a.get("text", {}).get("value", "")
+             for a in ref["geometry"].get("attribs", [])}
+    return {
+        "sheet": sheet_id,
+        "size": (attrs.get("AA_SIZE") or "A3").upper(),
+        "scale": float(attrs.get("AA_SCALE") or drawing_scale(session)),
+    }
+
+
+def _sheet_item_rows(items: list[dict[str, Any]]) -> str:
+    cols = []
+    for it in items:
+        cols.append("~".join([it["no"], it["name"], it["sheet"],
+                              "%.6g" % it["scale"], it["size"],
+                              it.get("note", "")]))
+    return "@@".join(cols)
+
+
+def create_sheet_set(session: Session, set_id: str,
+                     items: list[dict[str, Any]]) -> dict[str, Any]:
+    """图纸集：登记"图号 → 图名 → 图幅 → 比例"，是批量出图与图纸目录的唯一数据源。
+
+    items 每项 `{no, name, sheet, note?}`：no=图号（如 建施-01），name=图名，
+    sheet=图幅编号（图上已有 `AA_SHEET_<编号>`）。比例与图幅从图幅本身读，不手填，
+    避免"目录写 A2、图框是 A3"这类错。图号重复、图幅不存在、同一图幅被两张图占用都拒绝。
+    """
+    sid = str(set_id).strip()
+    if not sid or "~" in sid or "@@" in sid:
+        raise CadError("图纸集编号不能为空且不能含 ~ / @@：%r" % (set_id,))
+    if session.reference("AA_SHEETSET_" + sid):
+        raise CadError("图纸集 %s 已存在（不覆盖，改图号请删旧建新）" % sid)
+    if not items:
+        raise CadError("图纸集不能为空：至少登记一张图")
+    seen_no, seen_sheet, rows = set(), set(), []
+    for it in items:
+        no = str(it.get("no", "")).strip()
+        name = str(it.get("name", "")).strip()
+        sheet = str(it.get("sheet", "")).strip()
+        note = str(it.get("note", "")).strip()
+        if not no or not name or not sheet:
+            raise CadError("图纸集每项都要有 图号 / 图名 / 图幅：%r" % (it,))
+        for s in (no, name, note):
+            if "~" in s or "@@" in s:
+                raise CadError("图号/图名/备注不能含 ~ 或 @@：%r" % (s,))
+        if no in seen_no:
+            raise CadError("图号重复：%s" % no)
+        if sheet in seen_sheet:
+            raise CadError("图幅 %s 已被另一张图占用（一张图幅只登记一张图）" % sheet)
+        info = _sheet_info(session, sheet)
+        seen_no.add(no)
+        seen_sheet.add(sheet)
+        rows.append({"no": no, "name": name, "sheet": sheet,
+                     "scale": info["scale"], "size": info["size"], "note": note})
+    atts = session.define_attributes([
+        ("AA_TYPE", "component type", "SHEETSET"),
+        ("AA_ID", "sheet set id", sid),
+        ("AA_COUNT", "sheet count", str(len(rows))),
+        ("AA_ITEMS", "no~name~sheet~scale~size~note @@ rows", _sheet_item_rows(rows)),
+    ])
+    block = "AA_SHEETSET_" + sid
+    session.make_block(block, (0.0, 0.0), atts)
+    values = {"AA_TYPE": "SHEETSET", "AA_ID": sid, "AA_COUNT": str(len(rows)),
+              "AA_ITEMS": _sheet_item_rows(rows)}
+    session.insert(block, (0.0, 0.0), values)
+    back = read_sheet_set(session, sid)
+    if len(back["items"]) != len(rows):
+        raise CadError("图纸集回读条目数不符：写入 %d / 回读 %d"
+                       % (len(rows), len(back["items"])))
+    return {"ok": True, "block": block, "id": sid, "count": len(rows),
+            "items": back["items"]}
+
+
+def read_sheet_set(session: Session, set_id: str) -> dict[str, Any]:
+    """回读图纸集：`{id, count, items:[{no,name,sheet,size,scale,note}]}`。"""
+    attrs = session.attributes("AA_SHEETSET_" + set_id)
+    if not attrs or attrs.get("AA_TYPE") != "SHEETSET":
+        raise CadError("没找到图纸集 %s" % set_id)
+    items = []
+    for r in (attrs.get("AA_ITEMS") or "").split("@@"):
+        if not r:
+            continue
+        c = r.split("~")
+        if len(c) < 6:
+            raise CadError("图纸集条目解析不了：%r" % r)
+        items.append({"no": c[0], "name": c[1], "sheet": c[2],
+                      "scale": float(c[3] or 0), "size": c[4], "note": c[5]})
+    return {"id": attrs.get("AA_ID") or set_id,
+            "count": int(float(attrs.get("AA_COUNT") or len(items))), "items": items}
+
+
+def create_sheet_index(session: Session, set_id: str, table_id: str,
+                       at: tuple[float, float], title: str = "图纸目录",
+                       note: str = "", widths: list[float] | None = None,
+                       scale: float | None = None,
+                       with_scale: bool = False) -> dict[str, Any]:
+    """图纸目录：按图纸集自动生成"序号/图号/图名/图幅/比例/备注"表。
+
+    `with_scale=True` 标题后面带出图比例（目录一般不注，默认不带）。
+    """
+    st = read_sheet_set(session, set_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    rows = []
+    for i, it in enumerate(st["items"], 1):
+        rows.append([str(i), it["no"], it["name"], it["size"],
+                     "1:%g" % it["scale"] if it["scale"] else "-", it["note"]])
+    if widths is None:
+        widths = [10.0, 26.0, 74.0, 14.0, 16.0, 26.0]
+    res = draw_table(session, at, title, SHEET_INDEX_HEADER, rows,
+                     [w * sc for w in widths], row_height=5.0 * sc,
+                     text_height=3.0 * sc, table_id=table_id, scale=sc)
+    session.run([("attedit", {"handle": res["handle"],
+                              "values": {"AA_TYPE": "SHEET_INDEX"}})], save=True)
+    attrs = session.attributes(res["block"])
+    if attrs.get("AA_TYPE") != "SHEET_INDEX":
+        raise CadError("图纸目录 AA_TYPE 回写失败：%s" % attrs.get("AA_TYPE"))
+    if note:
+        hgt = 2.5 * sc
+        nx, ny = res["at"][0], res["at"][1] - res["height"] - 6.0 * sc
+        session.lisp(
+            '(progn (aa:mktext-r (list %.3f %.3f) "%s" "AA-TABLE" %.3f 0.0) (princ "ok"))'
+            % (nx, ny, note.replace('"', "'"), hgt),
+            libraries=("aa_core.lisp",),
+        )
+    return {"ok": True, "block": res["block"], "id": table_id, "set": set_id,
+            "handle": res["handle"], "at": res["at"], "width": res["width"],
+            "height": res["height"], "count": len(rows), "note": note}
+
+
+def read_sheet_index(session: Session, table_id: str) -> list[dict[str, Any]]:
+    """回读图纸目录（表体数据）。"""
+    attrs = session.attributes("AA_TABLE_" + table_id)
+    if not attrs or attrs.get("AA_TYPE") != "SHEET_INDEX":
+        raise CadError("没找到图纸目录 %s" % table_id)
+    out = []
+    for r in (attrs.get("AA_ROWS") or "").split("@@"):
+        if not r:
+            continue
+        c = r.split("~") + [""] * 6
+        out.append({"no": c[1], "name": c[2], "size": c[3],
+                    "scale": c[4], "note": c[5]})
+    return out
+
+
+def _safe_file_stem(text: str) -> str:
+    """图号/图名转安全文件名：去掉 Windows 非法字符，空白压成一个下划线。"""
+    bad = '\\/:*?"<>|'
+    s = "".join(" " if ch in bad else ch for ch in text)
+    return "_".join(s.split())
+
+
+def export_sheet_set(session: Session, set_id: str, outdir: str | Path,
+                     fmt: str = "png", prefix: str = "") -> dict[str, Any]:
+    """按图纸集批量出图：一张图幅一个文件，命名 `图号 图名.扩展名`。
+
+    图幅窗口取 `sheet_window`（外框含 5% 余量）；每张出完立刻校验产物存在且 > 2KB，
+    缺一张就整体报错并列出已完成清单，避免"报了成功却少一张"。
+    """
+    fmt = fmt.lower().lstrip(".")
+    if fmt not in ("png", "svg", "pdf"):
+        raise CadError("只支持 png / svg / pdf：%r" % fmt)
+    st = read_sheet_set(session, set_id)
+    out_dir = Path(outdir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for it in st["items"]:
+        stem = _safe_file_stem(("%s %s" % (prefix, it["no"])) if prefix else it["no"])
+        out = out_dir / ("%s_%s.%s" % (stem, _safe_file_stem(it["name"]), fmt))
+        window = sheet_window(session, it["sheet"])
+        try:
+            res = export(session, out, window=window)
+        except Exception as exc:
+            raise CadError("图纸集出图失败（已完成 %d/%d）：%s → %s：%s"
+                           % (len(files), st["count"], it["no"], out.name, exc))
+        files.append({"no": it["no"], "name": it["name"], "sheet": it["sheet"],
+                      "path": str(out), "bytes": res["bytes"]})
+    return {"ok": True, "set": set_id, "count": len(files),
+            "outdir": str(out_dir), "format": fmt, "files": files}
 
 
 # ---------------- 参数变更重绘（v0.4） ----------------

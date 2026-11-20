@@ -42,8 +42,13 @@ from aa_lib import (  # noqa: E402
     create_section,
     create_floor_table,
     create_opening_table,
+    create_sheet_index,
+    create_sheet_set,
+    export_sheet_set,
     read_floors,
     read_opening_table,
+    read_sheet_index,
+    read_sheet_set,
     create_opening,
     create_room,
     create_wall,
@@ -70,7 +75,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.32"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.33"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -859,6 +864,66 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_sheet_set",
+        "description": "图纸集：登记每张图的\"图号 / 图名 / 图幅编号 / 备注\"，图幅与比例从图框读（不手填）；是图纸目录与批量出图的唯一数据源。图号重复、图幅被占用、图幅不存在都拒绝。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "图纸集编号，如图纸内唯一 SS1"},
+                "items": {
+                    "type": "array",
+                    "description": "一张图一条：{no, name, sheet, note?}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "no": {"type": "string", "description": "图号，如 建施-01"},
+                            "name": {"type": "string", "description": "图名，如 一层平面图"},
+                            "sheet": {"type": "string", "description": "图幅编号（图上已有 AA_SHEET_<编号>）"},
+                            "note": {"type": "string", "description": "备注"},
+                        },
+                        "required": ["no", "name", "sheet"],
+                    },
+                },
+                "show": {"type": "string", "description": "只回读已有图纸集：给图纸集编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_sheet_index",
+        "description": "图纸目录：按图纸集生成\"序号/图号/图名/图幅/比例/备注\"表，落 AA_TYPE=SHEET_INDEX 可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "图纸集编号"},
+                "table": {"type": "string", "description": "目录表编号，默认 ML1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "表格左上角 [x, y]（建表必给）"},
+                "title": {"type": "string", "description": "表名", "default": "图纸目录"},
+                "note": {"type": "string", "description": "表下附注"},
+                "show": {"type": "string", "description": "只回读已有目录：给表编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_export_set",
+        "description": "批量出图：按图纸集逐张导出 PNG/SVG/PDF，一张图幅一个文件，命名\"图号_图名.扩展名\"；缺一张即整体报错并列已完成清单。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "图纸集编号"},
+                "outdir": {"type": "string", "description": "输出目录"},
+                "fmt": {"type": "string", "enum": ["png", "svg", "pdf"], "default": "png"},
+                "prefix": {"type": "string", "description": "文件名前缀，如 建施"},
+            },
+            "required": ["path", "id", "outdir"],
+        },
+    },
+    {
         "name": "aa_batch",
         "description": "批量事务：按顺序执行多个工具调用，任一失败自动回滚到调用前的图纸状态（零残留），返回逐步结果。",
         "inputSchema": {
@@ -1045,6 +1110,28 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_sheet_set":
+        ss = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_sheet_set(ss, a["show"])}
+        if not a.get("id") or not a.get("items"):
+            return _err("图纸集需要 id 与 items（或用 show 回读）")
+        return create_sheet_set(ss, a["id"], a["items"])
+
+    if name == "aa_sheet_index":
+        si = _session(path)
+        if a.get("show"):
+            return {"ok": True, "rows": read_sheet_index(si, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("图纸目录需要 id 与 at（或用 show 回读）")
+        return create_sheet_index(si, a["id"], a.get("table", "ML1"),
+                                  _pt(a["at"], "at"), a.get("title", "图纸目录"),
+                                  a.get("note", ""))
+
+    if name == "aa_export_set":
+        return export_sheet_set(_session(path), a["id"], a["outdir"],
+                                a.get("fmt", "png"), a.get("prefix", ""))
 
     if name == "aa_batch":
         return aa_batch(path, a["ops"], bool(a.get("rollback", True)))
