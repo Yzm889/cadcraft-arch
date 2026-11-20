@@ -182,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     p_stair.add_argument("--landing", type=float, default=1200.0, help="平台深（mm，双跑用）")
     p_stair.add_argument("--angle", type=float, default=90.0,
                          help="上行方向（度，90=+Y 向上，默认 90）")
+    p_stair.add_argument("--level", default="middle", choices=["first", "middle", "top"],
+                         help="层类型：first 首层 / middle 中层 / top 顶层")
+    p_stair.add_argument("--side", default="left", choices=["left", "right"],
+                         help="上楼位置：left 左边 / right 右边（双跑用）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -412,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "stair":
             emit({"ok": True, **create_stair(
                 session, args.id, _pt(args.at), args.kind, args.w, args.steps,
-                args.tread, args.rise, args.well, args.landing, args.angle)})
+                args.tread, args.rise, args.well, args.landing, args.angle,
+                args.level, args.side)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

@@ -58,14 +58,35 @@ def main() -> int:
     assert dg["steps_total"] == 18, dg
     g2 = block_geometry(path, "AA_STAIR_LT2")
     lines2 = [x for x in g2 if x["type"] == "LINE"]
-    assert len(lines2) == 28, (len(lines2), [x["type"] for x in g2])  # 2×9+10
+    assert len(lines2) == 29, (len(lines2), [x["type"] for x in g2])  # 2×9+8 外框/平台/梯井/剖断/2 杆
     assert len([x for x in g2 if x["type"] == "SOLID"]) == 2, [x["type"] for x in g2]
-    assert len([x for x in g2 if x["type"] == "TEXT"]) == 1, [x["type"] for x in g2]
+    assert len([x for x in g2 if x["type"] == "TEXT"]) == 2, [x["type"] for x in g2]  # 上、下
     attrs2 = s.attributes("AA_STAIR_LT2")
     assert attrs2["AA_KIND"] == "DOGLEG" and attrs2["AA_STEPS_TOTAL"] == "18", attrs2
     assert abs(float(attrs2["AA_WELL"]) - 120.0) < 1e-6, attrs2
     assert abs(float(attrs2["AA_LANDING"]) - 1200.0) < 1e-6, attrs2
     assert abs(float(attrs2["AA_DEPTH"]) - 4920.0) < 1e-6, attrs2
+    assert attrs2["AA_LEVEL"] == "MIDDLE" and attrs2["AA_UPSIDE"] == "LEFT", attrs2
+
+    # 2b. 首层：只画第一跑 + 45° 剖断，无箭头
+    fs = create_stair(s, "LT3", (12000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
+                      well=120.0, landing=1200.0, angle=0.0, level="FIRST", side="RIGHT")
+    g3 = block_geometry(path, "AA_STAIR_LT3")
+    assert len([x for x in g3 if x["type"] == "LINE"]) == 9, [x["type"] for x in g3]  # 2 边 + 45° 剖断 + 6 踏步（w=1200）
+    assert not [x for x in g3 if x["type"] == "SOLID"], [x["type"] for x in g3]
+    assert s.attributes("AA_STAIR_LT3")["AA_UPSIDE"] == "RIGHT"
+    assert abs(fs["depth"] - 4920.0) < 1e-6, fs
+
+    # 2c. 顶层：两跑全画，只有"下"
+    tp = create_stair(s, "LT4", (18000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
+                      well=120.0, landing=1200.0, angle=0.0, level="TOP")
+    g4 = block_geometry(path, "AA_STAIR_LT4")
+    assert len([x for x in g4 if x["type"] == "LINE"]) == 27, [x["type"] for x in g4]
+    assert len([x for x in g4 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g4]
+    texts4 = [x["text"] for x in g4 if x["type"] == "TEXT"]
+    assert texts4 == ["下"], texts4
+    assert s.attributes("AA_STAIR_LT4")["AA_LEVEL"] == "TOP"
+    assert abs(tp["depth"] - 4920.0) < 1e-6, tp
 
     # 3. 拒绝：重名、错类型、步数 <2、零宽、负梯井、零平台
     for kwargs, msg in (

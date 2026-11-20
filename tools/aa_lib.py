@@ -1721,6 +1721,7 @@ def refresh_opening_labels(session: Session, wall_ids: Sequence[str] | None = No
 
 COLUMN_KINDS = ("RECT", "CIRCLE")
 STAIR_KINDS = ("STRAIGHT", "DOGLEG")
+STAIR_LEVELS = ("FIRST", "MIDDLE", "TOP")
 
 
 def create_column(
@@ -1916,6 +1917,8 @@ def create_stair(
     well: float = 120.0,
     landing: float = 1200.0,
     angle: float = 90.0,
+    level: str = "MIDDLE",
+    side: str = "LEFT",
 ) -> dict[str, Any]:
     """楼梯（天正平面做法）：直跑 STRAIGHT / 双跑 U 形 DOGLEG。
 
@@ -1940,6 +1943,12 @@ def create_stair(
         raise CadError("拒绝写入：每跑踏步数必须是 >=2 的整数（收到 %s）" % steps)
     steps = int(steps)
     well, landing = float(well), float(landing)
+    level_u = str(level).upper()
+    if level_u not in STAIR_LEVELS:
+        raise CadError("层类型只能是 FIRST / MIDDLE / TOP（收到 %r）" % level)
+    side_u = str(side).upper()
+    if side_u not in ("LEFT", "RIGHT"):
+        raise CadError("上楼位置只能是 LEFT / RIGHT（收到 %r）" % side)
     if kind_u == "DOGLEG":
         if well < 0:
             raise CadError("拒绝写入：梯井宽不能为负（收到 %s）" % well)
@@ -1965,8 +1974,10 @@ def create_stair(
         session.lisp('(aa:stair-straight %.4f %d %.4f %.4f %.6f)' % (width, steps, tread, lh, trot),
                      libraries=("aa_core.lisp", "aa_symbol.lisp", "aa_stair.lisp"))
     else:
-        session.lisp('(aa:stair-dogleg %.4f %d %.4f %.4f %.4f %.4f %.6f)'
-                     % (width, steps, tread, well, landing, lh, trot),
+        lv = {"FIRST": 1, "MIDDLE": 0, "TOP": 2}[level_u]
+        sgn = 1 if side_u == "LEFT" else -1
+        session.lisp('(aa:stair-dogleg %.4f %d %.4f %.4f %.4f %.4f %.6f %d %d)'
+                     % (width, steps, tread, well, landing, lh, trot, lv, sgn),
                      libraries=("aa_core.lisp", "aa_symbol.lisp", "aa_stair.lisp"))
     handles = session.new_handles(before)
     if not handles:
@@ -1985,6 +1996,8 @@ def create_stair(
         ("AA_DEPTH", "total plan depth", "%.4f" % depth),
         ("AA_WELL", "well width", "%.4f" % (well if kind_u == "DOGLEG" else 0.0)),
         ("AA_LANDING", "landing depth", "%.4f" % (landing if kind_u == "DOGLEG" else 0.0)),
+        ("AA_LEVEL", "floor level type", level_u),
+        ("AA_UPSIDE", "up side", side_u),
         ("AA_ANGLE", "up direction deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -1998,7 +2011,8 @@ def create_stair(
                                       "AA_KIND": kind_u, "AA_STEPS": str(steps)})
     return {"block": block, "handle": handle, "kind": kind_u, "width": width,
             "steps": steps, "steps_total": total_steps, "tread": tread, "run": run,
-            "depth": depth, "angle": angle, "geom_handles": handles}
+            "depth": depth, "angle": angle, "level": level_u, "side": side_u,
+            "geom_handles": handles}
 
 
 def create_room(

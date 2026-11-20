@@ -1,10 +1,13 @@
 ;;; ============================================================
-;;; 楼梯  (aa_stair.lisp)   依赖 aa_core.lisp
-;;; 直跑：踏步线 + 两侧梯段边线 + 上行箭头（实心三角头）
-;;; 双跑（U 形）：外轮廓 + 上下平台分界线 + 中间梯井 + 两跑踏步线
-;;;              左跑上行、右跑下行，箭头方向相反
-;;; 块定义：AA_STAIR_<ID>；本地原点 = 起步踏步前缘中点，+Y 为上行方向
-;;; 剖断线暂不画（README / 规格里注明）
+;;; 楼梯  (aa_stair.lisp)   依赖 aa_core.lisp / aa_symbol.lisp
+;;; 直跑：踏步线 + 两侧梯段边线 + 实心箭头 + 起步"上"字
+;;; 双跑 U 形（对齐天正"双跑楼梯"对话框的做法）：
+;;;   level = 0 中层：两跑全画 + 剖断线 + "上""下"
+;;;   level = 1 首层：只画上行第一跑，顶部 45° 剖断
+;;;   level = 2 顶层：两跑全画，只标"下"
+;;;   sgn = 1 上楼在左 / -1 上楼在右（整体左右镜像）
+;;; 本地原点 = 起步踏步前缘中点，+Y 为上行方向
+;;; 未做：踏步取齐（齐平台/居中/齐楼板/自由）、疏散半径
 ;;; ============================================================
 
 ;; 实心三角箭头（SOLID）：尖点 p，底边中心 b，半宽 hw
@@ -17,31 +20,27 @@
   (aa:record (aa:hlast)))
 
 ;; (aa:stair-straight w steps tread lh trot)
-(defun aa:stair-straight (w steps tread lh trot / hw run k y mid tw)
+(defun aa:stair-straight (w steps tread lh trot / hw run k y mid)
   (aa:begin)
   (setq hw (/ (float w) 2.0)
         run (* (float steps) (float tread))
         k 1)
-  ;; 两侧梯段边线
   (aa:mkline (aa:pt (- hw) 0.0) (aa:pt (- hw) run) aa:*lay-stair*)
   (aa:mkline (aa:pt hw 0.0) (aa:pt hw run) aa:*lay-stair*)
-  ;; 踏步线（最后一条即上端边线）
   (while (<= k steps)
     (setq y (* k (float tread)))
     (aa:mkline (aa:pt (- hw) y) (aa:pt hw y) aa:*lay-stair*)
     (setq k (+ k 1)))
-  ;; 上行箭头（沿中心线，到梯段中部）
   (setq mid (* 0.55 run))
   (aa:mkline (aa:pt 0.0 0.0) (aa:pt 0.0 mid) aa:*lay-stair*)
   (aa:arrowhead (aa:pt 0.0 (+ mid 300.0)) (aa:pt 0.0 mid) 70.0 aa:*lay-stair*)
-  ;; 起步处"上"字（水平写，块转 180° 时由 trot 抵消倒字）
   (aa:mktext-r (aa:pt 220.0 (- (/ (float tread) 2.0) (* 0.35 (float lh))))
                "上" aa:*lay-stair* lh trot)
   (aa:hs))
 
-;; (aa:stair-dogleg w steps tread well landing)
-;;   w=单跑梯段宽  well=梯井宽  landing=平台深
-(defun aa:stair-dogleg (w steps tread well landing lh trot / wtot dep run p k y xl xr hl xlL xlR xrL xrR tw)
+;; (aa:stair-dogleg w steps tread well landing lh trot level sgn)
+(defun aa:stair-dogleg (w steps tread well landing lh trot level sgn /
+                        wtot dep run p k y hl xlL xlR xrL xrR xl xr cut)
   (aa:begin)
   (setq wtot (+ (* 2.0 w) well)
         run (* (float steps) (float tread))
@@ -49,38 +48,75 @@
         dep (+ (* 2.0 p) run)
         hl (/ wtot 2.0)
         xlL (- hl)
-        xlR (+ (- hl) (float w))     ;; 左跑右边界
-        xrL (- hl (float w))         ;; 右跑左边界
+        xlR (+ (- hl) (float w))
+        xrL (- hl (float w))
         xrR hl
-        xl (/ (+ xlL xlR) 2.0)       ;; 左跑中心
-        xr (/ (+ xrL xrR) 2.0)       ;; 右跑中心
-        k 1)
-  ;; 外轮廓（贴墙的两侧 + 两端）
-  (aa:mkline (aa:pt xlL 0.0) (aa:pt xlL dep) aa:*lay-stair*)
-  (aa:mkline (aa:pt xrR 0.0) (aa:pt xrR dep) aa:*lay-stair*)
-  (aa:mkline (aa:pt xlL 0.0) (aa:pt xrR 0.0) aa:*lay-stair*)
-  (aa:mkline (aa:pt xlL dep) (aa:pt xrR dep) aa:*lay-stair*)
-  ;; 上下平台分界线
-  (aa:mkline (aa:pt xlL p) (aa:pt xrR p) aa:*lay-stair*)
-  (aa:mkline (aa:pt xlL (+ p run)) (aa:pt xrR (+ p run)) aa:*lay-stair*)
-  ;; 梯井两侧边线（只在中段）
-  (aa:mkline (aa:pt (- (/ (float well) 2.0)) p) (aa:pt (- (/ (float well) 2.0)) (+ p run)) aa:*lay-stair*)
-  (aa:mkline (aa:pt (/ (float well) 2.0) p) (aa:pt (/ (float well) 2.0) (+ p run)) aa:*lay-stair*)
-  ;; 两跑踏步线（同一组 y，方向相反）
-  (while (<= k steps)
-    (setq y (+ p (* k (float tread))))
-    (aa:mkline (aa:pt xlL y) (aa:pt xlR y) aa:*lay-stair*)
-    (aa:mkline (aa:pt xrL y) (aa:pt xrR y) aa:*lay-stair*)
-    (setq k (+ k 1)))
-  ;; 左跑上行箭头（+Y）
-  (aa:mkline (aa:pt xl p) (aa:pt xl (+ p (* 0.45 run))) aa:*lay-stair*)
-  (aa:arrowhead (aa:pt xl (+ (+ p (* 0.45 run)) 300.0)) (aa:pt xl (+ p (* 0.45 run)))
-                70.0 aa:*lay-stair*)
-  ;; 右跑下行箭头（-Y）
-  (aa:mkline (aa:pt xr (+ p run)) (aa:pt xr (- (+ p run) (* 0.45 run))) aa:*lay-stair*)
-  (aa:arrowhead (aa:pt xr (- (- (+ p run) (* 0.45 run)) 300.0))
-                (aa:pt xr (- (+ p run) (* 0.45 run))) 70.0 aa:*lay-stair*)
-  ;; 起步处"上"字（左跑平台上方一点）
-  (aa:mktext-r (aa:pt (+ xl 220.0) (- (+ p (/ (float tread) 2.0)) (* 0.35 (float lh))))
-               "上" aa:*lay-stair* lh trot)
+        xl (/ (+ xlL xlR) 2.0)
+        xr (/ (+ xrL xrR) 2.0))
+
+  (if (= level 1)
+      ;; ---- 首层：只画上行第一跑，顶端 45° 剖断（不画上部平台与第二跑） ----
+      (progn
+        (setq cut run)
+        (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xlL) cut) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlR) 0.0) (aa:pt (* sgn xlR) (- cut (/ (float w) 2.0))) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlR) (- cut (/ (float w) 2.0))) (aa:pt (* sgn xlL) cut) aa:*lay-stair*)
+        (setq k 1)
+        (while (<= k steps)
+          (setq y (* k (float tread)))
+          (if (< y (- cut (/ (float w) 2.0)))
+              (aa:mkline (aa:pt (* sgn xlL) y) (aa:pt (* sgn xlR) y) aa:*lay-stair*))
+          (setq k (+ k 1)))
+        (aa:mktext-r (aa:pt (* sgn (+ xl 220.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
+                     "上" aa:*lay-stair* lh trot))
+    (if (= level 2)
+        ;; ---- 顶层：两跑全画，只标"下" ----
+        (progn
+          (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xlL) dep) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xrR) 0.0) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xrR) 0.0) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xlL) dep) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xlL) p) (aa:pt (* sgn xrR) p) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xlL) (+ p run)) (aa:pt (* sgn xrR) (+ p run)) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xlR) p) (aa:pt (* sgn xlR) (+ p run)) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xrL) p) (aa:pt (* sgn xrL) (+ p run)) aa:*lay-stair*)
+          (setq k 1)
+          (while (<= k steps)
+            (setq y (+ p (* k (float tread))))
+            (aa:mkline (aa:pt (* sgn xlL) y) (aa:pt (* sgn xlR) y) aa:*lay-stair*)
+            (aa:mkline (aa:pt (* sgn xrL) y) (aa:pt (* sgn xrR) y) aa:*lay-stair*)
+            (setq k (+ k 1)))
+          (aa:mkline (aa:pt (* sgn xr) (+ p run)) (aa:pt (* sgn xr) (- (+ p run) (* 0.45 run))) aa:*lay-stair*)
+          (aa:arrowhead (aa:pt (* sgn xr) (- (- (+ p run) (* 0.45 run)) 300.0))
+                        (aa:pt (* sgn xr) (- (+ p run) (* 0.45 run))) 70.0 aa:*lay-stair*)
+          (aa:mktext-r (aa:pt (* sgn (- xr 220.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
+                       "下" aa:*lay-stair* lh trot))
+      ;; ---- 中层（默认）：两跑全画 + 剖断线 + 上/下 ----
+      (progn
+        (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xlL) dep) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xrR) 0.0) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xrR) 0.0) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlL) dep) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlL) p) (aa:pt (* sgn xrR) p) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlL) (+ p run)) (aa:pt (* sgn xrR) (+ p run)) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xlR) p) (aa:pt (* sgn xlR) (+ p run)) aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xrL) p) (aa:pt (* sgn xrL) (+ p run)) aa:*lay-stair*)
+        (setq k 1)
+        (while (<= k steps)
+          (setq y (+ p (* k (float tread))))
+          (aa:mkline (aa:pt (* sgn xlL) y) (aa:pt (* sgn xlR) y) aa:*lay-stair*)
+          (aa:mkline (aa:pt (* sgn xrL) y) (aa:pt (* sgn xrR) y) aa:*lay-stair*)
+          (setq k (+ k 1)))
+        (aa:mkline (aa:pt (* sgn xl) p) (aa:pt (* sgn xl) (+ p (* 0.45 run))) aa:*lay-stair*)
+        (aa:arrowhead (aa:pt (* sgn xl) (+ (+ p (* 0.45 run)) 300.0))
+                      (aa:pt (* sgn xl) (+ p (* 0.45 run))) 70.0 aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xr) (+ p run)) (aa:pt (* sgn xr) (- (+ p run) (* 0.45 run))) aa:*lay-stair*)
+        (aa:arrowhead (aa:pt (* sgn xr) (- (- (+ p run) (* 0.45 run)) 300.0))
+                      (aa:pt (* sgn xr) (- (+ p run) (* 0.45 run))) 70.0 aa:*lay-stair*)
+        (aa:mkline (aa:pt (* sgn xrL) (+ p (* 0.30 run)))
+                   (aa:pt (* sgn xrR) (+ p (* 0.30 run) (float w))) aa:*lay-stair*)
+        (aa:mktext-r (aa:pt (* sgn (+ xl 220.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
+                     "上" aa:*lay-stair* lh trot)
+        (aa:mktext-r (aa:pt (* sgn (- xr 220.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
+                     "下" aa:*lay-stair* lh trot))))
   (aa:hs))

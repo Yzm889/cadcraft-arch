@@ -622,6 +622,10 @@ TOOLS: list[dict[str, Any]] = [
                 "well": {"type": "number", "description": "梯井宽 mm（双跑用）", "default": 120},
                 "landing": {"type": "number", "description": "平台深 mm（双跑用）", "default": 1200},
                 "angle": {"type": "number", "description": "上行方向（度，90=+Y）", "default": 90},
+                "level": {"type": "string", "enum": ["FIRST", "MIDDLE", "TOP"],
+                          "description": "层类型：首层 / 中层 / 顶层", "default": "MIDDLE"},
+                "side": {"type": "string", "enum": ["LEFT", "RIGHT"],
+                         "description": "上楼位置（双跑用）", "default": "LEFT"},
             },
             "required": ["path", "id", "at"],
         },
@@ -766,7 +770,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("width", 1200), "width"),
             int(_num(a.get("steps", 10), "steps")), _num(a.get("tread", 280), "tread"),
             _num(a.get("rise", 150), "rise"), _num(a.get("well", 120), "well"),
-            _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"))}
+            _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"),
+            a.get("level", "MIDDLE"), a.get("side", "LEFT"))}
 
     if name == "aa_batch":
         return aa_batch(path, a["ops"], bool(a.get("rollback", True)))
