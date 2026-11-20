@@ -56,9 +56,11 @@ from aa_lib import (  # noqa: E402
     create_opening_detail,
     create_wall_node,
     create_stair_detail,
+    create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
+    read_wc_detail,
     read_wall_node,
     create_roof,
     create_elevation,
@@ -566,6 +568,21 @@ def main(argv: list[str] | None = None) -> int:
     p_sdetail.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_sdetail.add_argument("--show", default=None, help="只回读已有大样")
 
+    p_wcd = sub.add_parser("wc-detail", help="卫生间大样：净空+洁具+地漏+排水坡（默认 1:20）")
+    p_wcd.add_argument("path")
+    p_wcd.add_argument("id")
+    p_wcd.add_argument("--at", default=None, help="内净空左下角 x,y")
+    p_wcd.add_argument("--w", type=float, default=2400.0, help="净宽 mm")
+    p_wcd.add_argument("--h", type=float, default=1800.0, help="净深 mm")
+    p_wcd.add_argument("--wall", type=float, default=120.0, help="墙厚 mm")
+    p_wcd.add_argument("--slope", type=float, default=1.0, help="排水坡度 %")
+    p_wcd.add_argument("--drain", default=None, help="地漏位置 x,y（默认右下内退 300）")
+    p_wcd.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
+    p_wcd.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
+    p_wcd.add_argument("--title", default=None, help="图名")
+    p_wcd.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_wcd.add_argument("--show", default=None, help="只回读已有大样")
+
     args = ap.parse_args(argv)
 
     try:
@@ -902,6 +919,16 @@ def main(argv: list[str] | None = None) -> int:
                 emit({"ok": True, **create_stair_detail(
                     session, args.id, _pt(args.at), args.stair_id, args.ratio,
                     args.factor, args.title, not args.no_dims)})
+        elif args.cmd == "wc-detail":
+            if args.show:
+                emit({"ok": True, **read_wc_detail(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建卫生间大样需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_wc_detail(
+                    session, args.id, _pt(args.at), args.w, args.h, args.wall,
+                    args.slope, _pt(args.drain) if args.drain else None,
+                    args.ratio, args.factor, args.title, not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

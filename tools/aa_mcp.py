@@ -46,9 +46,11 @@ from aa_lib import (  # noqa: E402
     create_opening_detail,
     create_wall_node,
     create_stair_detail,
+    create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
+    read_wc_detail,
     read_wall_node,
     create_sheet_index,
     create_sheet_set,
@@ -84,7 +86,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.37"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.38"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -873,6 +875,31 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_wc_detail",
+        "description": "卫生间大样（1:20）：净空+墙厚+坐便/台盆/地漏+排水坡箭头（i=%），注开间/进深/坐便中心距三道尺寸；默认坐便靠上墙、台盆靠左墙、地漏右下内退 300，落 AA_WC_<编号> 可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "大样编号，如图纸内唯一 WC1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "内净空左下角 [x, y]"},
+                "w": {"type": "number", "description": "净宽 mm，默认 2400"},
+                "h": {"type": "number", "description": "净深 mm，默认 1800"},
+                "wall": {"type": "number", "description": "墙厚 mm，默认 120"},
+                "slope": {"type": "number", "description": "排水坡度 %，默认 1"},
+                "drain": {"type": "array", "items": {"type": "number"},
+                          "description": "地漏 [x, y]，默认右下内退 300"},
+                "ratio": {"type": "number", "description": "详图比例分母，默认 20", "default": 20},
+                "factor": {"type": "number", "description": "直接给放大倍数"},
+                "title": {"type": "string", "description": "图名"},
+                "dims": {"type": "boolean", "description": "是否注尺寸", "default": True},
+                "show": {"type": "string", "description": "只回读已有大样：给大样编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_stair_detail",
         "description": "楼梯间大样（1:20）：按图上已有楼梯（STRAIGHT/DOGLEG）的梯段宽/踏步数/踏步宽/梯井/平台深放大重画平面，直跑注梯段宽+踏步总长，双跑再加平台深；尺寸写真实 mm（含 10×280=2800），落 AA_SD_<编号> 可回读。",
         "inputSchema": {
@@ -1221,6 +1248,20 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_wc_detail":
+        sd = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_wc_detail(sd, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("卫生间大样需要 id 与 at（或用 show 回读）")
+        return create_wc_detail(sd, a["id"], _pt(a["at"], "at"),
+                                _num(a.get("w", 2400), "w"), _num(a.get("h", 1800), "h"),
+                                _num(a.get("wall", 120), "wall"),
+                                _num(a.get("slope", 1), "slope"),
+                                _pt(a["drain"], "drain") if a.get("drain") else None,
+                                _num(a.get("ratio", 20), "ratio"), a.get("factor"),
+                                a.get("title"), bool(a.get("dims", True)))
 
     if name == "aa_stair_detail":
         sd = _session(path)

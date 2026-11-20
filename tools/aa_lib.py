@@ -6822,3 +6822,231 @@ def read_stair_detail(session: Session, detail_id: str) -> dict[str, Any]:
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", ""),
             "title": attrs.get("AA_TITLE", "")}
+
+
+# ---------------- 详图：卫生间大样（v1.0.38，B7 第四项续） ----------------
+
+def create_wc_detail(
+    session: Session,
+    detail_id: str,
+    at: tuple[float, float],
+    width: float = 2400.0,
+    depth: float = 1800.0,
+    wall: float = 120.0,
+    slope: float = 1.0,
+    drain: tuple[float, float] | None = None,
+    ratio: float = 20.0,
+    factor: float | None = None,
+    title: str | None = None,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """卫生间大样（1:20）：净空 + 墙厚 + 坐便/台盆/地漏 + 排水坡 + 三道尺寸。
+
+    `at` = 大样**内净空左下角**（墙身向四周各外扩 `wall`）。
+    默认布置：坐便靠上墙（400×700，水槽 400×180）、台盆靠左墙（450×600）、
+    地漏 100×100 在右下角内退 300；排水坡箭头从上墙中部指向地漏，坡度 `slope`%。
+    洁具位置只按默认规则排，型号/间距不做猜测（属性里记尺寸，图上不注型号）。
+    """
+    block = "AA_WC_" + detail_id
+    if session.block_exists(block):
+        raise CadError("卫生间大样 %s 已存在，请换编号" % detail_id)
+    w = float(width)
+    h = float(depth)
+    t = float(wall)
+    if w <= 0 or h <= 0:
+        raise CadError("卫生间净宽/净深必须大于 0")
+    if t < 0:
+        raise CadError("墙厚不能为负")
+    ratio = float(ratio)
+    if ratio <= 0:
+        raise CadError("详图比例必须大于 0（收到 %s）" % ratio)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else sc / ratio
+    if f <= 0:
+        raise CadError("大样放大倍数必须大于 0（收到 %s）" % f)
+    if slope <= 0:
+        raise CadError("排水坡度必须大于 0（收到 %s）" % slope)
+
+    if drain is None:
+        dx, dy = max(150.0, w - 300.0), 300.0
+    else:
+        dx, dy = float(drain[0]), float(drain[1])
+    if not (0.0 <= dx <= w and 0.0 <= dy <= h):
+        raise CadError("地漏 (%g,%g) 落在卫生间净空之外" % (dx, dy))
+
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    Wf, Hf, TF = w * f, h * f, t * f
+    DF = 100.0 * f
+
+    lay_wall = LAYERS["wall"]
+    lay_room = LAYERS["room"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_wall, lay_room, lay_dim, lay_name])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        if not s:
+            return
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    def rect(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        seg(x1, y1, x2, y1, lay)
+        seg(x2, y1, x2, y2, lay)
+        seg(x2, y2, x1, y2, lay)
+        seg(x1, y2, x1, y1, lay)
+
+    def box(x: float, y: float, r: float) -> None:
+        body.append('(aa:mkcircle (list %.3f %.3f) %.3f "%s")'
+                    % (x, y, r, lay_room))
+
+    # 墙身（四周墙带）
+    rect(-TF, -TF, Wf + TF, Hf + TF, lay_wall)
+    rect(0.0, 0.0, Wf, Hf, lay_wall)
+
+    # 坐便：靠上墙，水槽 + 椭圆坐圈（12 边形近似）
+    tw, td = 400.0 * f, 700.0 * f
+    tank = 180.0 * f
+    cx = Wf / 2.0
+    rect(cx - tw / 2.0, Hf - tank, cx + tw / 2.0, Hf, lay_room)
+    bcx, bcy = cx, Hf - tank - 240.0 * f
+    rx, ry = 180.0 * f, 240.0 * f
+    import math
+    pts = []
+    for k in range(12):
+        a = 2.0 * math.pi * k / 12.0
+        pts.append((bcx + rx * math.cos(a), bcy + ry * math.sin(a)))
+    for k in range(12):
+        x1, y1 = pts[k]
+        x2, y2 = pts[(k + 1) % 12]
+        seg(x1, y1, x2, y2, lay_room)
+
+    # 台盆：靠左墙，450 深 × 600 宽
+    by = (Hf - 600.0 * f) / 2.0
+    rect(0.0, by, 450.0 * f, by + 600.0 * f, lay_room)
+    rect(60.0 * f, by + 60.0 * f, 390.0 * f, by + 540.0 * f, lay_room)
+    box(70.0 * f, by + 300.0 * f, 40.0 * f)
+
+    # 地漏：100×100 + 对角
+    hd = DF / 2.0
+    rect(dx * f - hd, dy * f - hd, dx * f + hd, dy * f + hd, lay_room)
+    seg(dx * f - hd, dy * f - hd, dx * f + hd, dy * f + hd, lay_room)
+    seg(dx * f - hd, dy * f + hd, dx * f + hd, dy * f - hd, lay_room)
+
+    # 排水坡：从上墙中部指向地漏，箭头 + i=%
+    sx, sy = Wf / 2.0, Hf - 900.0 * f
+    ax, ay = dx * f, dy * f
+    seg(sx, sy, ax, ay, lay_room)
+    import math as _m
+    ang = _m.atan2(ay - sy, ax - sx)
+    hl = ann(6.0)
+    hw = ann(2.0)
+    seg(ax, ay, ax - hl * _m.cos(ang - 0.35), ay - hl * _m.sin(ang - 0.35), lay_room)
+    seg(ax, ay, ax - hl * _m.cos(ang + 0.35), ay - hl * _m.sin(ang + 0.35), lay_room)
+    label = "i=%g%%" % slope
+    th = ann(2.0)
+    txt((sx + ax) / 2.0 + ann(2.0), (sy + ay) / 2.0 - th, label, th)
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 开间：下方
+        dy2 = -TF - ann(10.0)
+        for xx in (0.0, Wf):
+            seg(xx, -TF, xx, dy2 - ann(2.0), lay_dim)
+        seg(0.0, dy2, Wf, dy2, lay_dim)
+        for xx in (0.0, Wf):
+            seg(xx - tick, dy2 + tick, xx + tick, dy2 - tick, lay_dim)
+        label = "%g" % w
+        txt(Wf / 2.0 - _text_w(label, th) / 2.0, dy2 - ann(4.0), label, th)
+        ndim += 1
+
+        # 进深：左侧
+        dx2 = -TF - ann(10.0)
+        for yy in (0.0, Hf):
+            seg(-TF, yy, dx2 - ann(2.0), yy, lay_dim)
+        seg(dx2, 0.0, dx2, Hf, lay_dim)
+        for yy in (0.0, Hf):
+            seg(dx2 - tick, yy + tick, dx2 + tick, yy - tick, lay_dim)
+        label = "%g" % h
+        txt(dx2 - ann(1.2) - th, Hf / 2.0 - _text_w(label, th) / 2.0, label, th, 1.5708)
+        ndim += 1
+
+        # 坐便中心距左墙：上方
+        yc = Hf + TF + ann(10.0)
+        for xx in (0.0, cx):
+            seg(xx, Hf + TF, xx, yc + ann(2.0), lay_dim)
+        seg(0.0, yc, cx, yc, lay_dim)
+        for xx in (0.0, cx):
+            seg(xx - tick, yc + tick, xx + tick, yc - tick, lay_dim)
+        label = "%g" % (w / 2.0)
+        txt(cx / 2.0 - _text_w(label, th) / 2.0, yc + ann(1.2), label, th)
+        ndim += 1
+
+    if not title:
+        title = "卫生间大样"
+    ty = -TF - ann(24.0) if dims else -TF - ann(10.0)
+    body.append('(aa:title %.3f %.3f "%s" "1:%g")'
+                % (0.0, ty, title.replace('"', "'"), ratio))
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("卫生间大样没有生成任何图元")
+
+    bbox = [-TF - ann(30.0), ty - ann(6.0), Wf + TF + ann(18.0), Hf + TF + ann(16.0)]
+    att_defs = [
+        ("AA_TYPE", "component type", "WC_DETAIL"),
+        ("AA_ID", "component id", detail_id),
+        ("AA_W", "clear width", "%.4f" % w),
+        ("AA_H", "clear depth", "%.4f" % h),
+        ("AA_WALL", "wall thickness", "%.4f" % t),
+        ("AA_TOILET", "toilet footprint", "400x700"),
+        ("AA_BASIN", "basin footprint", "450x600"),
+        ("AA_DRAIN", "floor drain", "%.4f,%.4f" % (dx, dy)),
+        ("AA_SLOPE", "slope percent", "%.4f" % slope),
+        ("AA_FACTOR", "enlarge factor", "%.4f" % f),
+        ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_TITLE", "detail title", title),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {k: v for k, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_name)
+    session.expect_attributes(block, {"AA_TYPE": "WC_DETAIL", "AA_ID": detail_id})
+    return {"block": block, "handle": handle, "id": detail_id,
+            "width": w, "depth": h, "wall": t, "drain": [dx, dy], "slope": slope,
+            "factor": f, "ratio": "1:%g" % ratio, "title": title,
+            "dims": ndim, "bbox": bbox, "geom_handles": handles}
+
+
+def read_wc_detail(session: Session, detail_id: str) -> dict[str, Any]:
+    """回读卫生间大样：净宽/净深/墙厚/洁具/地漏/坡度/倍数/比例/图名。"""
+    attrs = session.attributes("AA_WC_" + detail_id)
+    if not attrs or attrs.get("AA_TYPE") != "WC_DETAIL":
+        raise CadError("没找到卫生间大样 %s" % detail_id)
+    drain = (attrs.get("AA_DRAIN") or "0,0").split(",")
+    return {"id": detail_id,
+            "width": float(attrs.get("AA_W") or 0),
+            "depth": float(attrs.get("AA_H") or 0),
+            "wall": float(attrs.get("AA_WALL") or 0),
+            "toilet": attrs.get("AA_TOILET", ""),
+            "basin": attrs.get("AA_BASIN", ""),
+            "drain": [float(drain[0]), float(drain[-1])],
+            "slope": float(attrs.get("AA_SLOPE") or 0),
+            "factor": float(attrs.get("AA_FACTOR") or 0),
+            "ratio": attrs.get("AA_RATIO", ""),
+            "title": attrs.get("AA_TITLE", "")}
