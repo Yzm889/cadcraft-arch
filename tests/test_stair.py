@@ -44,7 +44,7 @@ def main() -> int:
     assert len(solids1) == 1, [x["type"] for x in g1]
     assert len([x for x in g1 if x["type"] == "TEXT"]) == 1, [x["type"] for x in g1]  # "上"
     ys1 = sorted({round(p[1], 3) for x in lines1 for p in x["pts"]})
-    assert ys1[0] == 0.0 and ys1[-1] == 2800.0, ys1
+    assert -400.0 < ys1[0] < 0.0 and ys1[-1] == 2800.0, ys1   # 箭头杆下端伸出轮廓
     attrs1 = s.attributes("AA_STAIR_LT1")
     assert attrs1["AA_TYPE"] == "STAIR" and attrs1["AA_ID"] == "LT1", attrs1
     assert attrs1["AA_STEPS"] == "10" and attrs1["AA_STEPS_TOTAL"] == "10", attrs1
@@ -59,7 +59,7 @@ def main() -> int:
     assert dg["steps_total"] == 18, dg
     g2 = block_geometry(path, "AA_STAIR_LT2")
     lines2 = [x for x in g2 if x["type"] == "LINE"]
-    assert len(lines2) == 29, (len(lines2), [x["type"] for x in g2])  # 2×9+8 外框/平台/梯井/剖断/2 杆
+    assert len(lines2) == 32, (len(lines2), [x["type"] for x in g2])  # 8 外框/平台/梯井 + 18 踏步 + 4 折断 + 2 杆
     assert len([x for x in g2 if x["type"] == "SOLID"]) == 2, [x["type"] for x in g2]
     assert len([x for x in g2 if x["type"] == "TEXT"]) == 2, [x["type"] for x in g2]  # 上、下
     attrs2 = s.attributes("AA_STAIR_LT2")
@@ -76,8 +76,8 @@ def main() -> int:
     fs = create_stair(s, "LT3", (12000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
                       well=120.0, landing=1200.0, angle=0.0, level="FIRST", side="RIGHT")
     g3 = block_geometry(path, "AA_STAIR_LT3")
-    assert len([x for x in g3 if x["type"] == "LINE"]) == 9, [x["type"] for x in g3]  # 2 边 + 45° 剖断 + 6 踏步（w=1200）
-    assert not [x for x in g3 if x["type"] == "SOLID"], [x["type"] for x in g3]
+    assert len([x for x in g3 if x["type"] == "LINE"]) == 10, [x["type"] for x in g3]  # 2 边 + 3 踏步 + 4 折断 + 1 杆（w=1200）
+    assert len([x for x in g3 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g3]  # 只有上行箭头
     assert s.attributes("AA_STAIR_LT3")["AA_UPSIDE"] == "RIGHT"
     assert abs(fs["depth"] - 4920.0) < 1e-6, fs
 
@@ -85,7 +85,7 @@ def main() -> int:
     tp = create_stair(s, "LT4", (18000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
                       well=120.0, landing=1200.0, angle=0.0, level="TOP")
     g4 = block_geometry(path, "AA_STAIR_LT4")
-    assert len([x for x in g4 if x["type"] == "LINE"]) == 27, [x["type"] for x in g4]
+    assert len([x for x in g4 if x["type"] == "LINE"]) == 28, [x["type"] for x in g4]  # 8 外框 + 18 踏步 + 2 杆
     assert len([x for x in g4 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g4]
     texts4 = [x["text"] for x in g4 if x["type"] == "TEXT"]
     assert texts4 == ["下"], texts4

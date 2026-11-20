@@ -73,7 +73,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "stair":    {"color": 2, "linetype": "Continuous", "lineweight": 0.18},
     "stairarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
     "stairtext": {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
-    "stairbreak": {"color": 1, "linetype": "Continuous", "lineweight": 0.18},
+    "stairbreak": {"color": 7, "linetype": "DASHED", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
