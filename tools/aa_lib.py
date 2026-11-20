@@ -45,6 +45,7 @@ DEFAULT_LAYERS = {
     "column": "AA-COLUMN",
     "step": "AA-STEP",
     "stair": "AA-STAIR",
+    "stairarrow": "AA-STAIR-ARROW",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -67,7 +68,8 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "name":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "column":   {"color": 8, "linetype": "Continuous", "lineweight": 0.35},
     "step":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
-    "stair":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "stair":    {"color": 2, "linetype": "Continuous", "lineweight": 0.18},
+    "stairarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -323,7 +325,7 @@ class Session:
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
             for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
-                      "sheet", "title", "table")
+                      "stairarrow", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -1964,7 +1966,7 @@ def create_stair(
         depth = 2.0 * landing + run
         total_steps = steps * 2
 
-    session.ensure_layers([LAYERS["stair"]])
+    session.ensure_layers([LAYERS["stair"], LAYERS["stairarrow"]])
     sc = drawing_scale(session)
     lh = annot_size(2.5, sc)
     rot = (angle - 90.0) % 360.0
@@ -3850,28 +3852,43 @@ def emphasize_lineweights(session: Session, png: str | Path, window: Sequence[fl
     table = layer_table(session.path)
     cache: dict[str, list] = {}
     thick = 0
+    colored = 0
+    pieces: list[tuple[list, dict, Any]] = []
     for ref in session.references():
         g = ref["geometry"]
         block = g.get("block")
         if not block:
             continue
         for e in _block_geometry_cached(session.path, block, cache):
-            lay = e.get("layer") or ref.get("layer") or "0"
-            spec = table.get(lay)
-            if not spec or float(spec["lineweight"]) < min_mm:
-                continue
-            width = max(1, int(round(float(spec["lineweight"]) * px_per_mm)))
-            if width < 2:
-                continue
-            color = ACI_RGB.get(spec["color"], (240, 240, 240))
-            world = [_insert_tf((p[0], p[1]), ref) for p in e["pts"] if p]
-            scr = [(ox + (p[0] - x0) * fit, oy + (y1 - p[1]) * fit) for p in world]
-            for a, b in zip(scr, scr[1:]):
-                draw.line([a, b], fill=color, width=width)
-            if e["type"] in ("LINE", "LWPOLYLINE"):
-                thick += 1
+            pieces.append((e["pts"], e, ref))
+    for e in session.entities().get("entities", []):
+        p = (e.get("geometry") or {}).get("pts")
+        if p and len(p) >= 2 and e.get("type") not in ("Block Reference", "Dimension"):
+            pieces.append((p, e, None))
+
+    for pts, e, ref in pieces:
+        lay = e.get("layer") or (ref.get("layer") if ref else None) or "0"
+        spec = table.get(lay)
+        if not spec:
+            continue
+        lw = float(spec["lineweight"])
+        width = max(1, int(round(lw * px_per_mm)))
+        rgb = ACI_RGB.get(spec["color"], (240, 240, 240))
+        # 白线由 CLI 自己画；纸面线宽 ≥ 0.2 补粗；非白层（红轴/青门窗/黄楼梯/绿箭头）统一上色，
+        # 这样预览跟天正的彩色预览一致，细线也能看出层色。
+        if spec["color"] == 7 and width < 2:
+            continue
+        world = [_insert_tf((p[0], p[1]), ref) if ref else (p[0], p[1])
+                 for p in pts if p]
+        scr = [(ox + (p[0] - x0) * fit, oy + (y1 - p[1]) * fit) for p in world]
+        for a, b in zip(scr, scr[1:]):
+            draw.line([a, b], fill=rgb, width=width)
+        if spec["color"] == 7 and e["type"] in ("LINE", "LWPOLYLINE"):
+            thick += 1
+        elif spec["color"] != 7:
+            colored += 1
     img.save(out)
-    return {"thickened": thick, "px_per_mm": round(px_per_mm, 2)}
+    return {"thickened": thick, "colored": colored, "px_per_mm": round(px_per_mm, 2)}
 
 
 def export(session: Session, out: str | Path, window: Sequence[float] | None = None,
