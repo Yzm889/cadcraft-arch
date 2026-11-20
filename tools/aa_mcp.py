@@ -39,6 +39,7 @@ from aa_lib import (  # noqa: E402
     create_stair,
     create_roof,
     create_elevation,
+    create_section,
     create_floor_table,
     read_floors,
     create_opening,
@@ -67,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.16"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.17"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -702,6 +703,38 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_profile",
+        "description": "建筑剖面：地坪 + 各层楼板（板顶/板底）+ 屋面板 + 外墙内皮 + 女儿墙或坡屋面 + 各层标高，顶层总高可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "剖面编号，如图纸唯一 P1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "剖面左端室内地坪点 [x, y]"},
+                "width": {"type": "number", "description": "剖面宽度 mm"},
+                "floors": {"type": "array", "description": "自下而上每层 {height, elev?, no?, name?}",
+                           "items": {"type": "object",
+                                     "properties": {
+                                         "height": {"type": "number"},
+                                         "elev": {"type": "number"},
+                                         "no": {"type": "string"},
+                                         "name": {"type": "string"},
+                                     },
+                                     "required": ["height"]}},
+                "slab": {"type": "number", "description": "楼板厚 mm", "default": 100},
+                "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
+                         "description": "平屋顶 / 双坡 / 不加", "default": "FLAT"},
+                "parapet": {"type": "number", "description": "女儿墙高 mm", "default": 1200},
+                "rise": {"type": "number", "description": "双坡脊高 mm", "default": 0},
+                "wall": {"type": "number", "description": "外墙厚 mm", "default": 240},
+                "marks": {"type": "boolean", "description": "是否注标高", "default": True},
+                "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+            },
+            "required": ["path", "id", "at", "width", "floors"],
+        },
+    },
+    {
         "name": "aa_floor_table",
         "description": "楼层表：写入各层层号/层高/平面图号/层名，起算标高自动累加，画成表并落成 FLOOR_TABLE 构件；立面、剖面后续据此生成。",
         "inputSchema": {
@@ -888,6 +921,14 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("overhang", 600), "overhang"),
             bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"))}
+
+    if name == "aa_profile":
+        return {"ok": True, **create_section(
+            s, a["id"], _pt(a["at"], "at"), _num(a["width"], "width"),
+            a["floors"], _num(a.get("slab", 100), "slab"), a.get("roof", "FLAT"),
+            _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
+            _num(a.get("wall", 240), "wall"), bool(a.get("marks", True)),
+            _num(a.get("angle", 0.0), "angle"))}
 
     if name == "aa_floor_table":
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],

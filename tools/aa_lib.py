@@ -2340,6 +2340,154 @@ def create_elevation(
             "rows": rows, "geom_handles": handles}
 
 
+def create_section(
+    session: Session,
+    section_id: str,
+    at: tuple[float, float],
+    width: float,
+    floors: Sequence[Any],
+    slab: float = 100.0,
+    roof: str = "FLAT",
+    parapet: float = 1200.0,
+    rise: float = 0.0,
+    wall: float = 240.0,
+    marks: bool = True,
+    angle: float = 0.0,
+) -> dict[str, Any]:
+    """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
+
+    `at` = 剖面左端室内地坪点（±0.000）；`width` = 剖面宽；
+    `floors` 同 `create_elevation`；`slab` 楼板厚（默认 100）；`wall` 外墙厚（剖面里画两道竖线）。
+    `roof`：FLAT 平屋顶（屋面板 + 女儿墙）/ GABLE 双坡（斜屋面板 + 脊）/ NONE。
+    剖面暂不画梁、楼梯、基础、材料图例、剖切到的门窗（后续按平面剖切位置补）。
+    """
+    block = "AA_SECTION_" + section_id
+    if session.block_exists(block):
+        raise CadError("剖面 %s 已存在，请换编号" % section_id)
+    width = float(width)
+    if width <= 0:
+        raise CadError("拒绝写入：剖面宽度必须为正实数（收到 %s）" % width)
+    rows = _norm_floors(floors)
+    roof_u = str(roof).upper()
+    if roof_u not in ELEV_ROOFS:
+        raise CadError("屋顶形式只能是 FLAT / GABLE / NONE（收到 %r）" % roof)
+    slab, parapet, rise, wall = float(slab), float(parapet), float(rise), float(wall)
+    if slab <= 0:
+        raise CadError("拒绝写入：楼板厚必须为正（收到 %s）" % slab)
+    if wall <= 0:
+        raise CadError("拒绝写入：外墙厚必须为正（收到 %s）" % wall)
+    if wall * 2 >= width:
+        raise CadError("拒绝写入：外墙厚 %s 太大，剖面已经没有净宽（%s）" % (wall, width))
+    if roof_u == "FLAT" and parapet < 0:
+        raise CadError("拒绝写入：女儿墙高不能为负（收到 %s）" % parapet)
+    if roof_u == "GABLE" and rise <= 0:
+        raise CadError("拒绝写入：双坡屋脊高必须为正（收到 %s）" % rise)
+    angle = float(angle) % 360.0
+
+    top = rows[-1]["elev"] + rows[-1]["height"]
+    roof_bottom = top
+    roof_top = top + slab
+    if roof_u == "FLAT":
+        total_top = roof_top + parapet
+    elif roof_u == "GABLE":
+        total_top = top + rise + slab
+    else:
+        total_top = roof_top
+
+    session.ensure_layers([LAYERS["elev"], LAYERS["elevdetail"], LAYERS["name"]])
+    sc = drawing_scale(session)
+    lh = annot_size(3.0, sc)
+    th = annot_size(2.5, sc)
+    lev = LAYERS["elev"]
+    det = LAYERS["elevdetail"]
+    ext = annot_size(5.0, sc)
+
+    def L(x1, y1, x2, y2, lay):
+        return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
+
+    code: list[str] = []
+    # 室内地坪（两端出头）+ 两侧外墙内皮
+    code.append(L(-ext, 0.0, width + ext, 0.0, lev))
+    code.append(L(wall, 0.0, wall, top, lev))
+    code.append(L(width - wall, 0.0, width - wall, top, lev))
+    # 楼板（每层楼面一条板顶 + 一条板底；首层地面即地坪，不重复）
+    for r in rows[1:]:
+        code.append(L(0.0, r["elev"], width, r["elev"], lev))
+        code.append(L(0.0, r["elev"] - slab, width, r["elev"] - slab, det))
+    # 墙体上每层的墙身分界（板底以上画通，保持剖面连续）
+    for r in rows[1:]:
+        code.append(L(wall, r["elev"] - slab, wall, r["elev"], det))
+        code.append(L(width - wall, r["elev"] - slab, width - wall, r["elev"], det))
+    # 屋面
+    if roof_u == "FLAT":
+        code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
+        code.append(L(0.0, roof_top, width, roof_top, lev))            # 屋面板顶
+        if parapet > 0:
+            # 女儿墙只在外墙位置：剖到的是两道窄矩形，不是横贯整宽的"大框"
+            cap = annot_size(1.5, sc)
+            code.append(L(0.0, roof_top, 0.0, roof_top + parapet, lev))
+            code.append(L(wall, roof_top, wall, roof_top + parapet, lev))
+            code.append(L(0.0, roof_top + parapet, wall, roof_top + parapet, lev))
+            code.append(L(width - wall, roof_top, width - wall, roof_top + parapet, lev))
+            code.append(L(width, roof_top, width, roof_top + parapet, lev))
+            code.append(L(width - wall, roof_top + parapet, width, roof_top + parapet, lev))
+            if parapet >= 2 * cap:
+                code.append(L(0.0, roof_top + parapet - cap, wall,
+                              roof_top + parapet - cap, det))
+                code.append(L(width - wall, roof_top + parapet - cap, width,
+                              roof_top + parapet - cap, det))
+    elif roof_u == "GABLE":
+        code.append(L(0.0, roof_bottom, width / 2.0, roof_bottom + rise, det))
+        code.append(L(width / 2.0, roof_bottom + rise, width, roof_bottom, det))
+        code.append(L(0.0, roof_top, width / 2.0, roof_top + rise, lev))
+        code.append(L(width / 2.0, roof_top + rise, width, roof_top, lev))
+    # 标高（右侧）
+    if marks:
+        mx = width + annot_size(8.0, sc)
+        for r in rows:
+            code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                        % (mx, r["elev"], format_elevation(r["elev"] / 1000.0), lh, th))
+        code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                    % (mx, roof_top, format_elevation(roof_top / 1000.0), lh, th))
+
+    session.ensure_layers([LAYERS["sheet"], LAYERS["name"]])
+    before = session.snapshot()
+    session.lisp(" ".join(code), libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("剖面没有生成任何图元")
+
+    rows_txt = "~".join("%s~%.4f~%.4f" % (r["no"], r["elev"], r["height"]) for r in rows)
+    att_defs = [
+        ("AA_TYPE", "component type", "SECTION"),
+        ("AA_ID", "component id", section_id),
+        ("AA_W", "section width", "%.4f" % width),
+        ("AA_FLOORS", "floor count", str(len(rows))),
+        ("AA_ROWS", "floor rows", rows_txt),
+        ("AA_TOP", "top elevation", "%.4f" % top),
+        ("AA_TOTAL", "total height incl roof", "%.4f" % total_top),
+        ("AA_ROOF", "roof kind", roof_u),
+        ("AA_SLAB", "slab thickness", "%.4f" % slab),
+        ("AA_WALL", "wall thickness", "%.4f" % wall),
+        ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
+        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u == "GABLE" else 0.0)),
+        ("AA_ANGLE", "rotation deg", "%.4f" % angle),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle, layer=LAYERS["elev"])
+    session.expect_attributes(block, {"AA_TYPE": "SECTION", "AA_ID": section_id,
+                                      "AA_ROOF": roof_u,
+                                      "AA_FLOORS": str(len(rows))})
+    return {"block": block, "handle": handle, "width": width, "floors": len(rows),
+            "top": top, "total": total_top, "roof": roof_u, "slab": slab,
+            "wall": wall, "angle": angle, "rows": rows, "geom_handles": handles}
+
+
 def create_room(
     session: Session,
     room_id: str,

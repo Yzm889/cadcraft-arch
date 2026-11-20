@@ -47,6 +47,7 @@ from aa_lib import (  # noqa: E402
     create_floor_table,
 create_roof,
 create_elevation,
+create_section,
     read_floors,
     rescale_annotations,
     set_drawing_scale,
@@ -222,6 +223,23 @@ def main(argv: list[str] | None = None) -> int:
     p_elevation.add_argument("--oh", type=float, default=600.0, help="檐口外挑（mm）")
     p_elevation.add_argument("--no-marks", action="store_true", help="不注标高")
     p_elevation.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
+
+    p_profile = sub.add_parser("profile",
+                               help="建筑剖面：地坪 + 楼板 + 屋面板 + 外墙/女儿墙（落 AA-ELEV）")
+    p_profile.add_argument("path")
+    p_profile.add_argument("id")
+    p_profile.add_argument("--at", required=True, help="剖面左端 ±0.000 地面点 x,y")
+    p_profile.add_argument("--w", type=float, required=True, help="剖面宽度 mm")
+    p_profile.add_argument("--floor", action="append", default=[],
+                           help='自下而上每层："层高[,标高mm[,层号[,层名]]]"')
+    p_profile.add_argument("--roof", default="flat", choices=["flat", "gable", "none"],
+                           help="屋顶：flat / gable / none")
+    p_profile.add_argument("--slab", type=float, default=100.0, help="楼板厚（mm）")
+    p_profile.add_argument("--wallth", type=float, default=240.0, help="外墙厚（mm）")
+    p_profile.add_argument("--parapet", type=float, default=1200.0, help="女儿墙高（mm）")
+    p_profile.add_argument("--rise", type=float, default=0.0, help="双坡脊高（mm）")
+    p_profile.add_argument("--no-marks", action="store_true", help="不注标高")
+    p_profile.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -493,6 +511,22 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_elevation(
                 session, args.id, _pt(args.at), args.w, floors, ops,
                 args.roof, args.parapet, args.rise, args.oh,
+                not args.no_marks, args.angle)})
+        elif args.cmd == "profile":
+            floors = []
+            for spec in args.floor:
+                parts = [p.strip() for p in spec.split(",")]
+                row = {"height": parts[0]}
+                if len(parts) > 1 and parts[1]:
+                    row["elev"] = parts[1]
+                if len(parts) > 2 and parts[2]:
+                    row["no"] = parts[2]
+                if len(parts) > 3 and parts[3]:
+                    row["name"] = parts[3]
+                floors.append(row)
+            emit({"ok": True, **create_section(
+                session, args.id, _pt(args.at), args.w, floors, args.slab,
+                args.roof, args.parapet, args.rise, args.wallth,
                 not args.no_marks, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
