@@ -67,7 +67,7 @@
           (if (< y (- cut (/ (float w) 2.0)))
               (aa:mkline (aa:pt (* sgn xlL) y) (aa:pt (* sgn xlR) y) aa:*lay-stair*))
           (setq k (+ k 1)))
-        (aa:mktext-r (aa:pt (* sgn (+ xl 220.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
+        (aa:mktext-r (aa:pt (* sgn (- xl 120.0)) (- (/ (float tread) 2.0) (* 0.35 (float lh))))
                      "上" aa:*lay-stairtext* lh trot))
     (if (= level 2)
         ;; ---- 顶层：两跑全画，只标"下" ----
