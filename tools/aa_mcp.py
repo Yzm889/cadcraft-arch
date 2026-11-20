@@ -47,11 +47,13 @@ from aa_lib import (  # noqa: E402
     create_wall_node,
     create_stair_detail,
     create_elev_balcony,
+    create_foundation,
     create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
     read_elev_balcony,
+    read_foundation,
     read_wc_detail,
     read_wall_node,
     create_sheet_index,
@@ -88,7 +90,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.39"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.40"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -877,6 +879,30 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_foundation",
+        "description": "基础大放脚剖面（1:20）：以墙中心线与室外地面交点为锚点，墙身下到放脚顶，两侧对称逐级外放，底部垫层；注埋深与基底宽；落 AA_FD_<编号> 可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "编号，如图纸内唯一 FD1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "墙中心线与室外地面交点 [x, y]"},
+                "wall": {"type": "number", "description": "墙厚 mm", "default": 240},
+                "steps": {"type": "integer", "description": "放脚级数", "default": 2},
+                "step_h": {"type": "number", "description": "台阶高 mm", "default": 300},
+                "step_w": {"type": "number", "description": "台阶宽 mm", "default": 200},
+                "depth": {"type": "number", "description": "埋深 mm", "default": 1500},
+                "base": {"type": "number", "description": "垫层厚 mm", "default": 300},
+                "ratio": {"type": "number", "description": "详图比例分母", "default": 20},
+                "factor": {"type": "number", "description": "直接给放大倍数"},
+                "dims": {"type": "boolean", "description": "是否注尺寸", "default": True},
+                "show": {"type": "string", "description": "只回读已有：给编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_elev_balcony",
         "description": "立面上的阳台/雨篷：阳台画挑板+栏板（两侧竖线+压顶线），雨篷画挑板+两端牛腿；注阳台宽与栏板高（雨篷只注宽），挑出宽记属性；落 AA_EB_<编号> 可回读。",
         "inputSchema": {
@@ -1272,6 +1298,22 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_foundation":
+        sd = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_foundation(sd, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("基础需要 id 与 at（或用 show 回读）")
+        return create_foundation(sd, a["id"], _pt(a["at"], "at"),
+                                 _num(a.get("wall", 240), "wall"),
+                                 int(a.get("steps", 2)),
+                                 _num(a.get("step_h", 300), "step_h"),
+                                 _num(a.get("step_w", 200), "step_w"),
+                                 _num(a.get("depth", 1500), "depth"),
+                                 _num(a.get("base", 300), "base"),
+                                 _num(a.get("ratio", 20), "ratio"), a.get("factor"),
+                                 bool(a.get("dims", True)))
 
     if name == "aa_elev_balcony":
         sd = _session(path)

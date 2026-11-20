@@ -57,11 +57,13 @@ from aa_lib import (  # noqa: E402
     create_wall_node,
     create_stair_detail,
     create_elev_balcony,
+    create_foundation,
     create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
     read_elev_balcony,
+    read_foundation,
     read_wc_detail,
     read_wall_node,
     create_roof,
@@ -597,6 +599,21 @@ def main(argv: list[str] | None = None) -> int:
     p_eb.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_eb.add_argument("--show", default=None, help="只回读已有")
 
+    p_fd = sub.add_parser("foundation", help="基础大放脚剖面（默认 1:20）")
+    p_fd.add_argument("path")
+    p_fd.add_argument("id")
+    p_fd.add_argument("--at", default=None, help="墙中心线与室外地面交点 x,y")
+    p_fd.add_argument("--wall", type=float, default=240.0, help="墙厚 mm")
+    p_fd.add_argument("--steps", type=int, default=2, help="放脚级数")
+    p_fd.add_argument("--step-h", type=float, default=300.0, help="台阶高 mm")
+    p_fd.add_argument("--step-w", type=float, default=200.0, help="台阶宽 mm")
+    p_fd.add_argument("--depth", type=float, default=1500.0, help="埋深 mm")
+    p_fd.add_argument("--base", type=float, default=300.0, help="垫层厚 mm")
+    p_fd.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
+    p_fd.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
+    p_fd.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_fd.add_argument("--show", default=None, help="只回读已有")
+
     args = ap.parse_args(argv)
 
     try:
@@ -952,6 +969,16 @@ def main(argv: list[str] | None = None) -> int:
                 emit({"ok": True, **create_elev_balcony(
                     session, args.id, _pt(args.at), args.width, args.kind,
                     args.slab, args.rail, args.depth, not args.no_dims)})
+        elif args.cmd == "foundation":
+            if args.show:
+                emit({"ok": True, **read_foundation(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建基础需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_foundation(
+                    session, args.id, _pt(args.at), args.wall, args.steps,
+                    args.step_h, args.step_w, args.depth, args.base,
+                    args.ratio, args.factor, not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

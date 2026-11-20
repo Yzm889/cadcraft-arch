@@ -7200,3 +7200,172 @@ def read_elev_balcony(session: Session, item_id: str) -> dict[str, Any]:
             "slab": float(attrs.get("AA_SLAB") or 0),
             "rail": float(attrs.get("AA_RAIL") or 0),
             "depth": float(attrs.get("AA_DEPTH") or 0)}
+
+
+# ---------------- 剖面：基础大放脚（v1.0.40，B7 续） ----------------
+
+def create_foundation(
+    session: Session,
+    item_id: str,
+    at: tuple[float, float],
+    wall: float = 240.0,
+    steps: int = 2,
+    step_h: float = 300.0,
+    step_w: float = 200.0,
+    depth: float = 1500.0,
+    base: float = 300.0,
+    ratio: float = 20.0,
+    factor: float | None = None,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """基础大放脚（1:20）：以墙中心线与**室外地面**交点为 `at`，向下画基础剖面。
+
+    墙身（wall 厚）从地面下到放脚顶，两侧对称各 `steps` 级台阶（每级高 step_h、宽 step_w），
+    底部垫层厚 base；注埋深与基底宽两道尺寸。地面线向两侧出头。
+    落块 `AA_FD_<id>`，`AA_TYPE=FOUNDATION`，`read_foundation` 回读。
+    """
+    block = "AA_FD_" + item_id
+    if session.block_exists(block):
+        raise CadError("基础 %s 已存在，请换编号" % item_id)
+    w = float(wall)
+    n = int(steps)
+    sh = float(step_h)
+    sw = float(step_w)
+    D = float(depth)
+    b = float(base)
+    if w <= 0 or n < 1:
+        raise CadError("墙厚必须 >0、放脚级数必须 ≥1")
+    if sh <= 0 or sw <= 0 or b <= 0:
+        raise CadError("台阶高/台阶宽/垫层厚必须 >0")
+    if D <= n * sh + b:
+        raise CadError("埋深必须大于 放脚高 + 垫层厚（现在 %g ≤ %g）" % (D, n * sh + b))
+    ratio = float(ratio)
+    if ratio <= 0:
+        raise CadError("详图比例必须大于 0")
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else sc / ratio
+    if f <= 0:
+        raise CadError("大样放大倍数必须大于 0")
+
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    WF, SHF, SWF, DF, BF = w * f, sh * f, sw * f, D * f, b * f
+    half = WF / 2.0
+    base_half = half + n * SWF
+
+    lay_wall = LAYERS["wall"]
+    lay_floor = LAYERS["step"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_wall, lay_floor, lay_dim, lay_name])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    # 地面线
+    seg(-base_half - ann(10.0), 0.0, base_half + ann(10.0), 0.0, lay_floor)
+
+    y_step0 = -DF + BF            # 第一级台阶顶（垫层顶）
+    y_top = y_step0 + n * SHF     # 放脚顶（墙身下口）
+
+    # 左侧轮廓：墙脚 -> 逐级外放 -> 垫层底
+    left = [(-half, 0.0), (-half, y_top)]
+    for k in range(n):
+        y = y_top - k * SHF
+        x = -(half + (k + 1) * SWF)
+        left.append((x, y))
+        left.append((x, y - SHF))
+    for i in range(len(left) - 1):
+        seg(left[i][0], left[i][1], left[i + 1][0], left[i + 1][1], lay_wall)
+    tail_y = left[-1][1]
+    seg(left[-1][0], tail_y, left[-1][0], -DF, lay_wall)      # 垫层左外沿
+    seg(left[-1][0], -DF, -left[-1][0], -DF, lay_wall)        # 垫层底
+    seg(-left[-1][0], -DF, -left[-1][0], tail_y, lay_wall)    # 垫层右外沿
+    right = [(-x, y) for (x, y) in reversed(left)][:-1]
+    for i in range(len(right) - 1):
+        seg(right[i][0], right[i][1], right[i + 1][0], right[i + 1][1], lay_wall)
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 埋深：左侧
+        dx = -base_half - ann(10.0)
+        for yy in (0.0, -DF):
+            seg(-base_half, yy, dx - ann(2.0), yy, lay_dim)
+        seg(dx, 0.0, dx, -DF, lay_dim)
+        for yy in (0.0, -DF):
+            seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
+        label = "%g" % D
+        txt(dx - ann(1.2) - th, -DF / 2.0 - th / 2.0, label, th, 1.5708)
+        ndim += 1
+        # 基底宽：下方
+        dy = -DF - ann(10.0)
+        for xx in (-base_half, base_half):
+            seg(xx, -DF, xx, dy - ann(2.0), lay_dim)
+        seg(-base_half, dy, base_half, dy, lay_dim)
+        for xx in (-base_half, base_half):
+            seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
+        label = "%g" % (w + 2.0 * n * sw)
+        txt(-_text_w(label, th) / 2.0, dy - ann(4.0), label, th)
+        ndim += 1
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("基础没有生成任何图元")
+
+    bbox = [-base_half - ann(30.0), -DF - ann(30.0),
+            base_half + ann(12.0), ann(10.0)]
+    att_defs = [
+        ("AA_TYPE", "component type", "FOUNDATION"),
+        ("AA_ID", "component id", item_id),
+        ("AA_WALL", "wall thickness", "%.4f" % w),
+        ("AA_STEPS", "footing steps", str(n)),
+        ("AA_STEPH", "step height", "%.4f" % sh),
+        ("AA_STEPW", "step width", "%.4f" % sw),
+        ("AA_DEPTH", "embedment depth", "%.4f" % D),
+        ("AA_BASE", "cushion thickness", "%.4f" % b),
+        ("AA_BASEW", "base width", "%.4f" % (w + 2.0 * n * sw)),
+        ("AA_FACTOR", "enlarge factor", "%.4f" % f),
+        ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {k: v for k, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_wall)
+    session.expect_attributes(block, {"AA_TYPE": "FOUNDATION", "AA_ID": item_id})
+    return {"block": block, "handle": handle, "id": item_id, "wall": w,
+            "steps": n, "step_h": sh, "step_w": sw, "depth": D, "base": b,
+            "base_width": w + 2.0 * n * sw, "factor": f,
+            "ratio": "1:%g" % ratio, "dims": ndim, "bbox": bbox,
+            "geom_handles": handles}
+
+
+def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
+    """回读基础：墙厚/级数/台阶/埋深/垫层/基底宽/倍数/比例。"""
+    attrs = session.attributes("AA_FD_" + item_id)
+    if not attrs or attrs.get("AA_TYPE") != "FOUNDATION":
+        raise CadError("没找到基础 %s" % item_id)
+    return {"id": item_id,
+            "wall": float(attrs.get("AA_WALL") or 0),
+            "steps": int(float(attrs.get("AA_STEPS") or 0)),
+            "step_h": float(attrs.get("AA_STEPH") or 0),
+            "step_w": float(attrs.get("AA_STEPW") or 0),
+            "depth": float(attrs.get("AA_DEPTH") or 0),
+            "base": float(attrs.get("AA_BASE") or 0),
+            "base_width": float(attrs.get("AA_BASEW") or 0),
+            "factor": float(attrs.get("AA_FACTOR") or 0),
+            "ratio": attrs.get("AA_RATIO", "")}
