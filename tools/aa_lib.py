@@ -7050,3 +7050,153 @@ def read_wc_detail(session: Session, detail_id: str) -> dict[str, Any]:
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", ""),
             "title": attrs.get("AA_TITLE", "")}
+
+
+# ---------------- 立面：阳台 / 雨篷（v1.0.39，B7 续） ----------------
+
+def create_elev_balcony(
+    session: Session,
+    item_id: str,
+    at: tuple[float, float],
+    width: float,
+    kind: str = "BALCONY",
+    slab: float = 100.0,
+    rail: float = 1000.0,
+    depth: float = 1200.0,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """立面上的阳台 / 雨篷（1:1 世界尺寸，落在已生成的立面上）。
+
+    `at` = 挑板**板底**左端；BALCONY 画挑板 + 栏板（两侧竖线 + 压顶线），
+    AWNING 画挑板 + 两端小牛腿（斜撑）。`depth`（挑出宽）在正立面看不见，只记属性。
+    尺寸：阳台宽一道（下方）、栏板高一道（左侧）；雨篷只注宽。
+    """
+    block = "AA_EB_" + item_id
+    if session.block_exists(block):
+        raise CadError("阳台/雨篷 %s 已存在，请换编号" % item_id)
+    kind = (kind or "BALCONY").upper()
+    if kind not in ("BALCONY", "AWNING"):
+        raise CadError("kind 只能是 BALCONY / AWNING（收到 %s）" % kind)
+    w = float(width)
+    t = float(slab)
+    h = float(rail)
+    d = float(depth)
+    if w <= 0 or t <= 0:
+        raise CadError("阳台宽/板厚必须大于 0")
+    if kind == "BALCONY" and h <= 0:
+        raise CadError("栏板高必须大于 0")
+    if d <= 0:
+        raise CadError("挑出宽必须大于 0")
+    if kind == "AWNING" and h != 1000.0:
+        pass  # 雨篷不用栏板高，保留参数不报错
+
+    sc = float(scale) if scale else drawing_scale(session)
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    lay = LAYERS["elevdetail"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay, lay_dim, lay_name])
+
+    AX, AY = float(at[0]), float(at[1])
+    # 几何直接按世界坐标画，块插入点用 (0,0)，避免块基点造成二次偏移
+    X, Y = AX, AY
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, layer: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, layer))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    def rect(x1: float, y1: float, x2: float, y2: float, layer: str) -> None:
+        seg(x1, y1, x2, y1, layer)
+        seg(x2, y1, x2, y2, layer)
+        seg(x2, y2, x1, y2, layer)
+        seg(x1, y2, x1, y1, layer)
+
+    # 挑板
+    rect(X, Y, X + w, Y + t, lay)
+    if kind == "BALCONY":
+        # 栏板：两侧竖线 + 压顶线（压顶按 60 厚示意）
+        cap = min(60.0, h * 0.1)
+        seg(X, Y + t, X, Y + t + h, lay)
+        seg(X + w, Y + t, X + w, Y + t + h, lay)
+        seg(X, Y + t + h, X + w, Y + t + h, lay)
+        if cap > 0:
+            seg(X, Y + t + h - cap, X + w, Y + t + h - cap, lay)
+    else:
+        # 雨篷：两端小牛腿（斜撑）
+        b = min(300.0, w * 0.2)
+        for bx in (X + b * 0.5, X + w - b * 0.5):
+            seg(bx, Y, bx, Y - b, lay)
+            seg(bx, Y - b, bx + b, Y, lay)
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 宽：下方
+        dy = Y - ann(10.0)
+        for xx in (X, X + w):
+            seg(xx, Y, xx, dy - ann(2.0), lay_dim)
+        seg(X, dy, X + w, dy, lay_dim)
+        for xx in (X, X + w):
+            seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
+        label = "%g" % w
+        txt(X + w / 2.0 - _text_w(label, th) / 2.0, dy - ann(4.0), label, th)
+        ndim += 1
+        if kind == "BALCONY":
+            dx = X - ann(10.0)
+            for yy in (Y + t, Y + t + h):
+                seg(X, yy, dx - ann(2.0), yy, lay_dim)
+            seg(dx, Y + t, dx, Y + t + h, lay_dim)
+            for yy in (Y + t, Y + t + h):
+                seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
+            label = "%g" % h
+            txt(dx - ann(1.2) - th, Y + t + h / 2.0 - _text_w(label, th) / 2.0, label, th, 1.5708)
+            ndim += 1
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("阳台/雨篷没有生成任何图元")
+
+    bbox = [AX - ann(26.0), AY - ann(36.0), AX + w + ann(10.0),
+            AY + (t + h if kind == "BALCONY" else t) + ann(14.0)]
+    att_defs = [
+        ("AA_TYPE", "component type", "ELEV_BALCONY"),
+        ("AA_ID", "component id", item_id),
+        ("AA_KIND", "balcony or awning", kind),
+        ("AA_W", "width", "%.4f" % w),
+        ("AA_SLAB", "slab thickness", "%.4f" % t),
+        ("AA_RAIL", "rail height", "%.4f" % h),
+        ("AA_DEPTH", "projection depth", "%.4f" % d),
+        ("AA_ATX", "anchor x", "%.4f" % AX),
+        ("AA_ATY", "anchor y", "%.4f" % AY),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {k: v for k, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=lay)
+    session.expect_attributes(block, {"AA_TYPE": "ELEV_BALCONY", "AA_ID": item_id})
+    return {"block": block, "handle": handle, "id": item_id, "kind": kind,
+            "width": w, "slab": t, "rail": h, "depth": d,
+            "dims": ndim, "bbox": bbox, "geom_handles": handles}
+
+
+def read_elev_balcony(session: Session, item_id: str) -> dict[str, Any]:
+    """回读立面阳台/雨篷：类型、宽、板厚、栏板高、挑出宽。"""
+    attrs = session.attributes("AA_EB_" + item_id)
+    if not attrs or attrs.get("AA_TYPE") != "ELEV_BALCONY":
+        raise CadError("没找到阳台/雨篷 %s" % item_id)
+    return {"id": item_id, "kind": attrs.get("AA_KIND", ""),
+            "width": float(attrs.get("AA_W") or 0),
+            "slab": float(attrs.get("AA_SLAB") or 0),
+            "rail": float(attrs.get("AA_RAIL") or 0),
+            "depth": float(attrs.get("AA_DEPTH") or 0)}

@@ -56,10 +56,12 @@ from aa_lib import (  # noqa: E402
     create_opening_detail,
     create_wall_node,
     create_stair_detail,
+    create_elev_balcony,
     create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
+    read_elev_balcony,
     read_wc_detail,
     read_wall_node,
     create_roof,
@@ -583,6 +585,18 @@ def main(argv: list[str] | None = None) -> int:
     p_wcd.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_wcd.add_argument("--show", default=None, help="只回读已有大样")
 
+    p_eb = sub.add_parser("elev-balcony", help="立面上的阳台/雨篷（板+栏板或牛腿）")
+    p_eb.add_argument("path")
+    p_eb.add_argument("id")
+    p_eb.add_argument("--at", default=None, help="挑板板底左端 x,y")
+    p_eb.add_argument("--kind", default="BALCONY", help="BALCONY / AWNING")
+    p_eb.add_argument("--width", type=float, default=2400.0, help="宽 mm")
+    p_eb.add_argument("--slab", type=float, default=100.0, help="板厚 mm")
+    p_eb.add_argument("--rail", type=float, default=1000.0, help="栏板高 mm")
+    p_eb.add_argument("--depth", type=float, default=1200.0, help="挑出宽 mm（只记属性）")
+    p_eb.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_eb.add_argument("--show", default=None, help="只回读已有")
+
     args = ap.parse_args(argv)
 
     try:
@@ -929,6 +943,15 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.at), args.w, args.h, args.wall,
                     args.slope, _pt(args.drain) if args.drain else None,
                     args.ratio, args.factor, args.title, not args.no_dims)})
+        elif args.cmd == "elev-balcony":
+            if args.show:
+                emit({"ok": True, **read_elev_balcony(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建阳台/雨篷需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_elev_balcony(
+                    session, args.id, _pt(args.at), args.width, args.kind,
+                    args.slab, args.rail, args.depth, not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

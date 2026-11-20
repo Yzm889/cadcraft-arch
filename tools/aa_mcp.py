@@ -46,10 +46,12 @@ from aa_lib import (  # noqa: E402
     create_opening_detail,
     create_wall_node,
     create_stair_detail,
+    create_elev_balcony,
     create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
+    read_elev_balcony,
     read_wc_detail,
     read_wall_node,
     create_sheet_index,
@@ -86,7 +88,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.38"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.39"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -875,6 +877,28 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_elev_balcony",
+        "description": "立面上的阳台/雨篷：阳台画挑板+栏板（两侧竖线+压顶线），雨篷画挑板+两端牛腿；注阳台宽与栏板高（雨篷只注宽），挑出宽记属性；落 AA_EB_<编号> 可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "编号，如图纸内唯一 EB1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "挑板板底左端 [x, y]"},
+                "kind": {"type": "string", "enum": ["BALCONY", "AWNING"],
+                         "description": "阳台或雨篷", "default": "BALCONY"},
+                "width": {"type": "number", "description": "宽 mm", "default": 2400},
+                "slab": {"type": "number", "description": "板厚 mm", "default": 100},
+                "rail": {"type": "number", "description": "栏板高 mm", "default": 1000},
+                "depth": {"type": "number", "description": "挑出宽 mm（只记属性）", "default": 1200},
+                "dims": {"type": "boolean", "description": "是否注尺寸", "default": True},
+                "show": {"type": "string", "description": "只回读已有：给编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_wc_detail",
         "description": "卫生间大样（1:20）：净空+墙厚+坐便/台盆/地漏+排水坡箭头（i=%），注开间/进深/坐便中心距三道尺寸；默认坐便靠上墙、台盆靠左墙、地漏右下内退 300，落 AA_WC_<编号> 可回读。",
         "inputSchema": {
@@ -1248,6 +1272,20 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_elev_balcony":
+        sd = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_elev_balcony(sd, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("阳台/雨篷需要 id 与 at（或用 show 回读）")
+        return create_elev_balcony(sd, a["id"], _pt(a["at"], "at"),
+                                   _num(a.get("width", 2400), "width"),
+                                   a.get("kind", "BALCONY"),
+                                   _num(a.get("slab", 100), "slab"),
+                                   _num(a.get("rail", 1000), "rail"),
+                                   _num(a.get("depth", 1200), "depth"),
+                                   bool(a.get("dims", True)))
 
     if name == "aa_wc_detail":
         sd = _session(path)
