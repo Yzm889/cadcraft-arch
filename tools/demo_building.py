@@ -97,7 +97,10 @@ def main() -> int:
     create_elevation(
         s, "E1", (0.0, -16000.0), 7200.0, FLOORS,
         openings=elev_ops,
-        roof="EAVE", parapet=0.0, rise=1800.0, overhang=600.0)
+        roof="EAVE", parapet=0.0, rise=1800.0, overhang=600.0,
+        eave=200.0,
+        axes=[{"x": 0.0, "label": "1"}, {"x": 3600.0, "label": "2"},
+              {"x": 7200.0, "label": "3"}])
     # 剖面门窗不再手填：沿 1-1 剖切线（X=1500）反取被切到的洞口——
     # 南墙首层门中心正好在 X=1500 → LEFT；北墙 C0915 跨 1000..2200，也切到 → RIGHT。
     cut_ops = read_cut_openings(s, (1500.0, -1200.0), (1500.0, 5700.0))

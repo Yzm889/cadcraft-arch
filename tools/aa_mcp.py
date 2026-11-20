@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.27"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.28"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -700,6 +700,15 @@ TOOLS: list[dict[str, Any]] = [
                 "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
                 "wall": {"type": "string", "description": "从平面上这道墙（如 W001）读门窗并与 openings 合并，省得手抄坐标"},
                 "flip": {"type": "boolean", "description": "该墙在平面上从右往左画（朝北的墙），窗口左边距需镜像", "default": False},
+                "eave": {"type": "number", "description": "檐口板厚 mm（0=不画；FLAT 挑檐/GABLE/EAVE 画檐口线下的板底与两端封口）", "default": 0},
+                "axes": {"type": "array",
+                         "description": "立面轴号 [{x, label}]：x 为轴号在立面宽度上的位置，label 如 \"1\"/\"A\"；顶部画 8mm 圆 + 圈内3mm 字，圆下短引线接轮廓顶",
+                         "items": {"type": "object",
+                                   "properties": {
+                                       "x": {"type": "number"},
+                                       "label": {"type": "string"},
+                                   },
+                                   "required": ["x", "label"]}},
             },
             "required": ["path", "id", "at", "width", "floors"],
         },
@@ -975,7 +984,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("overhang", 600), "overhang"),
             bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"),
-            a.get("wall") or None, bool(a.get("flip", False)))}
+            a.get("wall") or None, bool(a.get("flip", False)),
+            _num(a.get("eave", 0), "eave"), a.get("axes", []) or [])}
 
     if name == "aa_profile":
         return {"ok": True, **create_section(

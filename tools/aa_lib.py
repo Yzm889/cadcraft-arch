@@ -2169,6 +2169,8 @@ def create_elevation(
     angle: float = 0.0,
     wall: str | None = None,
     flip: bool = False,
+    eave: float = 0.0,
+    axes: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """建筑立面（GB/T 50104 立面图做法，按楼层表数据生成）。
 
@@ -2182,9 +2184,14 @@ def create_elevation(
     `roof`：FLAT 平屋顶（挑檐 + 女儿墙 + 压顶）/ GABLE 双坡（山墙三角）/
     EAVE 双坡正对檐口（檐口 + 屋脊）/ NONE 无。
     `marks=True` 时每道楼层线右侧注标高（±0.000 / 3.600 …）。
+    `eave` = 檐口板厚（0 = 不画）：FLAT 无女儿墙的挑檐、GABLE、EAVE 三种都在檐口线
+    下方再画一道板底线并两端封口，厚度按构造值（常见 200）。
+    `axes` = 立面轴号 `[{x, label}]`（x 为轴号在立面宽度上的位置，label 如 "1"/"A"）：
+    按 GB/T 50001 在立面顶部外画 8mm 细实线圆 + 圈内 3mm 轴号，圆下方用一条细线
+    引到立面轮廓顶（立面不画通长轴线，免得和门窗线打架）。
 
-    图元：地坪线粗、外轮廓粗落 `AA-ELEV`；楼层线、门窗、女儿墙压顶落
-    `AA-ELEV-DETAIL`。暂不做阳台、雨篷、檐口厚度、材料图例、轴号。
+    图元：地坪线粗、外轮廓粗落 `AA-ELEV`；楼层线、门窗、女儿墙压顶、檐口板厚落
+    `AA-ELEV-DETAIL`；轴号落 `AA-AXISTEXT`。暂不做阳台、雨篷、材料图例。
     """
     block = "AA_ELEVATION_" + elev_id
     if session.block_exists(block):
@@ -2205,6 +2212,11 @@ def create_elevation(
         if overhang < 0:
             raise CadError("拒绝写入：檐口外挑不能为负（收到 %s）" % overhang)
     angle = float(angle) % 360.0
+    eave = float(eave)
+    if eave < 0:
+        raise CadError("拒绝写入：檐口板厚不能为负（收到 %s）" % eave)
+    if eave > 0 and roof_u == "NONE":
+        raise CadError("拒绝写入：roof=NONE 时没有檐口，檐口板厚给不了（收到 %s）" % eave)
 
     src: list[dict[str, Any]] = list(openings or ())
     if wall:
@@ -2249,6 +2261,20 @@ def create_elevation(
                 raise CadError("第 %d 层第 %d 个洞口与第 %d 个洞口位置重叠"
                                % (a["floor"], i + 1, j + 1))
 
+    ax_tag: list[dict[str, Any]] = []
+    for i, ax in enumerate(list(axes or ())):
+        if isinstance(ax, dict):
+            ax_x, ax_lab = float(ax.get("x", 0.0)), str(ax.get("label", "")).strip()
+        elif isinstance(ax, (list, tuple)) and len(ax) >= 2:
+            ax_x, ax_lab = float(ax[0]), str(ax[1]).strip()
+        else:
+            raise CadError("第 %d 个轴号必须是对象或 [x, 轴号]（收到 %r）" % (i + 1, ax))
+        if not ax_lab:
+            raise CadError("第 %d 个轴号的编号不能为空" % (i + 1))
+        if ax_x < -1e-6 or ax_x > width + 1e-6:
+            raise CadError("第 %d 个轴号位置 %s 超出立面宽度（0..%s）" % (i + 1, ax_x, width))
+        ax_tag.append({"x": ax_x, "label": ax_lab})
+
     top = rows[-1]["elev"] + rows[-1]["height"]
     if roof_u == "FLAT":
         total_top = top + parapet
@@ -2257,7 +2283,8 @@ def create_elevation(
     else:
         total_top = top
 
-    session.ensure_layers([LAYERS["elev"], LAYERS["elevdetail"], LAYERS["name"]])
+    session.ensure_layers([LAYERS["elev"], LAYERS["elevdetail"], LAYERS["name"],
+                           LAYERS["axistext"]])
     sc = drawing_scale(session)
     lh = annot_size(3.0, sc)
     th = annot_size(2.5, sc)
@@ -2267,6 +2294,14 @@ def create_elevation(
 
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
+
+    def eave_band(oh):
+        """檐口板厚：檐口线下方再画一道板底线 + 两端封口（GB/T 50104 檐口要注厚度）。"""
+        if eave <= 0:
+            return
+        code.append(L(-oh, top - eave, width + oh, top - eave, det))
+        code.append(L(-oh, top, -oh, top - eave, det))
+        code.append(L(width + oh, top, width + oh, top - eave, det))
 
     code: list[str] = []
     # 地坪线（两端出头）+ 两侧外轮廓（有女儿墙时轮廓到压顶）
@@ -2288,11 +2323,13 @@ def create_elevation(
                 code.append(L(0.0, top + parapet - cap, width, top + parapet - cap, det))
         else:
             code.append(L(-oh, top, width + oh, top, lev))     # 挑檐板线
+            eave_band(oh)
     elif roof_u == "GABLE":
         oh = max(overhang, 0.0)
         code.append(L(-oh, top, width + oh, top, lev))               # 檐口
         code.append(L(-oh, top, width / 2.0, top + rise, lev))       # 左坡
         code.append(L(width / 2.0, top + rise, width + oh, top, lev))  # 右坡
+        eave_band(oh)
     elif roof_u == "EAVE":
         # 正对檐口看（脊与图面平行）：只见檐口线 + 后方屋脊线，不出现山墙三角
         oh = max(overhang, 0.0)
@@ -2300,6 +2337,7 @@ def create_elevation(
         code.append(L(0.0, top + rise, width, top + rise, lev))      # 屋脊（被檐口挡住下半，投影为水平线）
         code.append(L(0.0, top, 0.0, top + rise, det))               # 两端山墙边（竖直）
         code.append(L(width, top, width, top + rise, det))
+        eave_band(oh)
     # 门窗（天正立面做法：洞口 + 窗框双线 + 中梃分扇 + 上部亮子 + 窗台线）
     frame = 60.0           # 窗框在立面上的可见宽度（构造值，不随比例变）
     for k, op in enumerate(ops):
@@ -2319,13 +2357,14 @@ def create_elevation(
             code.append(L(fx2, fy1, fx2, fy2, det))
             code.append(L(fx2, fy2, fx1, fy2, det))
             code.append(L(fx1, fy2, fx1, fy1, det))
-            # 上部亮子横线（亮窗高 600 或 1/3 洞高，取小）
-            head = min(600.0, op["h"] / 3.0)
-            hy = y2 - head
-            if hy > base + frame + 100.0:
-                code.append(L(fx1, hy, fx2, hy, det))
+            # 上部亮子横线（窗：亮窗高 600 或 1/3 洞高取小；门：门扇高固定 2100，
+            #  只有洞高超过 2100 才有亮子，否则不画横线——2100 高的门再画一条横线就成了窗）
             if op["kind"] == "WINDOW":
                 # 竖向中梃（分扇）：两扇居中一条，宽窗按 1.2m 分格
+                head = min(600.0, op["h"] / 3.0)
+                hy = y2 - head
+                if hy > base + frame + 100.0:
+                    code.append(L(fx1, hy, fx2, hy, det))
                 panes = max(2, int(round(op["w"] / 1200.0)) or 2)
                 for m in range(1, panes):
                     mx = x1 + op["w"] * m / panes
@@ -2333,7 +2372,10 @@ def create_elevation(
                 # 窗台线：比洞口每侧宽出 60
                 code.append(L(x1 - frame, base, x2 + frame, base, det))
             else:
-                # 门：中缝（双扇）或门扇上冒头线（单扇）
+                # 门：门扇 2100，洞高超过 2100 + 100 才画门上亮子线
+                if op["h"] > 2200.0:
+                    code.append(L(fx1, base + 2100.0, fx2, base + 2100.0, det))
+                # 双扇中缝；单扇（<900）画门扇上冒头线
                 if op["w"] >= 900.0:
                     code.append(L((x1 + x2) / 2.0, fy1, (x1 + x2) / 2.0, fy2, det))
                 else:
@@ -2342,6 +2384,9 @@ def create_elevation(
     # 标高（右侧，尖端对着楼层线）
     if marks:
         mx = width + annot_size(8.0, sc)
+        if ax_tag and any(abs(t["x"] - width) <= 1e-6 for t in ax_tag):
+            # 右端有轴号时把标高列再右移一个轴号圈的宽度，免得三角和圆圈压在一起
+            mx += 4 * annot_size(4.0, sc)
         for r in rows:
             code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
                         % (mx, r["elev"], format_elevation(r["elev"] / 1000.0), lh, th))
@@ -2353,10 +2398,22 @@ def create_elevation(
                         % (mx, top + rise,
                            format_elevation((top + rise) / 1000.0), lh, th))
 
+    # 轴号（顶部外，圈下短引线接到立面轮廓顶；立面不画通长轴线）
+    if ax_tag:
+        r_ax = annot_size(4.0, sc)          # 圆半径 4mm => 直径 8mm（GB/T 50001）
+        h_ax = annot_size(3.0, sc)          # 圈内轴号字高 3mm
+        gap = annot_size(4.0, sc)
+        code.append("(setq aa:*axis-r* %.4f)" % r_ax)
+        code.append("(setq aa:*axis-h* %.4f)" % h_ax)
+        for tag in ax_tag:
+            code.append(L(tag["x"], total_top, tag["x"], total_top + gap, LAYERS["axistext"]))
+            code.append('(aa:axistag %.4f %.4f "%s")'
+                        % (tag["x"], total_top + gap + r_ax, tag["label"]))
+
     session.ensure_layers([LAYERS["sheet"], LAYERS["name"]])
     before = session.snapshot()
     session.lisp(" ".join(code),
-                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+                 libraries=("aa_core.lisp", "aa_axis.lisp", "aa_symbol.lisp"))
     handles = session.new_handles(before)
     if not handles:
         raise CadError("立面没有生成任何图元")
@@ -2376,6 +2433,8 @@ def create_elevation(
         ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u in ("GABLE", "EAVE") else 0.0)),
         ("AA_OVERHANG", "eave overhang", "%.4f" % overhang),
         ("AA_OPENINGS", "opening count", str(len(ops))),
+        ("AA_AXES", "axis labels", ";".join(t["label"] for t in ax_tag)),
+        ("AA_EAVE", "eave thickness", "%.4f" % eave),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -2391,6 +2450,7 @@ def create_elevation(
     return {"block": block, "handle": handle, "width": width,
             "floors": len(rows), "top": top, "total": total_top,
             "roof": roof_u, "openings": len(ops), "angle": angle,
+            "eave": eave, "axes": [t["label"] for t in ax_tag],
             "rows": rows, "geom_handles": handles}
 
 

@@ -56,7 +56,7 @@ def main() -> int:
     g = block_geometry(path, "AA_ELEVATION_E1")
     nl, nt = counts(g)
     # 3（地坪+两轮廓）+ 2（楼层线）+ 2（压顶）+ 76（6 窗×11 + 1 门×10）+ 12（3 个标高各 4 线）
-    assert (nl, nt) == (95, 3), (nl, nt, [x["type"] for x in g])
+    assert (nl, nt) == (94, 3), (nl, nt, [x["type"] for x in g])
 
     layers = layer_of_block(path, "AA_ELEVATION_E1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
@@ -71,13 +71,29 @@ def main() -> int:
     assert abs(gable["total"] - 12300.0) < 1e-6, gable
     g = block_geometry(path, "AA_ELEVATION_E2")
     nl, nt = counts(g)
-    # 3（地坪+轮廓）+ 2（楼层线）+ 3（檐口+两坡）+ 10（1 门）+ 20（3 楼层 + 檐口 + 屋脊 5 个标高）
-    assert (nl, nt) == (38, 5), (nl, nt)
+    # 3（地坪+轮廓）+ 2（楼层线）+ 3（檐口+两坡）+ 9（1 门）+ 20（3 楼层 + 檐口 + 屋脊 5 个标高）
+    assert (nl, nt) == (37, 5), (nl, nt)
 
     # 无窗、无标高
     plain = create_elevation(s, "E3", (0.0, 8000.0), 4000.0,
                              [{"height": 3000.0}], [], "NONE", marks=False)
     assert plain["floors"] == 1 and plain["openings"] == 0, plain
+
+    # 檐口厚度 + 立面轴号（v1.0.28）
+    eav = create_elevation(s, "E4", (0.0, 16000.0), 6000.0,
+                           [{"no": "1", "height": 3600.0},
+                            {"no": "2", "height": 3600.0},
+                            {"no": "3", "height": 3300.0}], [], "FLAT", 0.0,
+                           eave=200.0, axes=[{"x": 0.0, "label": "1"},
+                                             {"x": 6000.0, "label": "3"}])
+    assert eav["eave"] == 200.0 and eav["axes"] == ["1", "3"], eav
+    g = block_geometry(path, "AA_ELEVATION_E4")
+    nl, nt = counts(g)
+    # 3（地坪+轮廓）+ 2（楼层线）+ 1（挑檐）+ 3（檐口板厚：板底线+两端封口）
+    # + 12（3 个标高）+ 2（2 根轴号的引线）= 23；文字 3 标高 + 2 轴号 = 5
+    assert (nl, nt) == (23, 5), (nl, nt, [(x["type"], x["layer"]) for x in g])
+    attrs = s.attributes("AA_ELEVATION_E4")
+    assert attrs["AA_AXES"] == "1;3" and attrs["AA_EAVE"] == "200.0000", attrs
 
     # 拒绝
     for kw, msg in (({"width": 0.0}, "立面宽度"),

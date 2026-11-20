@@ -227,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
                              help="从平面上这道墙（如 W001）读门窗，与 --open 合并")
     p_elevation.add_argument("--flip", action="store_true",
                              help="这面墙在平面上从右往左画（如朝北的墙），窗口左边距要翻")
+    p_elevation.add_argument("--eave", type=float, default=0.0,
+                             help="檐口板厚（mm，0=不画），FLAT 挑檐/双坡/GABLE 用")
+    p_elevation.add_argument("--axis", action="append", default=[],
+                             help="立面轴号 \"x,轴号\"（可重复，如 --axis \"0,1\"）")
 
     p_profile = sub.add_parser("profile",
                                help="建筑剖面：地坪 + 楼板 + 屋面板 + 外墙/女儿墙（落 AA-ELEV）")
@@ -523,10 +527,17 @@ def main(argv: list[str] | None = None) -> int:
                 if len(parts) > 5 and parts[5]:
                     op["kind"] = parts[5]
                 ops.append(op)
+            axes = []
+            for spec in args.axis:
+                parts = [p.strip() for p in spec.split(",")]
+                if len(parts) < 2 or not parts[1]:
+                    raise SystemExit("--axis 要写成 \"x,轴号\"（收到 %r）" % spec)
+                axes.append({"x": float(parts[0]), "label": parts[1]})
             emit({"ok": True, **create_elevation(
                 session, args.id, _pt(args.at), args.w, floors, ops,
                 args.roof, args.parapet, args.rise, args.oh,
-                not args.no_marks, args.angle, args.wall, args.flip)})
+                not args.no_marks, args.angle, args.wall, args.flip,
+                args.eave, axes)})
         elif args.cmd == "profile":
             floors = []
             for spec in args.floor:
