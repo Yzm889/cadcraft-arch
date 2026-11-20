@@ -232,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     p_profile.add_argument("--w", type=float, required=True, help="剖面宽度 mm")
     p_profile.add_argument("--floor", action="append", default=[],
                            help='自下而上每层："层高[,标高mm[,层号[,层名]]]"')
+    p_profile.add_argument("--open", action="append", default=[],
+                           help='剖到的门窗："层号,洞高,窗台高[,WINDOW|DOOR[,LEFT|RIGHT]]"')
     p_profile.add_argument("--roof", default="flat", choices=["flat", "gable", "none"],
                            help="屋顶：flat / gable / none")
     p_profile.add_argument("--slab", type=float, default=100.0, help="楼板厚（mm）")
@@ -524,9 +526,21 @@ def main(argv: list[str] | None = None) -> int:
                 if len(parts) > 3 and parts[3]:
                     row["name"] = parts[3]
                 floors.append(row)
+            ops = []
+            for spec in args.open:
+                parts = [p.strip() for p in spec.split(",")]
+                while len(parts) < 3:
+                    parts.append("0")
+                op = {"floor": int(parts[0]), "h": float(parts[1]),
+                      "sill": float(parts[2])}
+                if len(parts) > 3 and parts[3]:
+                    op["kind"] = parts[3]
+                if len(parts) > 4 and parts[4]:
+                    op["side"] = parts[4]
+                ops.append(op)
             emit({"ok": True, **create_section(
-                session, args.id, _pt(args.at), args.w, floors, args.slab,
-                args.roof, args.parapet, args.rise, args.wallth,
+                session, args.id, _pt(args.at), args.w, floors, ops, "LEFT",
+                args.slab, args.roof, args.parapet, args.rise, args.wallth,
                 not args.no_marks, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(

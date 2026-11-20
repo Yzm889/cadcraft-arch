@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.18"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.19"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -722,6 +722,19 @@ TOOLS: list[dict[str, Any]] = [
                                          "name": {"type": "string"},
                                      },
                                      "required": ["height"]}},
+                "openings": {"type": "array",
+                             "description": "剖到的门窗 {floor, h, sill, kind, side?}：side 默认 LEFT",
+                             "items": {"type": "object",
+                                       "properties": {
+                                           "floor": {"type": "integer", "default": 1},
+                                           "h": {"type": "number", "description": "洞口高 mm"},
+                                           "sill": {"type": "number", "default": 0},
+                                           "kind": {"type": "string", "enum": ["WINDOW", "DOOR"],
+                                                    "default": "WINDOW"},
+                                           "side": {"type": "string", "enum": ["LEFT", "RIGHT"],
+                                                    "default": "LEFT"},
+                                       },
+                                       "required": ["h"]}},
                 "slab": {"type": "number", "description": "楼板厚 mm", "default": 100},
                 "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
                          "description": "平屋顶 / 双坡 / 不加", "default": "FLAT"},
@@ -925,7 +938,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "aa_profile":
         return {"ok": True, **create_section(
             s, a["id"], _pt(a["at"], "at"), _num(a["width"], "width"),
-            a["floors"], _num(a.get("slab", 100), "slab"), a.get("roof", "FLAT"),
+            a["floors"], a.get("openings", []) or [], "LEFT",
+            _num(a.get("slab", 100), "slab"), a.get("roof", "FLAT"),
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("wall", 240), "wall"), bool(a.get("marks", True)),
             _num(a.get("angle", 0.0), "angle"))}

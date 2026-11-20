@@ -2374,6 +2374,8 @@ def create_section(
     at: tuple[float, float],
     width: float,
     floors: Sequence[Any],
+    openings: Sequence[dict[str, Any]] = (),
+    side: str = "LEFT",
     slab: float = 100.0,
     roof: str = "FLAT",
     parapet: float = 1200.0,
@@ -2385,9 +2387,12 @@ def create_section(
     """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
 
     `at` = 剖面左端室内地坪点（±0.000）；`width` = 剖面宽；
-    `floors` 同 `create_elevation`；`slab` 楼板厚（默认 100）；`wall` 外墙厚（剖面里画两道竖线）。
+    `floors` 同 `create_elevation`；`slab` 楼板厚（默认 100）；`wall` 外墙厚——
+    剖面里外墙按墙厚画成窄带（外皮 + 内皮两道）。
+    `openings` = 剖到的门窗 `[{floor, h, sill, kind, side?}]`：在剖切的墙带上断开墙线，
+    画窗框双线 + 玻璃（窗）或门上亮子（门）；`side` 默认 LEFT（另一侧对称）。
     `roof`：FLAT 平屋顶（屋面板 + 女儿墙）/ GABLE 双坡（斜屋面板 + 脊）/ NONE。
-    剖面暂不画梁、楼梯、基础、材料图例、剖切到的门窗（后续按平面剖切位置补）。
+    剖面暂不画梁、楼梯、基础、材料图例。
     """
     block = "AA_SECTION_" + section_id
     if session.block_exists(block):
@@ -2430,22 +2435,90 @@ def create_section(
     det = LAYERS["elevdetail"]
     ext = annot_size(5.0, sc)
 
+    # 剖到的门窗：只给层号/高/窗台高/类型，竖向位置由层高定，东西由"剖在哪道墙"决定
+    ops_left: list[dict[str, Any]] = []
+    ops_right: list[dict[str, Any]] = []
+    for i, op in enumerate(openings or ()):
+        if not isinstance(op, dict):
+            raise CadError("剖面门窗必须是对象（收到 %r）" % (op,))
+        fl = int(op.get("floor", 1) or 1)
+        if not (1 <= fl <= len(rows)):
+            raise CadError("第 %d 个剖面洞口层号 %s 超出 1..%d" % (i + 1, fl, len(rows)))
+        hh, sill = float(op.get("h", 0.0)), float(op.get("sill", 0.0))
+        if hh <= 0:
+            raise CadError("第 %d 个剖面洞口高必须为正（收到 %s）" % (i + 1, hh))
+        if sill < 0:
+            raise CadError("第 %d 个剖面洞口窗台高不能为负（收到 %s）" % (i + 1, sill))
+        if sill + hh > rows[fl - 1]["height"] + 1e-6:
+            raise CadError("第 %d 个剖面洞口高出本层：sill %s + h %s > 层高 %s"
+                           % (i + 1, sill, hh, rows[fl - 1]["height"]))
+        kd = str(op.get("kind", "WINDOW")).upper()
+        if kd not in ("WINDOW", "DOOR"):
+            raise CadError("第 %d 个剖面洞口类型只能是 WINDOW / DOOR（收到 %r）" % (i + 1, kd))
+        sd = str(op.get("side", side)).upper()
+        if sd not in ("LEFT", "RIGHT"):
+            raise CadError("第 %d 个剖面洞口侧别只能是 LEFT / RIGHT（收到 %r）" % (i + 1, sd))
+        item = {"kind": kd, "h": hh,
+                "elev0": rows[fl - 1]["elev"] + sill,
+                "elev1": rows[fl - 1]["elev"] + sill + hh}
+        (ops_left if sd == "LEFT" else ops_right).append(item)
+    for bucket in (ops_left, ops_right):
+        for a in range(len(bucket)):
+            for b in range(a + 1, len(bucket)):
+                if min(bucket[a]["elev1"], bucket[b]["elev1"]) - \
+                        max(bucket[a]["elev0"], bucket[b]["elev0"]) > 1e-6:
+                    raise CadError("剖面同一道墙上有两个洞口竖向重叠（%s 与 %s）"
+                                   % (bucket[a]["elev0"], bucket[b]["elev0"]))
+
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
 
     code: list[str] = []
-    # 室内地坪（两端出头）+ 两侧外墙内皮
+    # 室内地坪（两端出头）
     code.append(L(-ext, 0.0, width + ext, 0.0, lev))
-    code.append(L(wall, 0.0, wall, top, lev))
-    code.append(L(width - wall, 0.0, width - wall, top, lev))
+
+    # 剖到的外墙按墙厚画成窄带：外皮 x=0 / 内皮 x=wall（右侧对称），
+    # 遇到剖到的门窗就把墙线断开，中间画窗框与玻璃。
+    frame_s = 60.0
+    gaps_left = [(op["elev0"], op["elev1"]) for op in ops_left]
+    gaps_right = [(op["elev0"], op["elev1"]) for op in ops_right]
+
+    def wall_segments(x, gaps):
+        out = []
+        cursor = 0.0
+        for g0, g1 in sorted(gaps):
+            if g0 > cursor + 1e-6:
+                out.append(L(x, cursor, x, g0, lev))
+            cursor = max(cursor, g1)
+        if cursor < top - 1e-6:
+            out.append(L(x, cursor, x, top, lev))
+        return out
+
+    code += wall_segments(0.0, gaps_left) + wall_segments(wall, gaps_left)
+    code += wall_segments(width - wall, gaps_right) + wall_segments(width, gaps_right)
+
+    # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门上亮子 + 窗台板挑出
+    for op, x0, x1, prot in [(o, 0.0, wall, 1.0) for o in ops_left] + \
+                            [(o, width - wall, width, -1.0) for o in ops_right]:
+        b, t2 = op["elev0"], op["elev1"]
+        if b > 1e-6:
+            code.append(L(x0, b, x1, b, det))
+        code.append(L(x0, t2, x1, t2, det))
+        if x1 - x0 > 2 * frame_s:
+            code.append(L(x0 + frame_s, b, x0 + frame_s, t2, det))
+            code.append(L(x1 - frame_s, b, x1 - frame_s, t2, det))
+            if op["kind"] == "WINDOW":
+                code.append(L((x0 + x1) / 2.0, b, (x0 + x1) / 2.0, t2, det))
+                # 窗台板向室内挑出 60，剖面上一眼能认出是窗
+                code.append(L(x0, b, x1 + prot * 60.0, b, det))
+            else:
+                code.append(L(x0 + frame_s, t2 - min(500.0, op["h"] / 4.0),
+                              x1 - frame_s, t2 - min(500.0, op["h"] / 4.0), det))
+
     # 楼板（每层楼面一条板顶 + 一条板底；首层地面即地坪，不重复）
     for r in rows[1:]:
         code.append(L(0.0, r["elev"], width, r["elev"], lev))
         code.append(L(0.0, r["elev"] - slab, width, r["elev"] - slab, det))
-    # 墙体上每层的墙身分界（板底以上画通，保持剖面连续）
-    for r in rows[1:]:
-        code.append(L(wall, r["elev"] - slab, wall, r["elev"], det))
-        code.append(L(width - wall, r["elev"] - slab, width - wall, r["elev"], det))
     # 屋面
     if roof_u == "FLAT":
         code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
@@ -2499,6 +2572,7 @@ def create_section(
         ("AA_WALL", "wall thickness", "%.4f" % wall),
         ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
         ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u == "GABLE" else 0.0)),
+        ("AA_OPENINGS", "cut openings", str(len(ops_left) + len(ops_right))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -2513,7 +2587,8 @@ def create_section(
                                       "AA_FLOORS": str(len(rows))})
     return {"block": block, "handle": handle, "width": width, "floors": len(rows),
             "top": top, "total": total_top, "roof": roof_u, "slab": slab,
-            "wall": wall, "angle": angle, "rows": rows, "geom_handles": handles}
+            "wall": wall, "angle": angle, "rows": rows,
+            "openings": len(ops_left) + len(ops_right), "geom_handles": handles}
 
 
 def create_room(
