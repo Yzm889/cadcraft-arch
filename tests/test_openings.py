@@ -91,12 +91,10 @@ def main() -> int:
     rep2 = openings_report(s, table_at=(0.0, -3200.0))
     tab = rep2.get("table", {})
     assert tab.get("by") == "geometry" and tab.get("cols") == 6, rep2
-    marks = [e for e in s.entities().get("entities", [])
-             if e.get("layer") == "AA-TABLE"]
+    marks = block_geometry(path, tab["block"])
     texts = [e for e in marks if str(e.get("type", "")).lower() in ("text", "mtext")]
     assert len(texts) >= tab["rows"] + tab["cols"] - 1, len(texts)
-    flat = " ".join(str(t["geometry"].get("text", t["geometry"].get("value", "")))
-                    for t in texts)
+    flat = " ".join(str(t.get("text", t.get("value", ""))) for t in texts)
     assert "门窗表" in flat and "樘数" in flat, flat
     assert "C1515" in flat and "M-1" in flat, flat
     print("图上门窗表 ok: %d 行 %d 列" % (tab["rows"], tab["cols"]))

@@ -23,6 +23,7 @@ from aa_lib import (  # noqa: E402
     create_title_mark,
     create_wall,
     rescale_annotations,
+    rooms_report,
 )
 
 OUT = ROOT / "samples"
@@ -78,6 +79,7 @@ def main() -> int:
     auto_axis(s, "AX001", 50, 2400)
     create_title_mark(s, "T001", (0, -2500), "一层平面图", 100)
     create_north_arrow(s, "N001", (9000, 3600))
+    rooms_report(s, table_at=(0.0, -4200.0))       # 表格也按 mm 出图（2.5mm 字）
 
     h100 = text_heights(path, "AA_AXGRID_AX001")
     r100 = circle_radii(path, "AA_AXGRID_AX001")
@@ -100,6 +102,8 @@ def main() -> int:
     assert abs(text_heights(path, "AA_ROOM_R001")[0] - 125.0) < 1.0
     assert 85 <= min(text_heights(path, "AA_OPENING_D001")) <= 95
     assert 245 <= max(text_heights(path, "AA_SYM_T001")) <= 255
+    tab50 = text_heights(path, "AA_TABLE_T001")
+    assert 120 <= min(tab50) <= 130, tab50            # 表格字高 2.5mm -> 125
 
     # 图幅按 1:50 套上后，drawing_scale 自动从 AA_SHEET 读 50：新建注记继续按 50 取规格
     create_sheet(s, "S001", size="A3", scale=50)

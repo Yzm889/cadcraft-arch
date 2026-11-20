@@ -1043,6 +1043,27 @@ def rescale_annotations(session: Session, scale: float,
                                   scale=("%g" % sc) if attrs.get("AA_SCALE") else None)
                 symbols.append({"id": sym_id, "kind": "TITLE"})
 
+        tables = []
+        for e in session.components("AA_TABLE_"):
+            g = e["geometry"]
+            attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                     for a in g.get("attribs", [])}
+            tid = attrs.get("AA_ID") or g["block"][len("AA_TABLE_"):]
+            at = (float(attrs.get("AA_ATX", "0") or 0), float(attrs.get("AA_ATY", "0") or 0))
+            header = [c for c in (attrs.get("AA_HEADER") or "").split("~")]
+            data = [[c for c in r.split("~")]
+                    for r in (attrs.get("AA_ROWS") or "").split("@@") if r]
+            widths = [float(w) for w in (attrs.get("AA_WIDTHS") or "").split("~") if w]
+            if not widths:
+                continue
+            # 列宽也是纸面 mm（1:100 => 图元），按新旧比例等比缩放
+            prev_sc = float(attrs.get("AA_SCALE", "100") or 100)
+            widths = [w * sc / prev_sc for w in widths]
+            delete_component(session, g["block"])
+            draw_table(session, at, attrs.get("AA_TITLE", ""), header, data,
+                       widths, table_id=tid, scale=sc)
+            tables.append({"id": tid})
+
         dims = 0
         if rebuild_dims:
             res = annotate(session, scale=sc)
@@ -3437,18 +3458,32 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
 
 def draw_table(session: Session, table_at: tuple[float, float], title: str,
                header: list[str], body: list[list[str]], widths: list[float],
-               row_height: float = 400.0, text_height: float = 250.0,
-               table_id: str = "") -> dict[str, Any]:
+               row_height: float | None = None, text_height: float | None = None,
+               table_id: str = "", scale: float | None = None) -> dict[str, Any]:
     """在图上画一张表：纯几何（线框 + 居中文字），列宽行高完全按图纸 mm 控制。
 
     原生 table 命令的列宽不受控（文字会溢出到邻列），所以这里用线 + 文字自绘；
     at 仍然是表格**左上角**，表格向下生长。
+    表格按 mm 取规格（行高 4mm、字高 2.5mm），并包成 AA_TABLE_<编号> 块，
+    把标题/表头/数据/列宽存进属性，换出图比例时可原样重画（v0.9.5）。
     """
     lay = LAYERS.get("table", LAYERS["dim"])
     session.ensure_layers([lay])
+    sc = float(scale) if scale else drawing_scale(session)
+    if row_height is None:
+        row_height = annot_size(4.0, sc)
+    if text_height is None:
+        text_height = annot_size(2.5, sc)
+    if not table_id:
+        n = len(session.components("AA_TABLE_")) + 1
+        table_id = "T%03d" % n
+    block = "AA_TABLE_" + table_id
+    if session.block_exists(block):
+        raise CadError("表格 %s 已存在，请换编号" % table_id)
     ncol = len(widths)
     title_h = row_height * 1.15
-    rows = [[title], list(header)] + [list(r) for r in body]
+    data_rows = [[str(c) for c in r] for r in body]
+    rows = [[title], list(header)] + data_rows
     heights = [title_h, row_height] + [row_height] * len(body)
     total_w = sum(widths)
     total_h = sum(heights)
@@ -3499,9 +3534,29 @@ def draw_table(session: Session, table_at: tuple[float, float], title: str,
                     txt((col_x[ci] + col_x[ci + 1]) / 2.0, cy, str(cell), hgt)
         y_top -= h
 
+    before = session.snapshot()
     session.lisp("(progn %s (princ \"ok\"))" % " ".join(body), libraries=("aa_core.lisp",))
+    handles = session.new_handles(before)
+
+    # 属性里存一份可重建的表格数据：列用 ~ 分隔、行用 @@ 分隔
+    att_defs = [
+        ("AA_TYPE", "component type", "TABLE"),
+        ("AA_ID", "component id", table_id),
+        ("AA_TITLE", "table title", title),
+        ("AA_HEADER", "header cells", "~".join(str(x) for x in header)),
+        ("AA_ROWS", "rows", "@@".join("~".join(r) for r in data_rows)),
+        ("AA_WIDTHS", "column widths", "~".join("%.2f" % w for w in widths)),
+        ("AA_ATX", "anchor x", "%.4f" % x0),
+        ("AA_ATY", "anchor y", "%.4f" % y0),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=lay)
     return {"at": [x0, y0], "width": total_w, "height": total_h,
-            "by": "geometry", "rows": len(rows), "cols": ncol}
+            "by": "geometry", "rows": len(rows), "cols": ncol,
+            "block": block, "id": table_id, "handle": handle}
 
 
 def openings_report(session: Session, csv_path: str | Path | None = None,

@@ -114,11 +114,10 @@ def main() -> int:
     print("table inserted:", table)
     assert table.get("by") == "geometry", rep2
     # 表格内容要能在图里回读到中文表头与房间名（几何绘制，走 AA-TABLE 层文字）
-    marks = [e for e in s.entities().get("entities", []) if e.get("layer") == "AA-TABLE"]
+    marks = block_geometry(path, table["block"])
     texts = [e for e in marks if str(e.get("type", "")).lower() in ("text", "mtext")]
     assert len(texts) >= table["rows"] + table["cols"] - 1, len(texts)
-    flat = " ".join(str(t["geometry"].get("text", t["geometry"].get("value", "")))
-                    for t in texts)
+    flat = " ".join(str(t.get("text", t.get("value", ""))) for t in texts)
     assert "房间面积表" in flat, flat
     assert "客厅A" in flat, flat
     assert "编号" in flat, flat
