@@ -29,7 +29,7 @@
   (aa:mkline (aa:pt (+ xa (* 0.10 dx)) (+ ya h)) (aa:pt xb yb) lay)
   (aa:mkline (aa:pt xb yb) (aa:pt x2 y2) lay))
 
-;; 直跑：(aa:stair-straight w steps tread lh (+ trot 1.5707963))
+;; 直跑：(aa:stair-straight w steps tread lh trot)
 (defun aa:stair-straight (w steps tread lh trot / hw run k y mid)
   (aa:begin)
   (setq hw (/ (float w) 2.0)
@@ -44,7 +44,7 @@
   (setq mid (* 0.55 run))
   (aa:mkline (aa:pt 0.0 (* -0.12 run)) (aa:pt 0.0 run) aa:*lay-stairarrow*)
   (aa:arrowhead (aa:pt 0.0 mid) (aa:pt 0.0 (- mid 320.0)) 80.0 aa:*lay-stairarrow*)
-  (aa:mktext-r (aa:pt (- (* 0.9 lh)) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (+ trot 1.5707963))
+  (aa:mktext-r (aa:pt (- (* 0.9 lh)) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (- trot 1.5707963))
   (aa:hs))
 
 ;; 双跑：(aa:stair-dogleg w steps tread well landing lh trot level sgn)
@@ -82,7 +82,7 @@
         (aa:mkline (aa:pt (* sgn xl) (* -0.12 run)) (aa:pt (* sgn xl) run) aa:*lay-stairarrow*)
         (aa:arrowhead (aa:pt (* sgn xl) (* 0.55 run))
                       (aa:pt (* sgn xl) (- (* 0.55 run) 320.0)) 80.0 aa:*lay-stairarrow*)
-        (aa:mktext-r (aa:pt (* sgn (- xl (* 0.9 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (+ trot 1.5707963)))
+        (aa:mktext-r (aa:pt (* sgn (- xl (* 0.9 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (- trot 1.5707963)))
     (if (= level 2)
         ;; ---- 顶层：两跑全画，只有"下" ----
         (progn
@@ -106,7 +106,7 @@
           (aa:mkline (aa:pt (* sgn xr) (- dep (* 0.25 p))) (aa:pt (* sgn xr) (* -0.12 run)) aa:*lay-stairarrow*)
           (aa:arrowhead (aa:pt (* sgn xr) (+ p (* 0.30 run)))
                         (aa:pt (* sgn xr) (+ p (* 0.30 run) 320.0)) 80.0 aa:*lay-stairarrow*)
-          (aa:mktext-r (aa:pt (* sgn (- xr (* 0.9 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh (+ trot 1.5707963)))
+          (aa:mktext-r (aa:pt (* sgn (- xr (* 0.9 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh (- trot 1.5707963)))
       ;; ---- 中层（默认）：两跑全画 + 折断线 + 上/下 ----
       (progn
         (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xlL) dep) aa:*lay-stair*)
@@ -135,6 +135,6 @@
                       (aa:pt (* sgn xl) (- (+ p (* 0.55 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
         (aa:arrowhead (aa:pt (* sgn xr) (+ p (* 0.45 run)))
                       (aa:pt (* sgn xr) (- (+ p (* 0.45 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
-        (aa:mktext-r (aa:pt (* sgn (- xl (* 0.9 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (+ trot 1.5707963))
-        (aa:mktext-r (aa:pt (* sgn (- xr (* 0.9 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh (+ trot 1.5707963)))))
+        (aa:mktext-r (aa:pt (* sgn (- xl (* 0.9 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (- trot 1.5707963))
+        (aa:mktext-r (aa:pt (* sgn (- xr (* 0.9 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh (- trot 1.5707963)))))
   (aa:hs))
