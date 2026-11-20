@@ -54,8 +54,10 @@ from aa_lib import (  # noqa: E402
     create_opening_table,
     create_detail_mark,
     create_opening_detail,
+    create_wall_node,
     read_detail_mark,
     read_opening_detail,
+    read_wall_node,
     create_roof,
     create_elevation,
     create_section,
@@ -532,6 +534,24 @@ def main(argv: list[str] | None = None) -> int:
     p_odetail.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_odetail.add_argument("--show", default=None, help="只回读已有大样（给大样编号）")
 
+    p_wnode = sub.add_parser("wall-node",
+                             help="墙身节点（1:20）：窗台节点 SILL / 女儿墙节点 PARAPET")
+    p_wnode.add_argument("path")
+    p_wnode.add_argument("id")
+    p_wnode.add_argument("--at", default=None, help="墙外皮与室内楼面交点 x,y")
+    p_wnode.add_argument("--kind", default="SILL", choices=["SILL", "PARAPET"])
+    p_wnode.add_argument("--wall", dest="wall_thick", type=float, default=240.0, help="墙厚")
+    p_wnode.add_argument("--slab", type=float, default=120.0, help="楼板/屋面板厚")
+    p_wnode.add_argument("--sill", type=float, default=900.0, help="窗台高")
+    p_wnode.add_argument("--parapet", type=float, default=1200.0, help="女儿墙高")
+    p_wnode.add_argument("--cap", type=float, default=60.0, help="压顶厚")
+    p_wnode.add_argument("--cap-out", type=float, default=60.0, help="压顶/窗台板挑出")
+    p_wnode.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
+    p_wnode.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
+    p_wnode.add_argument("--title", default=None, help="图名")
+    p_wnode.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_wnode.add_argument("--show", default=None, help="只回读已有节点")
+
     args = ap.parse_args(argv)
 
     try:
@@ -849,6 +869,16 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.at), args.opening, args.no,
                     args.ratio, args.factor, args.wall_depth, args.title,
                     not args.no_dims)})
+        elif args.cmd == "wall-node":
+            if args.show:
+                emit({"ok": True, **read_wall_node(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建墙身节点需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_wall_node(
+                    session, args.id, _pt(args.at), args.kind, args.wall_thick,
+                    args.slab, args.sill, args.parapet, args.cap, args.cap_out,
+                    args.ratio, args.factor, args.title, not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

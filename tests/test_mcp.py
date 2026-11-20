@@ -42,10 +42,10 @@ def main() -> int:
     # 2) 工具表完整、每项都有 inputSchema 与 description
     tools = rpc("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 47, names
+    assert len(names) == 48, names
     for n in ("aa_new", "aa_axis", "aa_wall", "aa_opening", "aa_room",
               "aa_room_auto", "aa_split", "aa_merge", "aa_set_wall",
-              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_detail_mark", "aa_opening_detail", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
+              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_wall_node", "aa_detail_mark", "aa_opening_detail", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
         assert n in names, n
     for t in tools:
         assert t["inputSchema"]["type"] == "object", t["name"]
@@ -164,6 +164,18 @@ def main() -> int:
                                            "at": [0, -9000], "opening": "D001"})
     assert is_err and "已存在" in q["error"], q
 
+    # 5f) 墙身节点：窗台 + 女儿墙
+    is_err, q = call("aa_wall_node", {"path": str(dxf), "id": "WN1",
+                                      "at": [0, -20000], "kind": "SILL"})
+    assert not is_err and q["kind"] == "SILL" and q["factor"] == 5.0 and q["dims"] == 2, q
+    is_err, q = call("aa_wall_node", {"path": str(dxf), "id": "WN2",
+                                      "at": [9000, -20000], "kind": "PARAPET",
+                                      "parapet": 1200})
+    assert not is_err and q["parapet"] == 1200.0, q
+    is_err, q = call("aa_wall_node", {"path": str(dxf), "id": "WN1",
+                                      "at": [0, -20000]})
+    assert is_err and "已存在" in q["error"], q
+
     # 6) 真走 stdio：拉起子进程，发 initialize + tools/list，读回两行 JSON
     proc = subprocess.Popen([sys.executable, str(MCP), "--serve"],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -178,7 +190,7 @@ def main() -> int:
         lines = [proc.stdout.readline(), proc.stdout.readline()]
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
-        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 47, r2
+        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 48, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:
         proc.stdin.close()

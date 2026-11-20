@@ -6380,3 +6380,224 @@ def read_opening_detail(session: Session, detail_id: str) -> dict[str, Any]:
             "title": attrs.get("AA_TITLE", "")}
 
 
+
+
+# ---------------- 详图：墙身节点（v1.0.36，B7 第四项续） ----------------
+
+WALL_NODE_KINDS = ("SILL", "PARAPET")
+
+
+def create_wall_node(
+    session: Session,
+    node_id: str,
+    at: tuple[float, float],
+    kind: str = "SILL",
+    wall_thick: float = 240.0,
+    slab: float = 120.0,
+    sill: float = 900.0,
+    parapet: float = 1200.0,
+    cap: float = 60.0,
+    cap_out: float = 60.0,
+    ratio: float = 20.0,
+    factor: float | None = None,
+    title: str | None = None,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """墙身节点（垂直剖面，1:20）：SILL = 窗台节点，PARAPET = 女儿墙节点。
+
+    `at` = **墙外皮**与**室内楼面**的交点；x 正向指向室内（右侧），室外在左。
+    与门窗大样同一套放大口径：几何乘 `factor = 出图比例/详图比例`，注字与尺寸偏移不乘。
+
+    SILL 画：墙身（外皮/内皮两道）+ 室内楼板（厚 `slab`）+ 窗台板（挑出 `cap_out`、厚 100）+
+    窗框（60，切到窗台上 600）+ 尺寸（墙厚、窗台高）。
+    PARAPET 画：墙身 + 屋面板 + 女儿墙压顶（厚 `cap`、两侧各挑 `cap_out`）+ 尺寸（墙厚、女儿墙高）。
+
+    只画结构轮廓与定位尺寸，**不做保温/防水/抹灰等材料分层**（没有 HATCH，分层没法填充；
+    真要做只能画线，图面反而糊）。
+    """
+    block = "AA_WN_" + node_id
+    if session.block_exists(block):
+        raise CadError("墙身节点 %s 已存在，请换编号" % node_id)
+    k = str(kind or "").upper()
+    if k not in WALL_NODE_KINDS:
+        raise CadError("墙身节点类型只能是 SILL / PARAPET（收到 %r）" % kind)
+    ratio = float(ratio)
+    if ratio <= 0:
+        raise CadError("详图比例必须大于 0（收到 %s）" % ratio)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else sc / ratio
+    if f <= 0:
+        raise CadError("大样放大倍数必须大于 0（收到 %s）" % f)
+    wall_thick = float(wall_thick)
+    slab = float(slab)
+    cap = float(cap)
+    cap_out = float(cap_out)
+    if wall_thick <= 0:
+        raise CadError("墙厚必须大于 0（收到 %s）" % wall_thick)
+    if slab < 0 or cap < 0 or cap_out < 0:
+        raise CadError("板厚/压顶厚度/挑出不能为负")
+    if k == "SILL" and float(sill) <= 0:
+        raise CadError("窗台高必须大于 0（收到 %s）" % sill)
+    if k == "PARAPET" and float(parapet) <= 0:
+        raise CadError("女儿墙高必须大于 0（收到 %s）" % parapet)
+
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    T = wall_thick * f
+    SB = slab * f
+    CO = cap_out * f
+    CP = cap * f
+    S = float(sill) * f
+    PH = float(parapet) * f
+
+    lay_wall = LAYERS["wall"]
+    lay_detail = LAYERS["elevdetail"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_wall, lay_detail, lay_dim, lay_name])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        if not s:
+            return
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    def rect(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        seg(x1, y1, x2, y1, lay)
+        seg(x2, y1, x2, y2, lay)
+        seg(x2, y2, x1, y2, lay)
+        seg(x1, y2, x1, y1, lay)
+
+    bottom = -(SB + 300.0 * f)
+    if k == "SILL":
+        top = S + 600.0 * f
+        # 窗台以下：墙身实心
+        seg(0.0, bottom, 0.0, S, lay_wall)
+        seg(T, bottom, T, S, lay_wall)
+        # 室内楼板（内皮往里 1500）
+        seg(T, 0.0, T + 1500.0 * f, 0.0, lay_detail)
+        seg(T, -SB, T + 1500.0 * f, -SB, lay_detail)
+        seg(T + 1500.0 * f, 0.0, T + 1500.0 * f, -SB, lay_detail)
+        seg(T, 0.0, T, -SB, lay_wall)
+        # 窗台板（挑出 CO、厚 100）
+        rect(-CO, S - 100.0 * f, T, S, lay_detail)
+        # 窗台以上是洞口：只画窗框（60）+ 玻璃线，不再画墙
+        seg(60.0 * f, S, 60.0 * f, top, lay_detail)
+        seg(120.0 * f, S, 120.0 * f, top, lay_detail)
+        seg(90.0 * f, S, 90.0 * f, top, lay_detail)
+        feature_y = top
+    else:
+        top = PH + CP
+        seg(0.0, bottom, 0.0, PH, lay_wall)
+        seg(T, bottom, T, PH, lay_wall)
+        # 屋面板（内皮往里 1500）
+        seg(T, 0.0, T + 1500.0 * f, 0.0, lay_detail)
+        seg(T, -SB, T + 1500.0 * f, -SB, lay_detail)
+        seg(T + 1500.0 * f, 0.0, T + 1500.0 * f, -SB, lay_detail)
+        seg(T, 0.0, T, -SB, lay_wall)
+        # 压顶（两侧各挑 CO、厚 CP）
+        rect(-CO, PH, T + CO, PH + CP, lay_detail)
+        feature_y = top
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 墙厚：PARAPET 注在压顶之上；SILL 墙身止于窗台，注在墙底之下（避免压在窗框上）
+        if k == "SILL":
+            dy = bottom - ann(10.0)
+            base_feat = bottom
+            sgn = -1.0
+            ty_txt = dy - ann(4.0)
+        else:
+            dy = feature_y + ann(10.0)
+            base_feat = feature_y
+            sgn = 1.0
+            ty_txt = dy + ann(1.2)
+        for xx in (0.0, T):
+            seg(xx, base_feat, xx, dy + sgn * ann(2.0), lay_dim)
+        seg(0.0, dy, T, dy, lay_dim)
+        for xx in (0.0, T):
+            seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
+        label = "%g" % wall_thick
+        txt(T / 2.0 - _text_w(label, th) / 2.0, ty_txt, label, th)
+        ndim += 1
+
+        # 高度：外墙侧一道（SILL = 窗台高，PARAPET = 女儿墙高）
+        hgt_val = float(sill) if k == "SILL" else float(parapet)
+        dx = -CO - ann(10.0)
+        for yy in (0.0, S if k == "SILL" else PH):
+            seg(0.0, yy, dx - ann(2.0), yy, lay_dim)
+        seg(dx, 0.0, dx, S if k == "SILL" else PH, lay_dim)
+        for yy in (0.0, S if k == "SILL" else PH):
+            seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
+        label = "%g" % hgt_val
+        txt(dx - ann(1.2) - th, (S if k == "SILL" else PH) / 2.0 - _text_w(label, th) / 2.0,
+            label, th, 1.5708)
+        ndim += 1
+
+    if not title:
+        title = "窗台节点" if k == "SILL" else "女儿墙节点"
+    ty = bottom - (ann(24.0) if k == "SILL" and dims else ann(12.0))
+    body.append('(aa:title %.3f %.3f "%s" "1:%g")'
+                % (0.0, ty, title.replace('"', "'"), ratio))
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("墙身节点没有生成任何图元")
+
+    bbox = [-CO - ann(26.0), ty - ann(6.0), T + 1500.0 * f, feature_y + ann(14.0)]
+    att_defs = [
+        ("AA_TYPE", "component type", "WALL_NODE"),
+        ("AA_ID", "component id", node_id),
+        ("AA_KIND", "node kind", k),
+        ("AA_WALL", "wall thickness", "%.4f" % wall_thick),
+        ("AA_SLAB", "slab thickness", "%.4f" % slab),
+        ("AA_SILL", "sill height", "%.4f" % float(sill)),
+        ("AA_PARAPET", "parapet height", "%.4f" % float(parapet)),
+        ("AA_CAP", "cap thickness", "%.4f" % cap),
+        ("AA_CAPOUT", "cap overhang", "%.4f" % cap_out),
+        ("AA_FACTOR", "enlarge factor", "%.4f" % f),
+        ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_TITLE", "detail title", title),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_name)
+    session.expect_attributes(block, {"AA_TYPE": "WALL_NODE", "AA_ID": node_id,
+                                      "AA_KIND": k})
+    return {"block": block, "handle": handle, "id": node_id, "kind": k,
+            "wall": wall_thick, "slab": slab, "sill": float(sill),
+            "parapet": float(parapet), "cap": cap, "cap_out": cap_out,
+            "factor": f, "ratio": "1:%g" % ratio, "title": title,
+            "dims": ndim, "bbox": bbox, "geom_handles": handles}
+
+
+def read_wall_node(session: Session, node_id: str) -> dict[str, Any]:
+    """回读墙身节点：类型、墙厚、窗台高/女儿墙高、压顶、放大倍数、图名。"""
+    attrs = session.attributes("AA_WN_" + node_id)
+    if not attrs or attrs.get("AA_TYPE") != "WALL_NODE":
+        raise CadError("没找到墙身节点 %s" % node_id)
+    return {"id": node_id, "kind": attrs.get("AA_KIND", ""),
+            "wall": float(attrs.get("AA_WALL") or 0),
+            "slab": float(attrs.get("AA_SLAB") or 0),
+            "sill": float(attrs.get("AA_SILL") or 0),
+            "parapet": float(attrs.get("AA_PARAPET") or 0),
+            "cap": float(attrs.get("AA_CAP") or 0),
+            "cap_out": float(attrs.get("AA_CAPOUT") or 0),
+            "factor": float(attrs.get("AA_FACTOR") or 0),
+            "ratio": attrs.get("AA_RATIO", ""),
+            "title": attrs.get("AA_TITLE", "")}

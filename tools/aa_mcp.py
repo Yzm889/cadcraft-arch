@@ -44,8 +44,10 @@ from aa_lib import (  # noqa: E402
     create_opening_table,
     create_detail_mark,
     create_opening_detail,
+    create_wall_node,
     read_detail_mark,
     read_opening_detail,
+    read_wall_node,
     create_sheet_index,
     create_sheet_set,
     copy_floor,
@@ -80,7 +82,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.35"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.36"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -869,6 +871,33 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_wall_node",
+        "description": "墙身节点（垂直剖面，1:20）：SILL=窗台节点（墙身/楼板/窗台板/窗框+墙厚与窗台高），PARAPET=女儿墙节点（墙身/屋面板/压顶+墙厚与女儿墙高）；只画结构轮廓与定位尺寸，不做材料分层。几何按出图比例/详图比例放大，注字不放大。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "节点编号，如图纸内唯一 WN1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "墙外皮与室内楼面交点 [x, y]"},
+                "kind": {"type": "string", "enum": ["SILL", "PARAPET"],
+                         "description": "SILL 窗台 / PARAPET 女儿墙", "default": "SILL"},
+                "wall_thick": {"type": "number", "description": "墙厚 mm", "default": 240},
+                "slab": {"type": "number", "description": "楼板/屋面板厚 mm", "default": 120},
+                "sill": {"type": "number", "description": "窗台高 mm（SILL 用）", "default": 900},
+                "parapet": {"type": "number", "description": "女儿墙高 mm（PARAPET 用）", "default": 1200},
+                "cap": {"type": "number", "description": "压顶厚 mm", "default": 60},
+                "cap_out": {"type": "number", "description": "压顶/窗台板挑出 mm", "default": 60},
+                "ratio": {"type": "number", "description": "详图比例分母，默认 20", "default": 20},
+                "factor": {"type": "number", "description": "直接给放大倍数"},
+                "title": {"type": "string", "description": "图名"},
+                "dims": {"type": "boolean", "description": "是否注尺寸", "default": True},
+                "show": {"type": "string", "description": "只回读已有节点：给节点编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_detail_mark",
         "description": "详图符号（GB/T 50001）：直径 14mm 的圆 + 水平直径线，上半写详图编号、下半写图纸号（同图写 —）。与索引符号同画法，区别是直径与 AA_KIND=DETAIL_MARK。",
         "inputSchema": {
@@ -1170,6 +1199,24 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_wall_node":
+        wn = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_wall_node(wn, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("墙身节点需要 id 与 at（或用 show 回读）")
+        return create_wall_node(wn, a["id"], _pt(a["at"], "at"),
+                                a.get("kind", "SILL"),
+                                _num(a.get("wall_thick", 240), "wall_thick"),
+                                _num(a.get("slab", 120), "slab"),
+                                _num(a.get("sill", 900), "sill"),
+                                _num(a.get("parapet", 1200), "parapet"),
+                                _num(a.get("cap", 60), "cap"),
+                                _num(a.get("cap_out", 60), "cap_out"),
+                                _num(a.get("ratio", 20), "ratio"),
+                                a.get("factor"), a.get("title"),
+                                bool(a.get("dims", True)))
 
     if name == "aa_detail_mark":
         dm = _session(path)
