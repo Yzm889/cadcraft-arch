@@ -2281,17 +2281,45 @@ def create_elevation(
         code.append(L(-oh, top, width + oh, top, lev))               # 檐口
         code.append(L(-oh, top, width / 2.0, top + rise, lev))       # 左坡
         code.append(L(width / 2.0, top + rise, width + oh, top, lev))  # 右坡
-    # 门窗
+    # 门窗（天正立面做法：洞口 + 窗框双线 + 中梃分扇 + 上部亮子 + 窗台线）
+    frame = 60.0           # 窗框在立面上的可见宽度（构造值，不随比例变）
     for k, op in enumerate(ops):
         base = rows[op["floor"] - 1]["elev"] + op["sill"]
         y2 = base + op["h"]
         x1, x2 = op["x"], op["x"] + op["w"]
+        # 洞口外轮廓
         code.append(L(x1, base, x2, base, det))
         code.append(L(x2, base, x2, y2, det))
         code.append(L(x2, y2, x1, y2, det))
         code.append(L(x1, y2, x1, base, det))
-        if op["kind"] == "WINDOW":
-            code.append(L(x1, base + op["h"] * 0.55, x2, base + op["h"] * 0.55, det))
+        if op["w"] > 2 * frame and op["h"] > 2 * frame:
+            # 窗框内线（四周内缩 frame）
+            fx1, fx2 = x1 + frame, x2 - frame
+            fy1, fy2 = base + frame, y2 - frame
+            code.append(L(fx1, fy1, fx2, fy1, det))
+            code.append(L(fx2, fy1, fx2, fy2, det))
+            code.append(L(fx2, fy2, fx1, fy2, det))
+            code.append(L(fx1, fy2, fx1, fy1, det))
+            # 上部亮子横线（亮窗高 600 或 1/3 洞高，取小）
+            head = min(600.0, op["h"] / 3.0)
+            hy = y2 - head
+            if hy > base + frame + 100.0:
+                code.append(L(fx1, hy, fx2, hy, det))
+            if op["kind"] == "WINDOW":
+                # 竖向中梃（分扇）：两扇居中一条，宽窗按 1.2m 分格
+                panes = max(2, int(round(op["w"] / 1200.0)) or 2)
+                for m in range(1, panes):
+                    mx = x1 + op["w"] * m / panes
+                    code.append(L(mx, fy1, mx, fy2, det))
+                # 窗台线：比洞口每侧宽出 60
+                code.append(L(x1 - frame, base, x2 + frame, base, det))
+            else:
+                # 门：中缝（双扇）或门扇上冒头线（单扇）
+                if op["w"] >= 900.0:
+                    code.append(L((x1 + x2) / 2.0, fy1, (x1 + x2) / 2.0, fy2, det))
+                else:
+                    code.append(L(fx1, base + op["h"] * 0.62, fx2,
+                                  base + op["h"] * 0.62, det))
     # 标高（右侧，尖端对着楼层线）
     if marks:
         mx = width + annot_size(8.0, sc)

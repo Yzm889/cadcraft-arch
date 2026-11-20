@@ -3,7 +3,7 @@
 要点：
   · 3 层 3600/3600/3300 -> 顶 10500；平屋顶 + 女儿墙 1200 -> 总高 11700
   · 轮廓到压顶、楼层线只画二层/三层楼面、地坪线两端出头
-  · 门窗：每洞 4 条框线，窗多 1 条中横线；同层重叠直接拒绝
+  · 门窗：洞口 + 窗框双线 + 上部亮子 + 中梃分扇 + 窗台线（天正立面做法）；同层重叠直接拒绝
   · 标高：三层各一个三角 + 数字，落在轮廓右侧
   · 宽 <=0 / 错屋顶类型 / 双坡无脊高 / 洞越层 / 洞超宽 / 门超层高 拒绝
 """
@@ -55,8 +55,8 @@ def main() -> int:
 
     g = block_geometry(path, "AA_ELEVATION_E1")
     nl, nt = counts(g)
-    # 3（地坪+两轮廓）+ 2（楼层线）+ 2（压顶两条）+ 34（1 门 4 + 6 窗 5）+ 12（3 个标高三角各 4 线）
-    assert (nl, nt) == (53, 3), (nl, nt, [x["type"] for x in g])
+    # 3（地坪+两轮廓）+ 2（楼层线）+ 2（压顶）+ 76（6 窗×11 + 1 门×10）+ 12（3 个标高各 4 线）
+    assert (nl, nt) == (95, 3), (nl, nt, [x["type"] for x in g])
 
     layers = layer_of_block(path, "AA_ELEVATION_E1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
@@ -71,8 +71,8 @@ def main() -> int:
     assert abs(gable["total"] - 12300.0) < 1e-6, gable
     g = block_geometry(path, "AA_ELEVATION_E2")
     nl, nt = counts(g)
-    # 3（地坪+轮廓到 top）+ 2（楼层线）+ 3（檐口+左右坡）+ 4（1 门）+ 12（3 标高）
-    assert (nl, nt) == (24, 3), (nl, nt)
+    # 3（地坪+轮廓）+ 2（楼层线）+ 3（檐口+两坡）+ 10（1 门）+ 12（3 标高）
+    assert (nl, nt) == (30, 3), (nl, nt)
 
     # 无窗、无标高
     plain = create_elevation(s, "E3", (0.0, 8000.0), 4000.0,
