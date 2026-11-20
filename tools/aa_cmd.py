@@ -253,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
                            help='被剖到的室内隔墙："x,厚" 或 "x,厚,层号,洞高,窗台高[,WINDOW|DOOR]"')
     p_profile.add_argument("--beam", action="append", default=[],
                            help='梁："层号,x0,x1,梁高"（挂在那一层楼板底）')
+    p_profile.add_argument("--stair", action="append", default=[],
+                           help='楼梯断面："x0,x1,起层,踏步数"（从起层楼面爬到上一层）')
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -567,10 +569,16 @@ def main(argv: list[str] | None = None) -> int:
                 bms.append({"floor": int(parts[0]), "x0": float(parts[1]),
                             "x1": float(parts[2]),
                             "h": float(parts[3]) if len(parts) > 3 and parts[3] else 500.0})
+            sts = []
+            for spec in args.stair:
+                parts = [p.strip() for p in spec.split(",")]
+                sts.append({"x0": float(parts[0]), "x1": float(parts[1]),
+                            "floor": int(parts[2]) if len(parts) > 2 and parts[2] else 1,
+                            "treads": int(parts[3]) if len(parts) > 3 and parts[3] else 10})
             emit({"ok": True, **create_section(
                 session, args.id, _pt(args.at), args.w, floors, ops, args.side,
                 args.slab, args.roof, args.parapet, args.rise, args.wallth,
-                not args.no_marks, args.angle, iwalls, bms)})
+                not args.no_marks, args.angle, iwalls, bms, sts)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

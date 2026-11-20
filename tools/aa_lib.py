@@ -2411,6 +2411,7 @@ def create_section(
     angle: float = 0.0,
     inner_walls: Sequence[dict[str, Any]] = (),
     beams: Sequence[dict[str, Any]] = (),
+    stairs: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
 
@@ -2424,7 +2425,9 @@ def create_section(
     `inner_walls` = 被剖切面切到的室内隔墙 `[{x, thick}]`：x 是剖面局部坐标（从 at 起算），
     画成同宽的墙带（贯穿到墙顶，不做洞口）。
     `beams` = 梁 `[{floor, x0, x1, h}]`：从该层楼板底往下返 h，画梁侧两条竖线 + 梁底线。
-    剖面暂不画楼梯、基础、材料图例。
+    `stairs` = 楼梯断面 `[{floor, x0, x1, treads}]`：从 floor 层楼面爬到上一层，踏步
+    逐级画"一平一竖"，再加一条梯段板斜线（板厚取楼板厚）与两端收头。
+    剖面暂不画基础、材料图例。
     """
     block = "AA_SECTION_" + section_id
     if session.block_exists(block):
@@ -2574,6 +2577,26 @@ def create_section(
             raise CadError("第 %d 根梁超出剖面宽度（%s..%s / %.4f）" % (i + 1, x0, x1, width))
         bms.append({"floor": fl, "x0": x0, "x1": x1, "h": hb})
 
+    # 楼梯断面：一跑梯段，从 floor 层楼面爬到上一层的楼面
+    sts: list[dict[str, Any]] = []
+    for i, st in enumerate(stairs or ()):
+        if not isinstance(st, dict):
+            raise CadError("剖面楼梯必须是对象（收到 %r）" % (st,))
+        fl = int(st.get("floor", 1) or 1)
+        if not (1 <= fl < len(rows)):
+            raise CadError("第 %d 跑楼梯的起层 %s 越界：楼梯要跨到上一层（1..%d）"
+                           % (i + 1, fl, len(rows) - 1))
+        x0, x1 = float(st.get("x0", 0.0)), float(st.get("x1", 0.0))
+        n = int(st.get("treads", 10) or 10)
+        if n < 2:
+            raise CadError("第 %d 跑楼梯踏步数至少 2（收到 %s）" % (i + 1, n))
+        if x1 - x0 <= 1e-6:
+            raise CadError("第 %d 跑楼梯的 x1 必须大于 x0（收到 %s / %s）" % (i + 1, x0, x1))
+        if x0 < wall - 1e-6 or x1 > width - wall + 1e-6:
+            raise CadError("第 %d 跑楼梯 [%.4f, %.4f] 出了净宽 %.4f..%.4f"
+                           % (i + 1, x0, x1, wall, width - wall))
+        sts.append({"floor": fl, "x0": x0, "x1": x1, "treads": n})
+
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
 
@@ -2657,6 +2680,24 @@ def create_section(
         code.append(L(bm["x0"], e - slab, bm["x0"], bt, det))
         code.append(L(bm["x1"], e - slab, bm["x1"], bt, det))
         code.append(L(bm["x0"], bt, bm["x1"], bt, det))
+    # 楼梯断面：踏步逐级（每级一平一竖两条线）+ 梯段板斜线 + 两端收头
+    for st in sts:
+        y0 = rows[st["floor"] - 1]["elev"]
+        hs = rows[st["floor"] - 1]["height"]
+        run = (st["x1"] - st["x0"]) / st["treads"]
+        rsr = hs / st["treads"]
+        x = st["x0"]
+        y = y0
+        for _k in range(st["treads"]):
+            code.append(L(x, y, x + run, y, det))
+            code.append(L(x + run, y, x + run, y + rsr, det))
+            x += run
+            y += rsr
+        # 梯段板：斜线距踏步线一个板厚（用楼板厚），两端各一条竖线收头
+        th0 = max(slab, 100.0)
+        code.append(L(st["x0"], y0 - th0, st["x1"], y0 + hs - th0, det))
+        code.append(L(st["x0"], y0 - th0, st["x0"], y0, det))
+        code.append(L(st["x1"], y0 + hs - th0, st["x1"], y0 + hs, det))
     # 屋面
     if roof_u == "FLAT":
         code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
@@ -2715,6 +2756,7 @@ def create_section(
         ("AA_OPENINGS", "cut openings", str(len(ops_cut))),
         ("AA_INWALLS", "cut inner walls", str(len(iwalls))),
         ("AA_BEAMS", "cut beams", str(len(bms))),
+        ("AA_STAIRS", "cut stairs", str(len(sts))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -2730,7 +2772,7 @@ def create_section(
     return {"block": block, "handle": handle, "width": width, "floors": len(rows),
             "top": top, "total": total_top, "roof": roof_u, "slab": slab,
             "wall": wall, "angle": angle, "rows": rows, "inner_walls": len(iwalls),
-            "beams": len(bms),
+            "beams": len(bms), "stairs": len(sts),
             "openings": len(ops_cut), "geom_handles": handles}
 
 

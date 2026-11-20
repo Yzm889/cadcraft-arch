@@ -109,6 +109,36 @@ def main() -> int:
     nl, nt = counts(g)
     assert (nl, nt) == (39, 4), (nl, nt)
 
+    # 楼梯断面：10 级踏步 = 20 条平竖线 + 梯段板斜线 + 两端收头 = 23 条
+    st = create_section(s, "P7", (0.0, 75000.0), 6000.0, floors, (),
+                        "BOTH", 100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0,
+                        (), (),
+                        [{"floor": 1, "x0": 2400.0, "x1": 5520.0, "treads": 10}])
+    assert st["stairs"] == 1, st
+    g = block_geometry(path, "AA_SECTION_P7")
+    nl, nt = counts(g)
+    assert (nl, nt) == (58, 4), (nl, nt)
+    assert s.attributes("AA_SECTION_P7")["AA_STAIRS"] == "1"
+
+    # 踏步数 <2 / 楼梯出净宽 -> 拒绝
+    try:
+        create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",
+                       100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0, (), (),
+                       [{"floor": 1, "x0": 240.0, "x1": 5760.0, "treads": 1}])
+    except CadError as e:
+        assert "踏步数" in str(e), e
+    else:
+        raise AssertionError("踏步数 <2 应被拒绝")
+
+    try:
+        create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",
+                       100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0, (), (),
+                       [{"floor": 1, "x0": 0.0, "x1": 5760.0, "treads": 12}])
+    except CadError as e:
+        assert "出了净宽" in str(e), e
+    else:
+        raise AssertionError("楼梯出净宽应被拒绝")
+
     # 隔墙压到外墙 / 梁方向反了 -> 拒绝
     try:
         create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",

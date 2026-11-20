@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.26"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.27"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -769,6 +769,14 @@ TOOLS: list[dict[str, Any]] = [
                                                    "x1": {"type": "number"},
                                                    "h": {"type": "number", "default": 500}},
                                     "required": ["x0", "x1"]}},
+                "stairs": {"type": "array",
+                           "description": "楼梯断面 {floor, x0, x1, treads}：从 floor 层楼面爬到上一层",
+                           "items": {"type": "object",
+                                     "properties": {"floor": {"type": "integer", "default": 1},
+                                                    "x0": {"type": "number"},
+                                                    "x1": {"type": "number"},
+                                                    "treads": {"type": "integer", "default": 10}},
+                                     "required": ["x0", "x1"]}},
                 "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
                          "description": "平屋顶 / 双坡 / 不加", "default": "FLAT"},
                 "parapet": {"type": "number", "description": "女儿墙高 mm", "default": 1200},
@@ -977,7 +985,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("wall", 240), "wall"), bool(a.get("marks", True)),
             _num(a.get("angle", 0.0), "angle"),
-            a.get("inner_walls", []) or [], a.get("beams", []) or [])}
+            a.get("inner_walls", []) or [], a.get("beams", []) or [],
+            a.get("stairs", []) or [])}
 
     if name == "aa_floor_table":
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],
