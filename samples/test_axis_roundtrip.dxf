@@ -475,7 +475,7 @@ $DIMJOGANG
   9
 $HANDSEED
   5
-11AC
+11AD
   0
 ENDSEC
   0
@@ -1367,7 +1367,7 @@ Fenceline circle ----0-----0----
  75
 0
 340
-118B
+118C
  46
 2.54
  50
@@ -1437,7 +1437,7 @@ LAYER
 100
 AcDbSymbolTable
  70
-12
+13
   0
 LAYER
   5
@@ -1705,13 +1705,35 @@ Continuous
 390
 1160
   0
+LAYER
+  5
+118A
+330
+117D
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-NAME
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+25
+390
+1160
+  0
 ENDTAB
   0
 TABLE
   2
 STYLE
   5
-118A
+118B
 330
 0
 100
@@ -1721,9 +1743,9 @@ AcDbSymbolTable
   0
 STYLE
   5
-118B
+118C
 330
-118A
+118B
 100
 AcDbSymbolTableRecord
 100
@@ -1759,7 +1781,7 @@ TABLE
   2
 VIEW
   5
-118C
+118D
 330
 0
 100
@@ -1773,7 +1795,7 @@ TABLE
   2
 UCS
   5
-118D
+118E
 330
 0
 100
@@ -1787,7 +1809,7 @@ TABLE
   2
 APPID
   5
-118E
+118F
 330
 0
 100
@@ -1797,9 +1819,9 @@ AcDbSymbolTable
   0
 APPID
   5
-118F
+1190
 330
-118E
+118F
 100
 AcDbSymbolTableRecord
 100
@@ -1811,9 +1833,9 @@ ACAD
   0
 APPID
   5
-1190
+1191
 330
-118E
+118F
 100
 AcDbSymbolTableRecord
 100
@@ -1825,9 +1847,9 @@ CADCRAFT
   0
 APPID
   5
-1191
+1192
 330
-118E
+118F
 100
 AcDbSymbolTableRecord
 100
@@ -1839,9 +1861,9 @@ AcadAnnotative
   0
 APPID
   5
-1192
+1193
 330
-118E
+118F
 100
 AcDbSymbolTableRecord
 100
@@ -1853,9 +1875,9 @@ AcCmTransparency
   0
 APPID
   5
-1193
+1194
 330
-118E
+118F
 100
 AcDbSymbolTableRecord
 100
@@ -1871,7 +1893,7 @@ TABLE
   2
 DIMSTYLE
   5
-1194
+1195
 330
 0
 100
@@ -1885,9 +1907,9 @@ AcDbDimStyleTable
   0
 DIMSTYLE
 105
-1195
+1196
 330
-1194
+1195
 100
 AcDbSymbolTableRecord
 100
@@ -1981,7 +2003,7 @@ Standard
 285
 0
 340
-118B
+118C
  49
 1.0
  50
@@ -2017,9 +2039,9 @@ Standard
   0
 DIMSTYLE
 105
-1196
+1197
 330
-1194
+1195
 100
 AcDbSymbolTableRecord
 100
@@ -2113,7 +2135,7 @@ ISO-25
 285
 0
 340
-118B
+118C
  49
 1.0
  50
@@ -2153,7 +2175,7 @@ TABLE
   2
 BLOCK_RECORD
   5
-1197
+1198
 330
 0
 100
@@ -2165,7 +2187,7 @@ BLOCK_RECORD
   5
 113F
 330
-1197
+1198
 100
 AcDbSymbolTableRecord
 100
@@ -2179,7 +2201,7 @@ BLOCK_RECORD
   5
 1140
 330
-1197
+1198
 100
 AcDbSymbolTableRecord
 100
@@ -2193,7 +2215,7 @@ BLOCK_RECORD
   5
 1141
 330
-1197
+1198
 100
 AcDbSymbolTableRecord
 100
@@ -2207,7 +2229,7 @@ BLOCK_RECORD
   5
 1142
 330
-1197
+1198
 100
 AcDbSymbolTableRecord
 100
@@ -2231,7 +2253,7 @@ BLOCKS
   0
 BLOCK
   5
-1198
+1199
 330
 113F
 100
@@ -2257,7 +2279,7 @@ AcDbBlockBegin
   0
 ENDBLK
   5
-1199
+119A
 330
 113F
 100
@@ -2268,34 +2290,6 @@ AcDbEntity
 AcDbBlockEnd
   0
 BLOCK
-  5
-119A
-330
-1140
-100
-AcDbEntity
- 67
-1
-  8
-0
-100
-AcDbBlockBegin
-  2
-*Paper_Space
- 70
-0
- 10
-0.0
- 20
-0.0
- 30
-0.0
-  3
-*Paper_Space
-  1
-
-  0
-ENDBLK
   5
 119B
 330
@@ -2307,11 +2301,39 @@ AcDbEntity
   8
 0
 100
+AcDbBlockBegin
+  2
+*Paper_Space
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Paper_Space
+  1
+
+  0
+ENDBLK
+  5
+119C
+330
+1140
+100
+AcDbEntity
+ 67
+1
+  8
+0
+100
 AcDbBlockEnd
   0
 BLOCK
   5
-119C
+119D
 330
 1141
 100
@@ -2339,7 +2361,7 @@ AcDbBlockBegin
   0
 ENDBLK
   5
-119D
+119E
 330
 1141
 100
@@ -2353,7 +2375,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-119E
+119F
 330
 1142
 100
@@ -3243,7 +3265,7 @@ AA_HOR
   0
 ENDBLK
   5
-119F
+11A0
 330
 1142
 100
@@ -3291,7 +3313,7 @@ AA_AXGRID_AX001
   0
 ATTRIB
   5
-11A0
+11A1
 330
 13E
 100
@@ -3325,7 +3347,7 @@ AA_TYPE
   0
 ATTRIB
   5
-11A1
+11A2
 330
 13E
 100
@@ -3359,7 +3381,7 @@ AA_ID
   0
 ATTRIB
   5
-11A2
+11A3
 330
 13E
 100
@@ -3393,7 +3415,7 @@ AA_XCOUNT
   0
 ATTRIB
   5
-11A3
+11A4
 330
 13E
 100
@@ -3427,7 +3449,7 @@ AA_YCOUNT
   0
 ATTRIB
   5
-11A4
+11A5
 330
 13E
 100
@@ -3461,7 +3483,7 @@ AA_XSPACE
   0
 ATTRIB
   5
-11A5
+11A6
 330
 13E
 100
@@ -3495,7 +3517,7 @@ AA_YSPACE
   0
 ATTRIB
   5
-11A6
+11A7
 330
 13E
 100
@@ -3529,7 +3551,7 @@ AA_XSTART
   0
 ATTRIB
   5
-11A7
+11A8
 330
 13E
 100
@@ -3563,7 +3585,7 @@ AA_YSTART
   0
 ATTRIB
   5
-11A8
+11A9
 330
 13E
 100
@@ -3597,7 +3619,7 @@ AA_VER
   0
 ATTRIB
   5
-11A9
+11AA
 330
 13E
 100
@@ -3631,7 +3653,7 @@ AA_HOR
   0
 SEQEND
   5
-11AA
+11AB
 330
 13E
 100
@@ -3665,7 +3687,7 @@ ACAD_LAYOUT
   3
 ACAD_MLEADERSTYLE
 350
-11AB
+11AC
   3
 ACAD_MLINESTYLE
 350
@@ -3703,7 +3725,7 @@ AcDbDictionary
   0
 DICTIONARY
   5
-11AB
+11AC
 330
 1147
 100
@@ -3721,11 +3743,11 @@ MLEADERSTYLE
 102
 {ACAD_REACTORS
 330
-11AB
+11AC
 102
 }
 330
-11AB
+11AC
 100
 AcDbMLeaderStyle
 179
@@ -3765,7 +3787,7 @@ AcDbMLeaderStyle
 300
 
 342
-118B
+118C
 174
 1
 178

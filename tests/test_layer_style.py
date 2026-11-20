@@ -27,7 +27,7 @@ OUT = ROOT / "samples"
 
 
 def main() -> int:
-    # 1. 新图：一开图就有 9 个标准层，颜色/线型/线宽全对
+    # 1. 新图：一开图就有 11 个标准层，颜色/线型/线宽全对
     path = OUT / "test_layer_style.dxf"
     if path.exists():
         path.unlink()
@@ -45,6 +45,7 @@ def main() -> int:
         "border": (7, "Continuous", 0.15),
         "title": (7, "Continuous", 0.25),
         "table": (7, "Continuous", 0.18),
+        "name": (7, "Continuous", 0.25),
     }
     for key, (color, lt, lw) in expect.items():
         got = table.get(LAYERS[key])
@@ -52,7 +53,7 @@ def main() -> int:
         assert got["color"] == color, (key, got)
         assert str(got["linetype"]).lower() == lt.lower(), (key, got)
         assert abs(got["lineweight"] - lw) < 0.011, (key, got)
-    print("新图 10 层规格 ok:", {LAYERS[k]: (v["color"], v["linetype"], v["lineweight"])
+    print("新图 11 层规格 ok:", {LAYERS[k]: (v["color"], v["linetype"], v["lineweight"])
                             for k, v in [("axis", table[LAYERS["axis"]]),
                                          ("wall", table[LAYERS["wall"]])]})
 

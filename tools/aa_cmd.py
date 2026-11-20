@@ -38,6 +38,8 @@ from aa_lib import (  # noqa: E402
     create_room,
     create_wall,
     create_sheet,
+    create_title_mark,
+    create_north_arrow,
     export,
     layer_table,
     merge_walls,
@@ -118,8 +120,20 @@ def main(argv: list[str] | None = None) -> int:
     p_axis_bind.add_argument("--tol", type=float, default=50.0, help="端点与轴的允许偏差 mm")
     p_axis_bind.add_argument("--only-empty", action="store_true", help="只填空的，不覆盖已有轴号")
 
-    p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")
-    p_layers.add_argument("path", nargs="?", default=None,
+    p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
+    p_title.add_argument("path")
+    p_title.add_argument("id")
+    p_title.add_argument("--at", required=True, help="图名文字插入点 x,y")
+    p_title.add_argument("--name", required=True, help="图名文字，如 一层平面图")
+    p_title.add_argument("--scale", default="100", help="比例分母，如 100 表示 1:100；留空则不注比例")
+
+    p_north = sub.add_parser("north", help="指北针（圆 + 指针）")
+    p_north.add_argument("path")
+    p_north.add_argument("id")
+    p_north.add_argument("--at", required=True, help="圆心 x,y")
+    p_north.add_argument("--size", type=float, default=None, help="圆直径（图元单位），默认 2400=24mm@1:100")
+
+    p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")    p_layers.add_argument("path", nargs="?", default=None,
                           help="图纸路径；省略则只列出标准规格，不读图")
     p_layers.add_argument("--fix", action="store_true",
                           help="按标准建层/纠偏（缺层新建，颜色线型线宽不符就改），并回读校验")
@@ -277,6 +291,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "axis-auto":
             emit({"ok": True, **auto_axis(
                 session, args.id, args.tol, args.ext, args.min_len)})
+        elif args.cmd == "title":
+            emit({"ok": True, **create_title_mark(
+                session, args.id, _pt(args.at), args.name, args.scale or None)})
+        elif args.cmd == "north":
+            emit({"ok": True, **create_north_arrow(
+                session, args.id, _pt(args.at), args.size)})
         elif args.cmd == "wall":
             res = create_wall(
                 session, args.id, _pt(args.p1), _pt(args.p2),

@@ -41,6 +41,7 @@ DEFAULT_LAYERS = {
     "sheet": "AA-SHEET",
     "title": "AA-TITLE",
     "table": "AA-TABLE",
+    "name": "AA-NAME",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -60,6 +61,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "sheet":    {"color": 7, "linetype": "Continuous", "lineweight": 0.70},
     "title":    {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "table":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "name":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -796,6 +798,95 @@ def bind_walls_to_axis(session: Session, grid_id: str | None = None, tol: float 
                     save=True)
         updates.append({"wall": w["id"], "ax1": a1, "ax2": a2})
     return {"bound": len(updates), "walls": updates}
+
+
+# ---------------- 图面符号：图名标注 / 指北针（v0.9.3） ----------------
+
+def create_title_mark(
+    session: Session,
+    sym_id: str,
+    at: tuple[float, float],
+    name: str,
+    scale: str | int | float | None = None,
+) -> dict[str, Any]:
+    """图名标注：图名 + 比例 + 图名下粗线 + 比例下细线（GB/T 50001 图名注写习惯）。
+
+    `at` 是图名文字的插入点（左下角基线）；1:100 出图时图名 5mm、比例 3.5mm，
+    图名线用图框线层（0.70 粗），比例下的线用图名层（0.25 细）。
+    """
+    if not name.strip():
+        raise CadError("图名不能为空")
+    block = "AA_SYM_" + sym_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % sym_id)
+    sc = "" if scale in (None, "") else ("1:%g" % float(scale))
+    session.ensure_layers([LAYERS["name"], LAYERS["sheet"]])
+    before = session.snapshot()
+    session.lisp(
+        '(aa:title %.3f %.3f "%s" "%s")'
+        % (float(at[0]), float(at[1]), name.replace('"', "'"), sc),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("图名标注没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "TITLEMARK"),
+        ("AA_ID", "component id", sym_id),
+        ("AA_KIND", "symbol kind", "TITLE"),
+        ("AA_TEXT", "title text", name),
+        ("AA_SCALE", "drawing scale", sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(
+        block, {"AA_TYPE": "TITLEMARK", "AA_ID": sym_id, "AA_TEXT": name}
+    )
+    return {"block": block, "handle": handle, "text": name, "scale": sc,
+            "geom_handles": handles}
+
+
+def create_north_arrow(
+    session: Session,
+    sym_id: str,
+    at: tuple[float, float],
+    size: float | None = None,
+) -> dict[str, Any]:
+    """指北针（GB/T 50001 习惯）：细线圆 + 指针，圆直径 1:100 出图取 24mm。
+
+    `size` 为图元单位（mm）；不传则按 2400（=24mm @1:100）。
+    """
+    block = "AA_SYM_" + sym_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % sym_id)
+    d = 2400.0 if size is None else float(size)
+    if d <= 0:
+        raise CadError("指北针直径必须为正：%r" % (size,))
+    session.ensure_layers([LAYERS["name"]])
+    before = session.snapshot()
+    session.lisp(
+        "(aa:north %.3f %.3f %.3f)" % (float(at[0]), float(at[1]), d),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("指北针没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "TITLEMARK"),
+        ("AA_ID", "component id", sym_id),
+        ("AA_KIND", "symbol kind", "NORTH"),
+        ("AA_R", "arrow radius", "%.3f" % (d / 2.0)),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(
+        block, {"AA_TYPE": "TITLEMARK", "AA_ID": sym_id, "AA_KIND": "NORTH"}
+    )
+    return {"block": block, "handle": handle, "diameter": d, "geom_handles": handles}
 
 
 def wall_info(session: Session, wall_id: str) -> dict[str, Any]:

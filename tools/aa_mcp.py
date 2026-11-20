@@ -35,6 +35,8 @@ from aa_lib import (  # noqa: E402
     create_room,
     create_wall,
     create_sheet,
+    create_title_mark,
+    create_north_arrow,
     export,
     layer_table,
     merge_walls,
@@ -52,7 +54,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.2"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.3"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -358,6 +360,36 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_title",
+        "description": "图名标注：图名（5mm@1:100）+ 比例（3.5mm）+ 图名下粗线 + 比例下细线（GB/T 50001 习惯）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号", "default": "T001"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "图名文字插入点 [x, y]"},
+                "name": {"type": "string", "description": "图名文字，如 一层平面图"},
+                "scale": {"type": "string", "description": "比例分母，如 100 表示 1:100；空串不注比例"},
+            },
+            "required": ["path", "at", "name"],
+        },
+    },
+    {
+        "name": "aa_north",
+        "description": "指北针：细线圆 + 等腰三角指针，圆直径默认 2400（=24mm@1:100）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号", "default": "N001"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "圆心 [x, y]"},
+                "size": {"type": "number", "description": "圆直径（图元单位），默认 2400"},
+            },
+            "required": ["path", "at"],
+        },
+    },
+    {
         "name": "aa_sheet",
         "description": "图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏 9 格；不给 at 时按图形外廓自动居中排图。",
         "inputSchema": {
@@ -465,6 +497,16 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **bind_walls_to_axis(
             s, a.get("grid"), _num(a.get("tol", 50), "tol"),
             bool(a.get("only_empty")))}
+
+    if name == "aa_title":
+        return {"ok": True, **create_title_mark(
+            s, a.get("id", "T001"), _pt(a["at"], "at"), a["name"],
+            a.get("scale") or None)}
+
+    if name == "aa_north":
+        return {"ok": True, **create_north_arrow(
+            s, a.get("id", "N001"), _pt(a["at"], "at"),
+            _opt(a.get("size")))}
 
     if name == "aa_wall":
         res = create_wall(

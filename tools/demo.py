@@ -16,6 +16,8 @@ from aa_lib import (  # noqa: E402
     create_opening,
     create_room,
     create_sheet,
+    create_title_mark,
+    create_north_arrow,
     create_wall,
     drawing_extent,
     export,
@@ -77,6 +79,9 @@ def main() -> int:
     annotate(sf)
     rooms_report(sf, OUT / "demo_rooms.csv", (0.0, -3400.0), "房间面积表")
     openings_report(sf, OUT / "demo_openings.csv", (9900.0, -3400.0), "门窗表")
+    # 图面符号：图名（表下方）+ 指北针（平面右上角）
+    create_title_mark(sf, "T001", (0.0, -6600.0), "一层平面图", 100)
+    create_north_arrow(sf, "N001", (15500.0, 4300.0))
     win_full = drawing_extent(sf, pad=1500.0)
     export(sf, OUT / "demo_full.png", win_full)
 
