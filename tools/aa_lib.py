@@ -2452,9 +2452,10 @@ def create_section(
     det = LAYERS["elevdetail"]
     ext = annot_size(5.0, sc)
 
-    # 剖到的门窗：只给层号/高/窗台高/类型，竖向位置由层高定，东西由"剖在哪道墙"决定
-    ops_left: list[dict[str, Any]] = []
-    ops_right: list[dict[str, Any]] = []
+    # 剖到的门窗：只给层号/高/窗台高/类型，竖向位置由层高定，横向由"剖在哪道墙"决定。
+    # 剖面只剖一道墙（即被剖的那一端），对面墙是"看到的"，不落洞口。
+    ops_cut: list[dict[str, Any]] = []
+    cut = str(side).upper()
     for i, op in enumerate(openings or ()):
         if not isinstance(op, dict):
             raise CadError("剖面门窗必须是对象（收到 %r）" % (op,))
@@ -2472,20 +2473,22 @@ def create_section(
         kd = str(op.get("kind", "WINDOW")).upper()
         if kd not in ("WINDOW", "DOOR"):
             raise CadError("第 %d 个剖面洞口类型只能是 WINDOW / DOOR（收到 %r）" % (i + 1, kd))
-        sd = str(op.get("side", side)).upper()
+        sd = str(op.get("side", cut)).upper()
         if sd not in ("LEFT", "RIGHT"):
             raise CadError("第 %d 个剖面洞口侧别只能是 LEFT / RIGHT（收到 %r）" % (i + 1, sd))
-        item = {"kind": kd, "h": hh,
-                "elev0": rows[fl - 1]["elev"] + sill,
-                "elev1": rows[fl - 1]["elev"] + sill + hh}
-        (ops_left if sd == "LEFT" else ops_right).append(item)
-    for bucket in (ops_left, ops_right):
-        for a in range(len(bucket)):
-            for b in range(a + 1, len(bucket)):
-                if min(bucket[a]["elev1"], bucket[b]["elev1"]) - \
-                        max(bucket[a]["elev0"], bucket[b]["elev0"]) > 1e-6:
-                    raise CadError("剖面同一道墙上有两个洞口竖向重叠（%s 与 %s）"
-                                   % (bucket[a]["elev0"], bucket[b]["elev0"]))
+        if sd != cut:
+            raise CadError("第 %d 个剖面洞口在 %s 侧，但剖面剖到的是 %s 侧："
+                           "只有被剖到的那道墙才有洞口（对面墙是看到的，不落洞口）"
+                           % (i + 1, sd, cut))
+        ops_cut.append({"kind": kd, "h": hh,
+                        "elev0": rows[fl - 1]["elev"] + sill,
+                        "elev1": rows[fl - 1]["elev"] + sill + hh})
+    for a in range(len(ops_cut)):
+        for b in range(a + 1, len(ops_cut)):
+            if min(ops_cut[a]["elev1"], ops_cut[b]["elev1"]) - \
+                    max(ops_cut[a]["elev0"], ops_cut[b]["elev0"]) > 1e-6:
+                raise CadError("剖面同一道墙上有两个洞口竖向重叠（%s 与 %s）"
+                               % (ops_cut[a]["elev0"], ops_cut[b]["elev0"]))
 
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
@@ -2494,11 +2497,11 @@ def create_section(
     # 室内地坪（两端出头）
     code.append(L(-ext, 0.0, width + ext, 0.0, lev))
 
-    # 剖到的外墙按墙厚画成窄带：外皮 x=0 / 内皮 x=wall（右侧对称），
-    # 遇到剖到的门窗就把墙线断开，中间画窗框与玻璃。
+    # 剖面只"剖到"一侧外墙：被剖的那一端画墙厚窄带（遇洞口断墙），
+    # 另一端是"看到的"对面墙内表面，只画一条细线（GB/T 50104 的剖面读法）。
     frame_s = 60.0
-    gaps_left = [(op["elev0"], op["elev1"]) for op in ops_left]
-    gaps_right = [(op["elev0"], op["elev1"]) for op in ops_right]
+    cut_left = str(side).upper() == "LEFT"
+    gaps_cut = [(op["elev0"], op["elev1"]) for op in ops_cut]
 
     def wall_segments(x, gaps):
         out = []
@@ -2511,12 +2514,17 @@ def create_section(
             out.append(L(x, cursor, x, top, lev))
         return out
 
-    code += wall_segments(0.0, gaps_left) + wall_segments(wall, gaps_left)
-    code += wall_segments(width - wall, gaps_right) + wall_segments(width, gaps_right)
+    if cut_left:
+        code += wall_segments(0.0, gaps_cut) + wall_segments(wall, gaps_cut)
+        code.append(L(width - wall, 0.0, width - wall, top, det))   # 对面墙内表面（看到）
+    else:
+        code.append(L(wall, 0.0, wall, top, det))
+        code += wall_segments(width - wall, gaps_cut) + wall_segments(width, gaps_cut)
 
     # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门上亮子 + 窗台板挑出
-    for op, x0, x1, prot in [(o, 0.0, wall, 1.0) for o in ops_left] + \
-                            [(o, width - wall, width, -1.0) for o in ops_right]:
+    box = (0.0, wall, 1.0) if cut_left else (width - wall, width, -1.0)
+    for op in ops_cut:
+        x0, x1, prot = box
         b, t2 = op["elev0"], op["elev1"]
         if b > 1e-6:
             code.append(L(x0, b, x1, b, det))
@@ -2533,26 +2541,28 @@ def create_section(
                               x1 - frame_s, t2 - min(500.0, op["h"] / 4.0), det))
 
     # 楼板（每层楼面一条板顶 + 一条板底；首层地面即地坪，不重复）
+    # 剖到的一侧从墙带画起，看到的一侧止于对面墙内表面（不穿进墙里）
+    x_lo, x_hi = (0.0, width - wall) if cut_left else (wall, width)
     for r in rows[1:]:
-        code.append(L(0.0, r["elev"], width, r["elev"], lev))
-        code.append(L(0.0, r["elev"] - slab, width, r["elev"] - slab, det))
+        code.append(L(x_lo, r["elev"], x_hi, r["elev"], lev))
+        code.append(L(x_lo, r["elev"] - slab, x_hi, r["elev"] - slab, det))
     # 屋面
     if roof_u == "FLAT":
         code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
         code.append(L(0.0, roof_top, width, roof_top, lev))            # 屋面板顶
         if parapet > 0:
-            # 女儿墙只在外墙位置：剖到的是两道窄矩形，不是横贯整宽的"大框"
+            # 女儿墙：剖到的那一端是窄矩形（带压顶），对面一端只画看到的内表面
             cap = annot_size(1.5, sc)
-            code.append(L(0.0, roof_top, 0.0, roof_top + parapet, lev))
-            code.append(L(wall, roof_top, wall, roof_top + parapet, lev))
-            code.append(L(0.0, roof_top + parapet, wall, roof_top + parapet, lev))
-            code.append(L(width - wall, roof_top, width - wall, roof_top + parapet, lev))
-            code.append(L(width, roof_top, width, roof_top + parapet, lev))
-            code.append(L(width - wall, roof_top + parapet, width, roof_top + parapet, lev))
+            if cut_left:
+                outer, inner, far = 0.0, wall, width - wall
+            else:
+                outer, inner, far = width, width - wall, wall
+            code.append(L(outer, roof_top, outer, roof_top + parapet, lev))
+            code.append(L(inner, roof_top, inner, roof_top + parapet, lev))
+            code.append(L(outer, roof_top + parapet, inner, roof_top + parapet, lev))
+            code.append(L(far, roof_top, far, roof_top + parapet, det))
             if parapet >= 2 * cap:
-                code.append(L(0.0, roof_top + parapet - cap, wall,
-                              roof_top + parapet - cap, det))
-                code.append(L(width - wall, roof_top + parapet - cap, width,
+                code.append(L(outer, roof_top + parapet - cap, inner,
                               roof_top + parapet - cap, det))
     elif roof_u == "GABLE":
         code.append(L(0.0, roof_bottom, width / 2.0, roof_bottom + rise, det))
@@ -2595,7 +2605,7 @@ def create_section(
         ("AA_WALL", "wall thickness", "%.4f" % wall),
         ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
         ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u in ("GABLE", "EAVE") else 0.0)),
-        ("AA_OPENINGS", "cut openings", str(len(ops_left) + len(ops_right))),
+        ("AA_OPENINGS", "cut openings", str(len(ops_cut))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -2611,7 +2621,7 @@ def create_section(
     return {"block": block, "handle": handle, "width": width, "floors": len(rows),
             "top": top, "total": total_top, "roof": roof_u, "slab": slab,
             "wall": wall, "angle": angle, "rows": rows,
-            "openings": len(ops_left) + len(ops_right), "geom_handles": handles}
+            "openings": len(ops_cut), "geom_handles": handles}
 
 
 def create_room(

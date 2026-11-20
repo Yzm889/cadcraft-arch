@@ -35,9 +35,9 @@ OUT = Path(__file__).resolve().parent.parent / "samples"
 SCALE = 100
 
 FLOORS = [
-    {"height": 3600.0},
-    {"height": 3300.0},
-    {"height": 3300.0},
+    {"height": 3600.0, "plan": "建-01", "name": "一层平面"},
+    {"height": 3300.0, "plan": "建-02", "name": "二层平面"},
+    {"height": 3300.0, "plan": "建-03", "name": "三层平面"},
 ]
 
 
