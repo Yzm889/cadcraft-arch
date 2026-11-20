@@ -1017,6 +1017,182 @@ def create_north_arrow(
     return {"block": block, "handle": handle, "diameter": d, "geom_handles": handles}
 
 
+def format_elevation(value: float) -> str:
+    """标高数值写法（m，三位小数）：零写 ±0.000，负写 -0.450，正写 3.600。"""
+    v = round(float(value), 3)
+    if abs(v) < 1e-9:
+        return "±0.000"
+    return "%.3f" % v
+
+
+def create_elevation_mark(
+    session: Session,
+    sym_id: str,
+    at: tuple[float, float],
+    value: float | str,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """标高符号（GB/T 50001 习惯）：等腰直角三角高 3mm，尖端指向所注面，(x,y) 就是尖端。
+
+    数字 2.5mm 写在三角右侧基线上方；`value` 传米制数值（如 3.6 / -0.45 / 0），
+    文字由 `format_elevation` 统一成 `±0.000 / 3.600 / -0.450`。
+    """
+    block = "AA_SYM_" + sym_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % sym_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    text = value if isinstance(value, str) and value.strip() else format_elevation(float(value))
+    h = annot_size(3.0, sc)
+    session.ensure_layers([LAYERS["name"], LAYERS["sheet"]])
+    before = session.snapshot()
+    session.lisp(
+        '(aa:elev %.3f %.3f "%s" %.4f %.4f)'
+        % (float(at[0]), float(at[1]), text.replace('"', "'"),
+           h, annot_size(2.5, sc)),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("标高符号没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "SYMBOL"),
+        ("AA_ID", "component id", sym_id),
+        ("AA_KIND", "symbol kind", "ELEV"),
+        ("AA_VALUE", "elevation text", text),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+        ("AA_H", "triangle height", "%.4f" % h),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(block, {"AA_TYPE": "SYMBOL", "AA_KIND": "ELEV",
+                                      "AA_VALUE": text})
+    return {"block": block, "handle": handle, "kind": "ELEV", "value": text,
+            "geom_handles": handles}
+
+
+def create_index_mark(
+    session: Session,
+    sym_id: str,
+    at: tuple[float, float],
+    detail: str,
+    sheetno: str = "—",
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """索引符号（GB/T 50001 习惯）：直径 10mm 圆 + 水平直径线，上半详图编号、下半图号。
+
+    同一张图上的详图写成 "—"（GB 习惯）。
+    """
+    block = "AA_SYM_" + sym_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % sym_id)
+    if not str(detail).strip():
+        raise CadError("索引符号必须给详图编号")
+    sc = float(scale) if scale else drawing_scale(session)
+    d = annot_size(10.0, sc)
+    session.ensure_layers([LAYERS["name"]])
+    before = session.snapshot()
+    session.lisp(
+        '(aa:idx %.3f %.3f %.4f "%s" "%s" %.4f)'
+        % (float(at[0]), float(at[1]), d,
+           str(detail).replace('"', "'"), str(sheetno).replace('"', "'"),
+           annot_size(2.5, sc)),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("索引符号没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "SYMBOL"),
+        ("AA_ID", "component id", sym_id),
+        ("AA_KIND", "symbol kind", "INDEX"),
+        ("AA_DETAIL", "detail no", str(detail)),
+        ("AA_SHEETNO", "sheet no", str(sheetno)),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(block, {"AA_TYPE": "SYMBOL", "AA_KIND": "INDEX",
+                                      "AA_DETAIL": str(detail)})
+    return {"block": block, "handle": handle, "kind": "INDEX",
+            "detail": str(detail), "sheetno": str(sheetno), "geom_handles": handles}
+
+
+_SECTION_DIRS = {
+    "down": (0.0, -1.0), "up": (0.0, 1.0),
+    "left": (-1.0, 0.0), "right": (1.0, 0.0),
+}
+
+
+def create_section_mark(
+    session: Session,
+    sym_id: str,
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    direction: str = "down",
+    no: str = "1",
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """剖切符号（GB/T 50001）：剖切位置线只画两端两段粗线（6mm，不与图面线条相接），
+    两端各一条垂直的投射方向线（5mm），编号 1-1 写在两条方向线端部。
+
+    `p1`/`p2` 是剖切位置线的两个端点（落在建筑轮廓外一点），`direction` 是投射方向
+    （朝哪边看）：down/up/left/right，方向线从两端往该方向画。
+    """
+    block = "AA_SYM_" + sym_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % sym_id)
+    if math.dist(tuple(p1), tuple(p2)) <= 1.0:
+        raise CadError("剖切位置线两端点重合，无法画剖切符号")
+    d = _SECTION_DIRS.get(str(direction).lower())
+    if not d:
+        raise CadError("剖切方向只能是 down/up/left/right：%r" % direction)
+    sc = float(scale) if scale else drawing_scale(session)
+    session.ensure_layers([LAYERS["name"], LAYERS["sheet"]])
+    before = session.snapshot()
+    session.lisp(
+        '(aa:section %.3f %.3f %.3f %.3f %.1f %.1f "%s" %.4f %.4f %.4f)'
+        % (float(p1[0]), float(p1[1]), float(p2[0]), float(p2[1]), d[0], d[1],
+           str(no).replace('"', "'"), annot_size(6.0, sc), annot_size(5.0, sc),
+           annot_size(2.5, sc)),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("剖切符号没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "SYMBOL"),
+        ("AA_ID", "component id", sym_id),
+        ("AA_KIND", "symbol kind", "SECTION"),
+        ("AA_NO", "section no", str(no)),
+        ("AA_DIRX", "look direction x", "%.1f" % d[0]),
+        ("AA_DIRY", "look direction y", "%.1f" % d[1]),
+        ("AA_X1", "cut line x1", "%.4f" % float(p1[0])),
+        ("AA_Y1", "cut line y1", "%.4f" % float(p1[1])),
+        ("AA_X2", "cut line x2", "%.4f" % float(p2[0])),
+        ("AA_Y2", "cut line y2", "%.4f" % float(p2[1])),
+        ("AA_SEG", "cut line segment", "%.4f" % annot_size(6.0, sc)),
+        ("AA_ATX", "anchor x", "%.4f" % float(p1[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(p1[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(block, {"AA_TYPE": "SYMBOL", "AA_KIND": "SECTION",
+                                      "AA_NO": str(no)})
+    return {"block": block, "handle": handle, "kind": "SECTION", "no": str(no),
+            "direction": str(direction).lower(), "geom_handles": handles}
+
+
 def _rebuild_axis_grid(session: Session, grid: dict[str, Any], scale: float) -> dict[str, Any]:
     """按新比例重画一套已有轴网（轴位与编号保持不变，只重算圈半径/字高/间隙）。"""
     block = grid["block"]
@@ -1113,6 +1289,26 @@ def rescale_annotations(session: Session, scale: float,
                                   attrs.get("AA_TEXT", ""),
                                   scale=("%g" % sc) if attrs.get("AA_SCALE") else None)
                 symbols.append({"id": sym_id, "kind": "TITLE"})
+            elif attrs.get("AA_KIND") == "ELEV":
+                create_elevation_mark(session, sym_id, at,
+                                      attrs.get("AA_VALUE", "±0.000"), scale=sc)
+                symbols.append({"id": sym_id, "kind": "ELEV"})
+            elif attrs.get("AA_KIND") == "INDEX":
+                create_index_mark(session, sym_id, at,
+                                  attrs.get("AA_DETAIL", "1"),
+                                  attrs.get("AA_SHEETNO", "—"), scale=sc)
+                symbols.append({"id": sym_id, "kind": "INDEX"})
+            elif attrs.get("AA_KIND") == "SECTION":
+                d = (float(attrs.get("AA_DIRX", "0") or 0),
+                     float(attrs.get("AA_DIRY", "-1") or -1))
+                direction = next((k for k, v in _SECTION_DIRS.items()
+                                  if (v[0], v[1]) == d), "down")
+                create_section_mark(
+                    session, sym_id,
+                    (float(attrs.get("AA_X1", "0") or 0), float(attrs.get("AA_Y1", "0") or 0)),
+                    (float(attrs.get("AA_X2", "0") or 0), float(attrs.get("AA_Y2", "0") or 0)),
+                    direction=direction, no=attrs.get("AA_NO", "1"), scale=sc)
+                symbols.append({"id": sym_id, "kind": "SECTION"})
 
         tables = []
         for e in session.components("AA_TABLE_"):
@@ -2706,7 +2902,8 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                 out.append({"type": "LWPOLYLINE", "lt": e["lt"], "layer": e["layer"], "pts": pts})
         elif e["type"] in ("TEXT", "MTEXT") and e["txt"] is not None:
             at = (e["sx"], e["sy"]) if None not in (e["sx"], e["sy"]) else None
-            out.append({"type": e["type"], "text": e["txt"], "layer": e["layer"], "pts": [at] if at else []})
+            out.append({"type": e["type"], "text": e["txt"], "layer": e["layer"],
+                        "pts": [at] if at else [], "h": e["r"]})
         elif e["type"] == "CIRCLE" and None not in (e["sx"], e["sy"], e["r"]):
             out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"], "pts": [(e["sx"], e["sy"])]})
     return out
@@ -3379,6 +3576,138 @@ def export(session: Session, out: str | Path, window: Sequence[float] | None = N
                     break
         res.update(emphasize_lineweights(session, out, window, s or 100.0))
     return res
+
+
+def _pt_seg_dist(p: tuple[float, float], a: tuple[float, float],
+                 b: tuple[float, float]) -> float:
+    """点到线段距离（T 接判断用）。"""
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    ln2 = dx * dx + dy * dy
+    if ln2 <= 1e-12:
+        return math.dist(p, a)
+    t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / ln2))
+    return math.dist(p, (ax + t * dx, ay + t * dy))
+
+
+def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
+    """图面自检：把"画完看着不对"的常见问题先挑出来，别等到出图才发现。
+
+    检查项（都不改图，只报问题）：
+      1. `wall_endpoint` 墙端点没接上任何墙（漏墙/墙没画到）；
+      2. `opening_outside` 门窗洞口跑出所属墙段；
+      3. `room_text_overlap` 两个房间的名称/面积文字压在一起；
+      4. `dim_over_axis` 尺寸文字压在轴号圈里；
+      5. `outside_sheet` 有图幅时，图形外廓超出内框。
+    返回 `{issues, count, by_kind, scale}`，issue 里带 `level`（error/warn）与 `handles`/`detail`。
+    """
+    issues: list[dict[str, Any]] = []
+
+    def add(kind: str, level: str, message: str,
+            handles: Sequence[str] = (), detail: str = "") -> None:
+        issues.append({"kind": kind, "level": level, "message": message,
+                       "handles": list(handles), "detail": detail})
+
+    sc = drawing_scale(session)
+
+    # 1) 墙端点是否接上（端点对端点，或落在别的墙身上 = T 接）
+    walls = wall_data(session)
+    for w in walls:
+        for key, other_key in (("p1", "p2"), ("p2", "p1")):
+            p = tuple(w[key])
+            hit = math.dist(p, tuple(w[other_key])) <= tol
+            for o in walls:
+                if o["id"] == w["id"]:
+                    continue
+                if (math.dist(p, tuple(o["p1"])) <= tol or
+                        math.dist(p, tuple(o["p2"])) <= tol or
+                        _pt_seg_dist(p, tuple(o["p1"]), tuple(o["p2"])) <= tol):
+                    hit = True
+                    break
+            if not hit:
+                add("wall_endpoint", "error",
+                    "墙 %s 的 %s 端没接上别的墙" % (w["id"], key),
+                    handles=[w.get("handle", "")], detail="%s=(%.3f, %.3f)" % (key, p[0], p[1]))
+
+    # 2) 门窗是否跑出墙段
+    for o in opening_data(session):
+        info = wall_info(session, o["wallid"]) if o.get("wallid") else None
+        if not info:
+            continue
+        if o["pos"] - o["width"] / 2.0 < -tol or o["pos"] + o["width"] / 2.0 > info["length"] + tol:
+            add("opening_outside", "error",
+                "门窗 %s 超出墙 %s 长度（洞口中心 %.1f，宽 %.1f，墙长 %.1f）"
+                % (o["id"], o["wallid"], o["pos"], o["width"], info["length"]),
+                handles=[o.get("handle", "")])
+
+    # 3) 房间文字互相重叠
+    def _texts(block: str) -> list[tuple[str, tuple[float, float, float, float], str]]:
+        out = []
+        for g in block_geometry(session.path, block):
+            if g["type"] not in ("TEXT", "MTEXT") or not g.get("pts"):
+                continue
+            tx, ty = g["pts"][0]
+            th = float(g.get("h") or 0) or annot_size(2.5, sc)
+            out.append((block, (tx, ty, tx + _text_w(g["text"], th), ty + th), g["text"]))
+        return out
+
+    room_boxes = []
+    for r in room_data(session):
+        for block, box, text in _texts(r["block"]):
+            room_boxes.append((r["id"], box, text))
+    for i in range(len(room_boxes)):
+        for j in range(i + 1, len(room_boxes)):
+            a, b = room_boxes[i][1], room_boxes[j][1]
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                add("room_text_overlap", "warn",
+                    "房间文字重叠：%s「%s」× %s「%s」"
+                    % (room_boxes[i][0], room_boxes[i][2],
+                       room_boxes[j][0], room_boxes[j][2]))
+
+    # 4) 尺寸文字压轴号圈
+    circles = []
+    for e in session.components("AA_AXGRID_"):
+        for g in block_geometry(session.path, e["geometry"]["block"]):
+            if g["type"] == "CIRCLE" and g.get("pts"):
+                circles.append((g["pts"][0][0], g["pts"][0][1], float(g.get("r") or 0)))
+    dim_h = annot_size(2.5, sc)
+    if circles:
+        for e in session.entities().get("entities", []):
+            if e.get("type") != "Dimension":
+                continue
+            mid = (e.get("geometry") or {}).get("textMid")
+            if not mid:
+                continue
+            for cx, cy, r in circles:
+                if math.dist((mid["x"], mid["y"]), (cx, cy)) <= r + dim_h / 2.0:
+                    add("dim_over_axis", "warn",
+                        "尺寸文字 %.0f 压在轴号圈里（圈心 %.0f, %.0f）"
+                        % (float((e.get("geometry") or {}).get("measurement") or 0), cx, cy),
+                        handles=[e.get("handle", "")])
+                    break
+
+    # 5) 图形外廓是否在图幅内框里
+    ext = drawing_extent(session, pad=0.0)
+    for e in session.components("AA_SHEET_"):
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in e["geometry"].get("attribs", [])}
+        lay = sheet_layout(attrs.get("AA_SIZE", "A3"),
+                           float(attrs.get("AA_SCALE", "100") or 100))
+        ip = e["geometry"]["insert"]
+        x0, y0 = ip["x"], ip["y"]        # insert 点是内框左下角
+        x1, y1 = x0 + lay["inner_w"], y0 + lay["inner_h"]
+        if ext and (ext[0] < x0 - tol or ext[1] < y0 - tol
+                    or ext[2] > x1 + tol or ext[3] > y1 + tol):
+            add("outside_sheet", "error",
+                "图形外廓超出图幅 %s 的外框" % attrs.get("AA_ID", e["geometry"]["block"]),
+                handles=[e.get("handle", "")], detail="ext=%r sheet=%r" % (ext, (x0, y0, x1, y1)))
+
+    by_kind: dict[str, int] = {}
+    for it in issues:
+        by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+    return {"issues": issues, "count": len(issues), "by_kind": by_kind,
+            "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc}
 
 
 def sheet_window(session: Session, sheet_id: str) -> list[float]:

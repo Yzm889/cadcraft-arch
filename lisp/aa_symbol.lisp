@@ -38,6 +38,81 @@
                    aa:*lay-name*)))
   (aa:hs))
 
+;; (aa:elev x y val h th)
+;; 标高符号（GB/T 50001 习惯）：等腰直角三角，尖端指向标注面
+;;   (x,y) 尖端；h 三角高（3mm@比例）；th 数字字高（2.5mm@比例）
+(defun aa:elev (x y val h th / p1 p2 p3 xt)
+  (aa:begin)
+  (setq p1 (list x y 0.0)
+        p2 (list (- x h) (+ y h) 0.0)
+        p3 (list (+ x h) (+ y h) 0.0))
+  (aa:mkline p1 p2 aa:*lay-sheet*)
+  (aa:mkline p2 p3 aa:*lay-sheet*)
+  (aa:mkline p3 p1 aa:*lay-sheet*)
+  ;; 底边向右引出短基线，数字写在基线上方
+  (aa:mkline p3 (list (+ x h (* 1.6 h)) (+ y h) 0.0) aa:*lay-name*)
+  (aa:mktext (list (+ x h (* 0.35 h)) (+ y h (* 0.55 th)) 0.0)
+             val aa:*lay-name* th)
+  (aa:hs))
+
+;; (aa:idx x y d n1 n2 th)
+;; 索引符号：直径 d 的圆 + 水平直径线；上半写详图编号，下半写图号
+(defun aa:idx (x y d n1 n2 th / r w1 w2)
+  (aa:begin)
+  (setq r (/ (float d) 2.0)
+        w1 (aa:text-w n1 th)
+        w2 (aa:text-w n2 th))
+  (aa:mkcircle (aa:pt x y) r aa:*lay-name*)
+  (aa:mkline (aa:pt (- x r) y) (aa:pt (+ x r) y) aa:*lay-name*)
+  (aa:mktext (aa:pt (- x (/ w1 2.0)) (+ y (* 0.18 th)))
+             n1 aa:*lay-name* th)
+  (aa:mktext (aa:pt (- x (/ w2 2.0)) (- y (* 1.05 th)))
+             n2 aa:*lay-name* th)
+  (aa:hs))
+
+;; (aa:section x1 y1 x2 y2 vx vy no seg d th)
+;; 剖切符号（GB/T 50001）：剖切位置线只画两端两段粗线（seg 6~10mm，不与图面线条相接），
+;; 两端各一条垂直的投射方向线（d 4~6mm），编号 no-no 写在两条方向线端部。
+;; 编号按投射方向对齐：左右投射时数字在端部外侧，上下投射时数字在端部上方/下方居中。
+(defun aa:section (x1 y1 x2 y2 vx vy no seg d th / dx dy len ux uy gap txt w
+                   ax1 ay1 bx1 by1 ax2 ay2 bx2 by2 tx1 ty1 tx2 ty2)
+  (aa:begin)
+  (setq dx (- x2 x1)
+        dy (- y2 y1)
+        len (sqrt (+ (* dx dx) (* dy dy)))
+        ux (/ dx len)
+        uy (/ dy len)
+        gap (* 0.6 th)
+        txt (strcat no "-" no)
+        w (aa:text-w txt th))
+  ;; 位置线：起点处向终点方向一段，终点处向起点方向一段
+  (setq ax1 x1 ay1 y1
+        bx1 (+ x1 (* ux seg)) by1 (+ y1 (* uy seg))
+        ax2 x2 ay2 y2
+        bx2 (- x2 (* ux seg)) by2 (- y2 (* uy seg)))
+  (aa:mkline (aa:pt ax1 ay1) (aa:pt bx1 by1) aa:*lay-sheet*)
+  (aa:mkline (aa:pt ax2 ay2) (aa:pt bx2 by2) aa:*lay-sheet*)
+  ;; 投射方向线：两端各自垂直位置线
+  (aa:mkline (aa:pt ax1 ay1) (aa:pt (+ ax1 (* vx d)) (+ ay1 (* vy d))) aa:*lay-sheet*)
+  (aa:mkline (aa:pt ax2 ay2) (aa:pt (+ ax2 (* vx d)) (+ ay2 (* vy d))) aa:*lay-sheet*)
+  ;; 编号：横向投射时贴端部外侧；纵向投射时在端部之间居中
+  (setq tx1 (+ ax1 (* vx (+ d gap)))
+        ty1 (+ ay1 (* vy (+ d gap)))
+        tx2 (+ ax2 (* vx (+ d gap)))
+        ty2 (+ ay2 (* vy (+ d gap))))
+  (cond ((< vx 0.0)
+         (setq tx1 (- tx1 w) ty1 (- ty1 (/ th 2.0))
+               tx2 (- tx2 w) ty2 (- ty2 (/ th 2.0))))
+        ((> vx 0.0)
+         (setq ty1 (- ty1 (/ th 2.0)) ty2 (- ty2 (/ th 2.0))))
+        (T
+         (setq tx1 (- tx1 (/ w 2.0)) tx2 (- tx2 (/ w 2.0)))
+         (if (< vy 0.0)
+             (setq ty1 (- ty1 th) ty2 (- ty2 th)))))
+  (aa:mktext (aa:pt tx1 ty1) txt aa:*lay-name* th)
+  (aa:mktext (aa:pt tx2 ty2) txt aa:*lay-name* th)
+  (aa:hs))
+
 ;; (aa:north x y size)  size = 圆直径（1:100 取 2400 => 24mm）
 (defun aa:north (x y size / r w apex l r2 txt)
   (setq r (/ (float size) 2.0)

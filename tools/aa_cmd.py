@@ -42,6 +42,10 @@ from aa_lib import (  # noqa: E402
     create_north_arrow,
     rescale_annotations,
     set_drawing_scale,
+    audit,
+    create_elevation_mark,
+    create_index_mark,
+    create_section_mark,
     drawing_scale,
     export,
     layer_table,
@@ -143,6 +147,33 @@ def main(argv: list[str] | None = None) -> int:
     p_north.add_argument("id")
     p_north.add_argument("--at", required=True, help="圆心 x,y")
     p_north.add_argument("--size", type=float, default=None, help="圆直径（图元单位），默认 2400=24mm@1:100")
+
+    p_elev = sub.add_parser("elev", help="标高符号：三角 + 数值（±0.000 / 3.600）")
+    p_elev.add_argument("path")
+    p_elev.add_argument("id")
+    p_elev.add_argument("--at", required=True, help="标高尖端 x,y（三角尖指向这一点）")
+    p_elev.add_argument("--value", required=True, help="标高值（m），如 0 / 3.6 / -0.45")
+    p_elev.add_argument("--text", default=None, help="直接给文字（覆盖数值格式）")
+
+    p_index = sub.add_parser("index", help="索引符号：圆 + 直径线，上详图编号下图号")
+    p_index.add_argument("path")
+    p_index.add_argument("id")
+    p_index.add_argument("--at", required=True, help="圆心 x,y")
+    p_index.add_argument("--detail", required=True, help="详图编号，如 1 或 5/1")
+    p_index.add_argument("--sheetno", default="—", help="图号（同一张图写 —）")
+
+    p_section = sub.add_parser("section", help="剖切符号：位置线 + 投射方向线 + 编号")
+    p_section.add_argument("path")
+    p_section.add_argument("id")
+    p_section.add_argument("--p1", required=True, help="剖切位置线起点 x,y")
+    p_section.add_argument("--p2", required=True, help="剖切位置线终点 x,y")
+    p_section.add_argument("--dir", default="down", choices=["down", "up", "left", "right"],
+                           help="投射方向（往哪边看）")
+    p_section.add_argument("--no", default="1", help="剖切编号")
+
+    p_audit = sub.add_parser("audit", help="图面自检：墙未接、门窗越界、文字重叠、尺寸压轴号、出图框")
+    p_audit.add_argument("path")
+    p_audit.add_argument("--strict", action="store_true", help="有 error 级问题就返回非零")
 
     p_rescale = sub.add_parser("rescale", help="按新出图比例重画全部注记（轴号/房间名/门窗编号/图名/指北针/尺寸）")
     p_rescale.add_argument("path")
@@ -324,6 +355,22 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "north":
             emit({"ok": True, **create_north_arrow(
                 session, args.id, _pt(args.at), args.size)})
+        elif args.cmd == "elev":
+            emit({"ok": True, **create_elevation_mark(
+                session, args.id, _pt(args.at),
+                args.text if args.text else float(args.value))})
+        elif args.cmd == "index":
+            emit({"ok": True, **create_index_mark(
+                session, args.id, _pt(args.at), args.detail, args.sheetno)})
+        elif args.cmd == "section":
+            emit({"ok": True, **create_section_mark(
+                session, args.id, _pt(args.p1), _pt(args.p2), args.dir, args.no)})
+        elif args.cmd == "audit":
+            res = audit(session)
+            emit({"ok": True, **res})
+            if args.strict and res["errors"]:
+                return 1
+            return 0
         elif args.cmd == "rescale":
             emit({"ok": True, **rescale_annotations(
                 session, args.scale, rebuild_dims=not args.no_dims)})

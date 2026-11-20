@@ -29,14 +29,18 @@
 | 图层标准 | `layers` | 完成 | 11 个标准层开图即建：轴线红 CENTER 0.15、墙白 0.35、门窗青 0.18、标注绿 0.15、图框 0.70、图名 0.25；层被改坏后下次绘制自动纠回，回读 DXF 层表（62/6/370）校验，不符即报错；`--fix` 可批量矫正老图 |
 | 图名标注 | `title` | 完成 | 图名（5mm@1:100）+ 右侧比例（3.5mm）+ 图名下粗线（图框层 0.70）+ 比例下细线；落在 `AA-NAME`，属性存 `AA_TEXT`/`AA_SCALE` |
 | 指北针 | `north` | 完成 | 细线圆（直径 24mm@出图比例）+ 等腰三角指针（尾部宽 3mm），落在 `AA-NAME`，`AA_R` 可回读 |
+| 标高 | `elev` | 完成 | 等腰直角三角（高 3mm@比例）+ 向右短基线，数值 2.5mm 写在**基线之上**；`±0.000 / 3.600 / -0.450` 三位小数米制；`AA_SYM_E001` 块，`AA_VALUE`/`AA_H` 可回读 |
+| 索引 | `index` | 完成 | 直径 10mm 圆 + 水平直径线，上半详图编号、下半图号（同图写 `—`）；`AA_DETAIL`/`AA_SHEETNO` 可回读 |
+| 剖切 | `section` | 完成 | 位置线只画两端两段 6mm 粗线（不与图面线条相接），两端各 5mm 投射方向线，`1-1` 编号两端都写、按投射方向对齐；`direction` 收 down/up/left/right |
+| **图面自检** | `audit` | 完成 | 只报不改：墙端点没接上、门窗超出墙段、房间文字重叠、尺寸压轴号圈、图形超出图幅内框；返回 `issues/count/by_kind/errors`，`--strict` 有 error 级问题时返回 1 |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，25 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，29 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (21 tests)
+python tests/run_all.py     # ALL PASS (23 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -106,6 +110,15 @@ python tools/aa_cmd.py dim out.dxf
 python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图
 python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图 --scale ""
 python tools/aa_cmd.py north out.dxf N001 --at 15500,4300
+
+# 9b2. 图面符号：标高 / 索引 / 剖切（B1，v0.9.8）
+python tools/aa_cmd.py elev out.dxf E001 --at 3000,1200 --value 0
+python tools/aa_cmd.py index out.dxf I001 --at 9100,3800 --detail 1
+python tools/aa_cmd.py section out.dxf S001 --p1 -1400,2400 --p2 12000,2400 --dir down --no 1
+
+# 9b3. 图面自检（只报不改；--strict 有 error 级问题时退出码 1）
+python tools/aa_cmd.py audit out.dxf
+python tools/aa_cmd.py audit out.dxf --strict
 
 # 9c. 已画完再改比例：所有注记按 mm 规格重画（补救路径，正常优先用第 1 步的 --scale）
 python tools/aa_cmd.py rescale out.dxf --scale 50

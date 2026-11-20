@@ -57,7 +57,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.6"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.8"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -412,6 +412,65 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_elev",
+        "description": "标高符号：等腰直角三角（高 3mm）+ 数值（±0.000 / 3.600 / -0.450，m 三位小数）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号", "default": "E001"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "三角尖端 [x, y]（指向所注标高面）"},
+                "value": {"type": "number", "description": "标高值（m），如 0 / 3.6 / -0.45"},
+            },
+            "required": ["path", "at", "value"],
+        },
+    },
+    {
+        "name": "aa_index",
+        "description": "索引符号：直径 10mm 圆 + 水平直径线，上半详图编号、下半图号（同图写 —）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号", "default": "I001"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "圆心 [x, y]"},
+                "detail": {"type": "string", "description": "详图编号，如 1 或 5/1"},
+                "sheetno": {"type": "string", "description": "图号（同一张图写 —）", "default": "—"},
+            },
+            "required": ["path", "at", "detail"],
+        },
+    },
+    {
+        "name": "aa_section",
+        "description": "剖切符号：剖切位置线（粗线）+ 两端投射方向线（5mm）+ 编号 1-1。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号", "default": "S001"},
+                "p1": {"type": "array", "items": {"type": "number"}, "description": "位置线起点 [x, y]"},
+                "p2": {"type": "array", "items": {"type": "number"}, "description": "位置线终点 [x, y]"},
+                "direction": {"type": "string", "enum": ["down", "up", "left", "right"],
+                              "description": "投射方向（往哪边看）", "default": "down"},
+                "no": {"type": "string", "description": "剖切编号", "default": "1"},
+            },
+            "required": ["path", "p1", "p2"],
+        },
+    },
+    {
+        "name": "aa_audit",
+        "description": "图面自检（不改图）：墙端点没接上、门窗超出墙段、房间文字重叠、尺寸压轴号圈、图形超出图幅。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "tol": {"type": "number", "description": "判定容差 mm", "default": 1.0},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_rescale",
         "description": "换出图比例时整批重画注记：轴号圈/字高、房间名、门窗编号、图名、指北针按 mm 规格重算，尺寸标注删掉重画。",
         "inputSchema": {
@@ -550,6 +609,23 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **create_north_arrow(
             s, a.get("id", "N001"), _pt(a["at"], "at"),
             _opt(a.get("size")))}
+
+    if name == "aa_elev":
+        return {"ok": True, **create_elevation_mark(
+            s, a.get("id", "E001"), _pt(a["at"], "at"), _num(a["value"], "value"))}
+
+    if name == "aa_index":
+        return {"ok": True, **create_index_mark(
+            s, a.get("id", "I001"), _pt(a["at"], "at"),
+            a["detail"], a.get("sheetno", "—"))}
+
+    if name == "aa_section":
+        return {"ok": True, **create_section_mark(
+            s, a.get("id", "S001"), _pt(a["p1"], "p1"), _pt(a["p2"], "p2"),
+            a.get("direction", "down"), a.get("no", "1"))}
+
+    if name == "aa_audit":
+        return {"ok": True, **audit(s, _num(a.get("tol", 1.0), "tol"))}
 
     if name == "aa_rescale":
         return {"ok": True, **rescale_annotations(

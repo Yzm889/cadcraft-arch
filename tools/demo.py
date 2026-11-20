@@ -20,6 +20,10 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    create_elevation_mark,
+    create_index_mark,
+    create_section_mark,
+    audit,
     rescale_annotations,
     create_wall,
     drawing_extent,
@@ -86,6 +90,13 @@ def main() -> int:
     # 图面符号：图名（表下方）+ 指北针（平面右上角）
     create_title_mark(sf, "T001", (0.0, -6600.0), "一层平面图", 100)
     create_north_arrow(sf, "N001", (15500.0, 4300.0))
+    # B1 图面符号：室内标高、门窗索引、横贯两室的剖切符号
+    create_elevation_mark(sf, "E001", (3000.0, 1200.0), 0.0)
+    create_index_mark(sf, "I001", (9100.0, 3800.0), "1")
+    create_section_mark(sf, "S001", (-1400.0, 2400.0), (12000.0, 2400.0),
+                        direction="down", no="1")
+    chk = audit(sf)
+    print("audit demo_full:", chk["count"], chk["by_kind"])
     win_full = drawing_extent(sf, pad=1500.0)
     export(sf, OUT / "demo_full.png", win_full)
 
