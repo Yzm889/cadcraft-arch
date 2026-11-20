@@ -2046,6 +2046,8 @@ def create_roof(
     gutter: float = 300.0,
     ridge: str = "X",
     angle: float = 0.0,
+    parapet: float = 0.0,
+    hatch: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """屋顶平面（GB/T 50104 屋顶平面图 + 天正"屋顶"做法）。
 
@@ -2053,9 +2055,13 @@ def create_roof(
     `kind`：FLAT 平屋顶（檐沟 + 四角雨水口 + 南北找坡）/
             GABLE 双坡（正脊 + 两坡）/ HIP 四坡（正脊 + 四条 45° 斜脊）/ SHED 单坡。
     `overhang` 檐口外挑；`gutter` 檐沟宽；`ridge` 屋脊方向 X/Y；`angle` 整体旋转。
+    `parapet` 女儿墙厚（0 = 不画，只有平屋顶能画）：平面里画两条闭合矩形——
+    外圈是压顶外沿（比屋面轮廓外扩 60 的构造挑出），内圈是女儿墙内皮（轮廓内缩墙厚）。
+    `hatch` 上人孔 `{x, y, size}`（x/y 相对 at 的屋面坐标，size 边长，常见 700）：
+    画方框 + 对角斜线 + "上人孔" 注字，必须落在屋面净区里。
 
     图形落 `AA-ROOF`（白 7 / 0.25）与 `AA-ROOF-ARROW`（绿 3 / 0.18），
-    找坡箭头一律指向下坡（檐口 / 檐沟）。暂不画天沟、女儿墙压顶、上人孔、坡度文字。
+    找坡箭头一律指向下坡（檐口 / 檐沟）。暂不做坡屋顶内天沟与坡度文字。
     """
     block = "AA_ROOF_" + roof_id
     if session.block_exists(block):
@@ -2081,6 +2087,32 @@ def create_roof(
     if kind_u in ("GABLE", "HIP") and ridge_u == "X" and depth < 1000.0:
         raise CadError("拒绝写入：屋脊沿 X 时进深太小（收到 %s），画不出两坡" % depth)
     angle = float(angle) % 360.0
+    parapet = float(parapet)
+    if parapet < 0:
+        raise CadError("拒绝写入：女儿墙厚不能为负（收到 %s）" % parapet)
+    if parapet > 0 and kind_u != "FLAT":
+        raise CadError("拒绝写入：女儿墙只在平屋顶平面上画（当前 %s）" % kind_u)
+    if parapet > 0 and 2.0 * parapet >= min(width, depth):
+        raise CadError("拒绝写入：女儿墙厚 %s 太大，屋面已经没有净宽" % parapet)
+    hx, hy, hs = 0.0, 0.0, 0.0
+    if hatch:
+        h = dict(hatch) if isinstance(hatch, dict) else {}
+        if not h:
+            raise CadError("上人孔要写成 {x, y, size}（收到 %r）" % (hatch,))
+        hx, hy = float(h.get("x", 0.0)), float(h.get("y", 0.0))
+        hs = float(h.get("size", 700.0))
+        if hs <= 0:
+            raise CadError("拒绝写入：上人孔边长必须为正（收到 %s）" % hs)
+        if kind_u == "FLAT":
+            m = max(overhang + gutter, parapet)
+        elif kind_u == "SHED":
+            m = max(overhang, gutter)
+        else:
+            m = overhang
+        if (hx - hs / 2.0 < m or hy - hs / 2.0 < m
+                or hx + hs / 2.0 > width - m or hy + hs / 2.0 > depth - m):
+            raise CadError("拒绝写入：上人孔 %s×%s @(%s,%s) 落在屋面净区之外"
+                           % (hs, hs, hx, hy))
 
     session.ensure_layers([LAYERS["roof"], LAYERS["roofarrow"]])
     sc = drawing_scale(session)
@@ -2088,8 +2120,9 @@ def create_roof(
     kind_code = {"FLAT": 0, "GABLE": 1, "HIP": 2, "SHED": 3}[kind_u]
     ridgex = 1 if ridge_u == "X" else 0
     before = session.snapshot()
-    session.lisp('(aa:roof %.4f %.4f %.4f %.4f %d %d %.6f)'
-                 % (width, depth, overhang, gutter, kind_code, ridgex, lh),
+    session.lisp('(aa:roof %.4f %.4f %.4f %.4f %d %d %.6f %.4f %.4f %.4f %.4f)'
+                 % (width, depth, overhang, gutter, kind_code, ridgex, lh,
+                    parapet, hx, hy, hs),
                  libraries=("aa_core.lisp", "aa_roof.lisp"))
     handles = session.new_handles(before)
     if not handles:
@@ -2109,6 +2142,8 @@ def create_roof(
         ("AA_RIDGE", "ridge direction", ridge_u),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_AREA", "plan area incl overhang", "%.4f" % area),
+        ("AA_PARAPET", "parapet thickness", "%.4f" % parapet),
+        ("AA_HATCH", "roof access hatch", "%.4f,%.4f,%.4f" % (hx, hy, hs)),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
     ]
@@ -2123,6 +2158,7 @@ def create_roof(
     return {"block": block, "handle": handle, "kind": kind_u, "width": width,
             "depth": depth, "overhang": overhang, "gutter": gutter,
             "ridge": ridge_u, "angle": angle, "area": area,
+            "parapet": parapet, "hatch": (hx, hy, hs) if hs > 0 else None,
             "outer_w": outer_w, "outer_d": outer_d, "geom_handles": handles}
 
 

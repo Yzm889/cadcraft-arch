@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.28"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.29"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -654,6 +654,14 @@ TOOLS: list[dict[str, Any]] = [
                 "ridge": {"type": "string", "enum": ["X", "Y"],
                           "description": "屋脊方向（坡屋顶用）", "default": "X"},
                 "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+                "parapet": {"type": "number", "description": "女儿墙厚 mm（0=不画，只有平屋顶能画；画压顶外沿 + 墙内皮两条闭合矩形）", "default": 0},
+                "hatch": {"type": "object", "description": "上人孔 {x, y, size}：x/y 是屋面坐标（相对 at），size 边长常见 700，画方框 + 对角斜线 + 注字",
+                          "properties": {
+                              "x": {"type": "number"},
+                              "y": {"type": "number"},
+                              "size": {"type": "number", "default": 700},
+                          },
+                          "required": ["x", "y"]},
             },
             "required": ["path", "id", "at"],
         },
@@ -975,7 +983,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             s, a["id"], _pt(a["at"], "at"), a.get("kind", "FLAT"),
             _num(a.get("width", 6000), "width"), _num(a.get("depth", 4000), "depth"),
             _num(a.get("overhang", 600), "overhang"), _num(a.get("gutter", 300), "gutter"),
-            a.get("ridge", "X"), _num(a.get("angle", 0.0), "angle"))}
+            a.get("ridge", "X"), _num(a.get("angle", 0.0), "angle"),
+            _num(a.get("parapet", 0), "parapet"), a.get("hatch") or {})}
 
     if name == "aa_elevation":
         return {"ok": True, **create_elevation(

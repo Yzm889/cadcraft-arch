@@ -205,6 +205,10 @@ def main(argv: list[str] | None = None) -> int:
     p_roof.add_argument("--ridge", default="x", choices=["x", "y"],
                         help="屋脊方向：x 沿宽向 / y 沿进深向（坡屋顶用）")
     p_roof.add_argument("--angle", type=float, default=0.0, help="整体旋转（度，0=宽边水平）")
+    p_roof.add_argument("--parapet", type=float, default=0.0,
+                        help="女儿墙厚（mm，0=不画，只有平屋顶能画）")
+    p_roof.add_argument("--hatch", default="",
+                        help="上人孔 \"x,y,size\"（屋面坐标，size 常见 700）")
 
     p_elevation = sub.add_parser("elevation",
                                  help="建筑立面：按楼层 + 门窗生成（落 AA-ELEV）")
@@ -501,9 +505,17 @@ def main(argv: list[str] | None = None) -> int:
                 args.tread, args.rise, args.well, args.landing, args.angle,
                 args.level, args.side)})
         elif args.cmd == "roof":
+            hatch = {}
+            if args.hatch:
+                parts = [p.strip() for p in args.hatch.split(",")]
+                if len(parts) < 2:
+                    raise SystemExit("--hatch 要写成 \"x,y,size\"（收到 %r）" % args.hatch)
+                hatch = {"x": float(parts[0]), "y": float(parts[1]),
+                         "size": float(parts[2]) if len(parts) > 2 and parts[2] else 700.0}
             emit({"ok": True, **create_roof(
                 session, args.id, _pt(args.at), args.kind, args.w, args.d,
-                args.oh, args.gutter, args.ridge, args.angle)})
+                args.oh, args.gutter, args.ridge, args.angle,
+                args.parapet, hatch)})
         elif args.cmd == "elevation":
             floors = []
             for spec in args.floor:

@@ -88,6 +88,31 @@ def main() -> int:
         else:
             raise AssertionError("类型 %r 应被拒绝" % bad)
 
+    # 女儿墙（压顶外沿 + 墙内皮）+ 上人孔（v1.0.29）
+    guarded = create_roof(s, "RF6", (20000.0, 6000.0), "FLAT", 6000.0, 4000.0,
+                          parapet=240.0, hatch={"x": 3000.0, "y": 2000.0,
+                                                "size": 700.0})
+    assert guarded["parapet"] == 240.0 and guarded["hatch"] == (3000.0, 2000.0, 700.0), guarded
+    g = block_geometry(path, "AA_ROOF_RF6")
+    np, nl, ns = kinds(g)
+    # 6 原有（轮廓 + 檐沟 + 4 雨水口）+ 2 女儿墙 + 1 上人孔方框 = 9 多段线
+    # 6 原有 + 1 上人孔对角斜线 = 7 直线；2 箭头；1 注字
+    assert (np, nl, ns) == (9, 7, 2), (np, nl, ns)
+    assert sum(1 for x in g if x["type"] == "TEXT") == 1, [(x["type"]) for x in g]
+    attrs = s.attributes("AA_ROOF_RF6")
+    assert attrs["AA_PARAPET"] == "240.0000" and attrs["AA_HATCH"] == "3000.0000,2000.0000,700.0000", attrs
+
+    # 拒绝
+    for kw, msg in (({"parapet": 240.0}, "女儿墙"),
+                    ({"hatch": {"x": 100.0, "y": 100.0, "size": 700.0}}, "屋面净区")):
+        roof_kind = "GABLE" if "parapet" in kw else "FLAT"
+        try:
+            create_roof(s, "RFY", (0.0, 0.0), roof_kind, **kw)
+        except CadError as e:
+            assert msg in str(e), e
+        else:
+            raise AssertionError("%r 应被拒绝" % (kw,))
+
     for kw, msg in (({"width": 0.0}, "屋面宽与进深"),
                     ({"depth": -1.0}, "屋面宽与进深"),
                     ({"overhang": -10.0}, "檐口外挑"),
