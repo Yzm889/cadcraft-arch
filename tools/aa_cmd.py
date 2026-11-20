@@ -46,6 +46,7 @@ from aa_lib import (  # noqa: E402
     create_stair,
     create_floor_table,
 create_roof,
+create_elevation,
     read_floors,
     rescale_annotations,
     set_drawing_scale,
@@ -203,6 +204,24 @@ def main(argv: list[str] | None = None) -> int:
     p_roof.add_argument("--ridge", default="x", choices=["x", "y"],
                         help="屋脊方向：x 沿宽向 / y 沿进深向（坡屋顶用）")
     p_roof.add_argument("--angle", type=float, default=0.0, help="整体旋转（度，0=宽边水平）")
+
+    p_elevation = sub.add_parser("elevation",
+                                 help="建筑立面：按楼层 + 门窗生成（落 AA-ELEV）")
+    p_elevation.add_argument("path")
+    p_elevation.add_argument("id")
+    p_elevation.add_argument("--at", required=True, help="立面左端 ±0.000 地面点 x,y")
+    p_elevation.add_argument("--w", type=float, required=True, help="立面宽度 mm")
+    p_elevation.add_argument("--floor", action="append", default=[],
+                             help='自下而上每层："层高[,标高mm[,层号[,层名]]]"')
+    p_elevation.add_argument("--open", action="append", default=[],
+                             help='门窗："层号,x,w,h,窗台高[,WINDOW|DOOR]"')
+    p_elevation.add_argument("--roof", default="flat", choices=["flat", "gable", "none"],
+                             help="屋顶：flat 平屋顶 / gable 双坡 / none 不加")
+    p_elevation.add_argument("--parapet", type=float, default=1200.0, help="女儿墙高（mm）")
+    p_elevation.add_argument("--rise", type=float, default=0.0, help="双坡脊高（mm）")
+    p_elevation.add_argument("--oh", type=float, default=600.0, help="檐口外挑（mm）")
+    p_elevation.add_argument("--no-marks", action="store_true", help="不注标高")
+    p_elevation.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -448,6 +467,33 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_roof(
                 session, args.id, _pt(args.at), args.kind, args.w, args.d,
                 args.oh, args.gutter, args.ridge, args.angle)})
+        elif args.cmd == "elevation":
+            floors = []
+            for spec in args.floor:
+                parts = [p.strip() for p in spec.split(",")]
+                row = {"height": parts[0]}
+                if len(parts) > 1 and parts[1]:
+                    row["elev"] = parts[1]
+                if len(parts) > 2 and parts[2]:
+                    row["no"] = parts[2]
+                if len(parts) > 3 and parts[3]:
+                    row["name"] = parts[3]
+                floors.append(row)
+            ops = []
+            for spec in args.open:
+                parts = [p.strip() for p in spec.split(",")]
+                while len(parts) < 5:
+                    parts.append("0")
+                op = {"floor": int(parts[0]), "x": float(parts[1]),
+                      "w": float(parts[2]), "h": float(parts[3]),
+                      "sill": float(parts[4])}
+                if len(parts) > 5 and parts[5]:
+                    op["kind"] = parts[5]
+                ops.append(op)
+            emit({"ok": True, **create_elevation(
+                session, args.id, _pt(args.at), args.w, floors, ops,
+                args.roof, args.parapet, args.rise, args.oh,
+                not args.no_marks, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

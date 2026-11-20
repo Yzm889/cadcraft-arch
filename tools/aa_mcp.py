@@ -37,7 +37,8 @@ from aa_lib import (  # noqa: E402
     create_step,
     create_apron,
     create_stair,
-create_roof,
+    create_roof,
+    create_elevation,
     create_floor_table,
     read_floors,
     create_opening,
@@ -66,7 +67,7 @@ create_roof,
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.15"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.16"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -657,6 +658,50 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_elevation",
+        "description": "建筑立面：按楼层数据 + 门窗生成地坪线/轮廓/楼层线/门窗/女儿墙或山墙/标高，顶层高可回读；供后续剖面复用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "立面编号，如图纸唯一 E1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "立面左端 ±0.000 地面点 [x, y]"},
+                "width": {"type": "number", "description": "立面展开宽度 mm"},
+                "floors": {"type": "array", "description": "自下而上每层 {height, elev?, no?, name?}",
+                           "items": {"type": "object",
+                                     "properties": {
+                                         "height": {"type": "number", "description": "层高 mm"},
+                                         "elev": {"type": "number", "description": "标高 mm，省略则累加"},
+                                         "no": {"type": "string", "description": "层号"},
+                                         "name": {"type": "string", "description": "层名"},
+                                     },
+                                     "required": ["height"]}},
+                "openings": {"type": "array",
+                             "description": "门窗 {floor(1起), x(左距), w, h, sill, kind: WINDOW/DOOR}",
+                             "items": {"type": "object",
+                                       "properties": {
+                                           "floor": {"type": "integer", "default": 1},
+                                           "x": {"type": "number"},
+                                           "w": {"type": "number"},
+                                           "h": {"type": "number"},
+                                           "sill": {"type": "number", "default": 0},
+                                           "kind": {"type": "string", "enum": ["WINDOW", "DOOR"],
+                                                    "default": "WINDOW"},
+                                       },
+                                       "required": ["x", "w", "h"]}},
+                "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
+                         "description": "平屋顶（女儿墙+压顶）/ 双坡（山墙三角）/ 不加", "default": "FLAT"},
+                "parapet": {"type": "number", "description": "女儿墙高 mm", "default": 1200},
+                "rise": {"type": "number", "description": "双坡脊高 mm", "default": 0},
+                "overhang": {"type": "number", "description": "檐口外挑 mm", "default": 600},
+                "marks": {"type": "boolean", "description": "是否注标高", "default": True},
+                "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+            },
+            "required": ["path", "id", "at", "width", "floors"],
+        },
+    },
+    {
         "name": "aa_floor_table",
         "description": "楼层表：写入各层层号/层高/平面图号/层名，起算标高自动累加，画成表并落成 FLOOR_TABLE 构件；立面、剖面后续据此生成。",
         "inputSchema": {
@@ -835,6 +880,14 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("width", 6000), "width"), _num(a.get("depth", 4000), "depth"),
             _num(a.get("overhang", 600), "overhang"), _num(a.get("gutter", 300), "gutter"),
             a.get("ridge", "X"), _num(a.get("angle", 0.0), "angle"))}
+
+    if name == "aa_elevation":
+        return {"ok": True, **create_elevation(
+            s, a["id"], _pt(a["at"], "at"), _num(a["width"], "width"),
+            a["floors"], a.get("openings", []) or [], a.get("roof", "FLAT"),
+            _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
+            _num(a.get("overhang", 600), "overhang"),
+            bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"))}
 
     if name == "aa_floor_table":
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],

@@ -50,6 +50,8 @@ DEFAULT_LAYERS = {
     "stairbreak": "AA-STAIR-BREAK",
     "roof": "AA-ROOF",
     "roofarrow": "AA-ROOF-ARROW",
+    "elev": "AA-ELEV",
+    "elevdetail": "AA-ELEV-DETAIL",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -78,6 +80,8 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "stairbreak": {"color": 7, "linetype": "DASHED", "lineweight": 0.18},
     "roof":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "roofarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
+    "elev":     {"color": 7, "linetype": "Continuous", "lineweight": 0.35},
+    "elevdetail": {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -333,7 +337,7 @@ class Session:
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
             for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
-                      "stairarrow", "stairtext", "stairbreak", "roof", "roofarrow", "sheet", "title", "table")
+                      "stairarrow", "stairtext", "stairbreak", "roof", "roofarrow", "elev", "elevdetail", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -2118,6 +2122,222 @@ def create_roof(
             "depth": depth, "overhang": overhang, "gutter": gutter,
             "ridge": ridge_u, "angle": angle, "area": area,
             "outer_w": outer_w, "outer_d": outer_d, "geom_handles": handles}
+
+
+def _norm_floors(floors: Sequence[Any]) -> list[dict[str, Any]]:
+    """立面/剖面用的楼层数据：接受 {height,elev?} 或 {no,elev,height,plan,name}，
+    标高缺省按层高自下而上累加（首层 ±0.000）。"""
+    rows: list[dict[str, Any]] = []
+    prev_top = 0.0
+    for i, f in enumerate(floors):
+        if not isinstance(f, dict):
+            raise CadError("楼层数据必须是对象（收到 %r）" % (f,))
+        h = float(f.get("height", 0.0) or 0.0)
+        if h <= 0:
+            raise CadError("第 %d 层层高必须大于 0（收到 %s）" % (i + 1, h))
+        if f.get("elev") is None:
+            e = 0.0 if i == 0 else prev_top
+        else:
+            e = float(f["elev"])
+        if i and e <= rows[-1]["elev"] + 1e-6:
+            raise CadError("第 %d 层标高必须高于下一层（%s <= %s）"
+                           % (i + 1, e, rows[-1]["elev"]))
+        rows.append({"no": str(f.get("no", i + 1)), "elev": e, "height": h,
+                     "plan": str(f.get("plan", "")), "name": str(f.get("name", ""))})
+        prev_top = e + h
+    return rows
+
+
+ELEV_ROOFS = ("FLAT", "GABLE", "NONE")
+
+
+def create_elevation(
+    session: Session,
+    elev_id: str,
+    at: tuple[float, float],
+    width: float,
+    floors: Sequence[Any],
+    openings: Sequence[dict[str, Any]] = (),
+    roof: str = "FLAT",
+    parapet: float = 1200.0,
+    rise: float = 0.0,
+    overhang: float = 600.0,
+    marks: bool = True,
+    angle: float = 0.0,
+) -> dict[str, Any]:
+    """建筑立面（GB/T 50104 立面图做法，按楼层表数据生成）。
+
+    `at` = 立面左端 ±0.000 地面点；`width` = 立面展开宽度；`floors` = 自下而上
+    [{height, elev?, no?, plan?, name?}]（也可直接喂 `read_floors` 的结果）。
+    `openings` = [{floor: 1 起层号, x: 洞口左边距, w, h, sill, kind: WINDOW/DOOR}]，
+    只做直立矩形洞口（窗加中横线，门只描框）。
+    `roof`：FLAT 平屋顶（挑檐 + 女儿墙 + 压顶）/ GABLE 双坡（山墙三角）/ NONE 无。
+    `marks=True` 时每道楼层线右侧注标高（±0.000 / 3.600 …）。
+
+    图元：地坪线粗、外轮廓粗落 `AA-ELEV`；楼层线、门窗、女儿墙压顶落
+    `AA-ELEV-DETAIL`。暂不做阳台、雨篷、檐口厚度、材料图例、轴号。
+    """
+    block = "AA_ELEVATION_" + elev_id
+    if session.block_exists(block):
+        raise CadError("立面 %s 已存在，请换编号" % elev_id)
+    width = float(width)
+    if width <= 0:
+        raise CadError("拒绝写入：立面宽度必须为正实数（收到 %s）" % width)
+    rows = _norm_floors(floors)
+    roof_u = str(roof).upper()
+    if roof_u not in ELEV_ROOFS:
+        raise CadError("屋顶形式只能是 FLAT / GABLE / NONE（收到 %r）" % roof)
+    parapet, rise, overhang = float(parapet), float(rise), float(overhang)
+    if roof_u == "FLAT" and parapet < 0:
+        raise CadError("拒绝写入：女儿墙高不能为负（收到 %s）" % parapet)
+    if roof_u == "GABLE":
+        if rise <= 0:
+            raise CadError("拒绝写入：双坡屋顶的脊高必须为正（收到 %s）" % rise)
+        if overhang < 0:
+            raise CadError("拒绝写入：檐口外挑不能为负（收到 %s）" % overhang)
+    angle = float(angle) % 360.0
+
+    ops: list[dict[str, Any]] = []
+    for i, op in enumerate(openings):
+        if not isinstance(op, dict):
+            raise CadError("门窗数据必须是对象（收到 %r）" % (op,))
+        fl = int(op.get("floor", 1) or 1)
+        if not (1 <= fl <= len(rows)):
+            raise CadError("第 %d 个洞口层号 %s 超出 1..%d" % (i + 1, fl, len(rows)))
+        x, w = float(op.get("x", 0.0)), float(op.get("w", 0.0))
+        hh, sill = float(op.get("h", 0.0)), float(op.get("sill", 0.0))
+        if w <= 0 or hh <= 0:
+            raise CadError("第 %d 个洞口宽高必须为正（收到 %s / %s）" % (i + 1, w, hh))
+        if x < 0 or x + w > width:
+            raise CadError("第 %d 个洞口超出立面宽度（x=%s w=%s width=%s）"
+                           % (i + 1, x, w, width))
+        if sill < 0:
+            raise CadError("第 %d 个洞口窗台高不能为负（收到 %s）" % (i + 1, sill))
+        kind = str(op.get("kind", "WINDOW")).upper()
+        if kind not in ("WINDOW", "DOOR"):
+            raise CadError("第 %d 个洞口类型只能是 WINDOW / DOOR（收到 %r）" % (i + 1, kind))
+        if sill + hh > rows[fl - 1]["height"] + 1e-6:
+            raise CadError("第 %d 个洞口（%s）高出本层：sill %s + h %s > 层高 %s"
+                           % (i + 1, kind, sill, hh, rows[fl - 1]["height"]))
+        ops.append({"floor": fl, "x": x, "w": w, "h": hh, "sill": sill,
+                    "kind": kind})
+
+    # 同层洞口不许叠在一起（叠了就是错图，早报早改）
+    for i in range(len(ops)):
+        for j in range(i + 1, len(ops)):
+            a, b = ops[i], ops[j]
+            if a["floor"] != b["floor"]:
+                continue
+            ax1, ax2 = a["x"], a["x"] + a["w"]
+            bx1, bx2 = b["x"], b["x"] + b["w"]
+            ay1, ay2 = a["sill"], a["sill"] + a["h"]
+            by1, by2 = b["sill"], b["sill"] + b["h"]
+            if min(ax2, bx2) - max(ax1, bx1) > 1e-6 and \
+                    min(ay2, by2) - max(ay1, by1) > 1e-6:
+                raise CadError("第 %d 层第 %d 个洞口与第 %d 个洞口位置重叠"
+                               % (a["floor"], i + 1, j + 1))
+
+    top = rows[-1]["elev"] + rows[-1]["height"]
+    if roof_u == "FLAT":
+        total_top = top + parapet
+    elif roof_u == "GABLE":
+        total_top = top + rise
+    else:
+        total_top = top
+
+    session.ensure_layers([LAYERS["elev"], LAYERS["elevdetail"], LAYERS["name"]])
+    sc = drawing_scale(session)
+    lh = annot_size(3.0, sc)
+    th = annot_size(2.5, sc)
+    lev = LAYERS["elev"]
+    det = LAYERS["elevdetail"]
+    ext = annot_size(5.0, sc)
+
+    def L(x1, y1, x2, y2, lay):
+        return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
+
+    code: list[str] = []
+    # 地坪线（两端出头）+ 两侧外轮廓（有女儿墙时轮廓到压顶）
+    top_line = top + parapet if (roof_u == "FLAT" and parapet > 0) else top
+    code.append(L(-ext, 0.0, width + ext, 0.0, lev))
+    code.append(L(0.0, 0.0, 0.0, top_line, lev))
+    code.append(L(width, 0.0, width, top_line, lev))
+    # 楼层线（首层地面已有地坪线，其余每层楼面一条）
+    for r in rows[1:]:
+        code.append(L(0.0, r["elev"], width, r["elev"], det))
+    # 屋顶
+    if roof_u == "FLAT":
+        oh = max(overhang, 0.0)
+        if parapet > 0:
+            # 女儿墙：与外墙同宽，只画压顶（不画挑檐，否则立面会长出一个大帽子）
+            code.append(L(0.0, top + parapet, width, top + parapet, lev))
+            cap = annot_size(1.5, sc)
+            if parapet >= 2 * cap:
+                code.append(L(0.0, top + parapet - cap, width, top + parapet - cap, det))
+        else:
+            code.append(L(-oh, top, width + oh, top, lev))     # 挑檐板线
+    elif roof_u == "GABLE":
+        oh = max(overhang, 0.0)
+        code.append(L(-oh, top, width + oh, top, lev))               # 檐口
+        code.append(L(-oh, top, width / 2.0, top + rise, lev))       # 左坡
+        code.append(L(width / 2.0, top + rise, width + oh, top, lev))  # 右坡
+    # 门窗
+    for k, op in enumerate(ops):
+        base = rows[op["floor"] - 1]["elev"] + op["sill"]
+        y2 = base + op["h"]
+        x1, x2 = op["x"], op["x"] + op["w"]
+        code.append(L(x1, base, x2, base, det))
+        code.append(L(x2, base, x2, y2, det))
+        code.append(L(x2, y2, x1, y2, det))
+        code.append(L(x1, y2, x1, base, det))
+        if op["kind"] == "WINDOW":
+            code.append(L(x1, base + op["h"] * 0.55, x2, base + op["h"] * 0.55, det))
+    # 标高（右侧，尖端对着楼层线）
+    if marks:
+        mx = width + annot_size(8.0, sc)
+        for r in rows:
+            code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                        % (mx, r["elev"], format_elevation(r["elev"] / 1000.0), lh, th))
+
+    session.ensure_layers([LAYERS["sheet"], LAYERS["name"]])
+    before = session.snapshot()
+    session.lisp(" ".join(code),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("立面没有生成任何图元")
+
+    rows_txt = "~".join("%s~%.4f~%.4f" % (r["no"], r["elev"], r["height"]) for r in rows)
+    att_defs = [
+        ("AA_TYPE", "component type", "ELEVATION"),
+        ("AA_ID", "component id", elev_id),
+        ("AA_W", "facade width", "%.4f" % width),
+        ("AA_FLOORS", "floor count", str(len(rows)),
+        ),
+        ("AA_ROWS", "floor rows", rows_txt),
+        ("AA_TOP", "top elevation", "%.4f" % top),
+        ("AA_TOTAL", "total height incl roof", "%.4f" % total_top),
+        ("AA_ROOF", "roof kind", roof_u),
+        ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
+        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u == "GABLE" else 0.0)),
+        ("AA_OVERHANG", "eave overhang", "%.4f" % overhang),
+        ("AA_OPENINGS", "opening count", str(len(ops))),
+        ("AA_ANGLE", "rotation deg", "%.4f" % angle),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle, layer=LAYERS["elev"])
+    session.expect_attributes(block, {"AA_TYPE": "ELEVATION", "AA_ID": elev_id,
+                                      "AA_ROOF": roof_u,
+                                      "AA_FLOORS": str(len(rows))})
+    return {"block": block, "handle": handle, "width": width,
+            "floors": len(rows), "top": top, "total": total_top,
+            "roof": roof_u, "openings": len(ops), "angle": angle,
+            "rows": rows, "geom_handles": handles}
 
 
 def create_room(
