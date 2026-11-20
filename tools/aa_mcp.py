@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -600,9 +602,121 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["path", "out"],
         },
     },
+    {
+        "name": "aa_batch",
+        "description": "批量事务：按顺序执行多个工具调用，任一失败自动回滚到调用前的图纸状态（零残留），返回逐步结果。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径（各 op 未写 path 时默认用它）"},
+                "ops": {
+                    "type": "array",
+                    "description": "调用列表，每项 {tool: 工具名, args: 参数对象}",
+                    "items": {"type": "object"},
+                },
+                "rollback": {"type": "boolean", "description": "失败时是否回滚（默认 true）", "default": True},
+            },
+            "required": ["path", "ops"],
+        },
+    },
+    {
+        "name": "aa_checkpoint",
+        "description": "检查点：把当前图纸存一份快照到同目录 .aa_snap/，返回可回退的 id。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "label": {"type": "string", "description": "快照标签（可读，如 before-stair）"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_restore",
+        "description": "回退到指定检查点（快照 id 或绝对路径），恢复为当时字节。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "snapshot": {"type": "string", "description": "aa_checkpoint 返回的 id，或快照绝对路径"},
+            },
+            "required": ["path", "snapshot"],
+        },
+    },
 ]
 
 TOOL_NAMES = [t["name"] for t in TOOLS]
+
+SNAP_DIR = ".aa_snap"
+
+
+def _snap_path(path: Path) -> Path:
+    return path.parent / SNAP_DIR
+
+
+def aa_checkpoint(path: str, label: str = "") -> dict[str, Any]:
+    """把图纸复制一份到同目录 .aa_snap/，返回快照文件名（id）。"""
+    p = Path(path)
+    if not p.exists():
+        raise CadError("检查点失败：图纸不存在（%s）" % p)
+    d = _snap_path(p)
+    d.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    base = "%s-%s" % (p.stem, stamp)
+    if label:
+        base += "-" + "".join(c for c in label if c.isalnum() or c in "-_")[:32]
+    target = d / (base + ".dxf")
+    n = 1
+    while target.exists():
+        n += 1
+        target = d / ("%s-%d.dxf" % (base, n))
+    shutil.copy2(p, target)
+    return {"ok": True, "snapshot": str(target), "id": target.name,
+            "bytes": target.stat().st_size}
+
+
+def aa_restore(path: str, snapshot: str) -> dict[str, Any]:
+    """把快照复制回图纸路径（字节级还原）。"""
+    p = Path(path)
+    snap = Path(snapshot)
+    if not snap.is_absolute():
+        snap = _snap_path(p) / snapshot
+    if not snap.exists():
+        raise CadError("回退失败：快照不存在（%s）" % snap)
+    before = p.stat().st_mtime if p.exists() else None
+    shutil.copy2(snap, p)
+    return {"ok": True, "path": str(p), "snapshot": str(snap),
+            "bytes": p.stat().st_size, "mtime_before": before}
+
+
+def aa_batch(path: str, ops: list[dict[str, Any]], rollback: bool = True) -> dict[str, Any]:
+    """在一个事务里顺序执行多个工具调用；任一失败则回滚到调用前（零残留）。
+
+    第 i 项失败时返回 {"ok": False, failed_index, failed_tool, done}，
+    图纸恢复为调用前的字节；前面的成功调用不进结果。
+    """
+    p = Path(path)
+    backup = p.read_bytes() if p.exists() else None
+    done = []
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict) or not op.get("tool"):
+            raise CadError("batch 第 %d 项格式错误：需要 {tool, args}" % i)
+        tool = op["tool"]
+        args = dict(op.get("args") or {})
+        args.setdefault("path", str(p))
+        try:
+            res = call_tool(tool, args)
+        except Exception as exc:
+            if rollback:
+                if backup is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    p.write_bytes(backup)
+            return {"ok": False, "failed_index": i, "failed_tool": tool,
+                    "error": "%s: %s" % (type(exc).__name__, exc),
+                    "done": len(done), "rolled_back": bool(rollback)}
+        done.append({"index": i, "tool": tool, "result": res})
+    return {"ok": True, "done": len(done), "results": done}
 
 
 def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -621,6 +735,15 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         s.new_metric(_num(a["scale"], "scale") if a.get("scale") else None)
         return {"ok": True, "path": str(s.path), "units": "mm",
                 "scale": drawing_scale(s)}
+
+    if name == "aa_batch":
+        return aa_batch(path, a["ops"], bool(a.get("rollback", True)))
+
+    if name == "aa_checkpoint":
+        return aa_checkpoint(path, a.get("label", "") or "")
+
+    if name == "aa_restore":
+        return aa_restore(path, a["snapshot"])
 
     s = _session(path)
 
@@ -818,7 +941,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _tool_result(name: str, args: dict[str, Any]) -> dict[str, Any]:
     try:
         payload = call_tool(name, args)
-        ok = True
+        ok = bool(payload.get("ok", True)) if isinstance(payload, dict) else True
     except CadError as exc:
         payload = {"ok": False, "error": str(exc)}
         ok = False

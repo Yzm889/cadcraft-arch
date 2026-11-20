@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.1，已实测跑通）
+## 现状（v1.0.2，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -37,12 +37,12 @@
 | **图面自检** | `audit` | 完成 | 只报不改：墙端点没接上、门窗超出墙段、房间文字重叠、尺寸压轴号圈、图形超出图幅内框；返回 `issues/count/by_kind/errors`，`--strict` 有 error 级问题时返回 1 |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，32 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，32 个原子工具与 CLI 一一对应，另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (25 tests)
+python tests/run_all.py     # ALL PASS (26 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
