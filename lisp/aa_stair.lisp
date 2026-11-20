@@ -100,9 +100,10 @@
             (aa:mkline (aa:pt (* sgn xlL) y) (aa:pt (* sgn xlR) y) aa:*lay-stair*)
             (aa:mkline (aa:pt (* sgn xrL) y) (aa:pt (* sgn xrR) y) aa:*lay-stair*)
             (setq k (+ k 1)))
-          ;; 两跑都画贯穿杆；第二跑下端带向下箭头
-          (aa:mkline (aa:pt (* sgn xl) (* -0.12 run)) (aa:pt (* sgn xl) dep) aa:*lay-stairarrow*)
-          (aa:mkline (aa:pt (* sgn xr) (* -0.12 run)) (aa:pt (* sgn xr) dep) aa:*lay-stairarrow*)
+          ;; 天正式"绕一圈"箭头：左跑上去 → 横穿上平台 → 右跑下来，第二跑带向下箭头
+          (aa:mkline (aa:pt (* sgn xl) (* -0.12 run)) (aa:pt (* sgn xl) (- dep (* 0.25 p))) aa:*lay-stairarrow*)
+          (aa:mkline (aa:pt (* sgn xl) (- dep (* 0.25 p))) (aa:pt (* sgn xr) (- dep (* 0.25 p))) aa:*lay-stairarrow*)
+          (aa:mkline (aa:pt (* sgn xr) (- dep (* 0.25 p))) (aa:pt (* sgn xr) (* -0.12 run)) aa:*lay-stairarrow*)
           (aa:arrowhead (aa:pt (* sgn xr) (+ p (* 0.30 run)))
                         (aa:pt (* sgn xr) (+ p (* 0.30 run) 320.0)) 80.0 aa:*lay-stairarrow*)
           (aa:mktext-r (aa:pt (* sgn (- xr (* 0.9 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh (+ trot 1.5707963)))
@@ -126,10 +127,12 @@
         (aa:breakline (* sgn (- xlL (* 0.40 t1))) (+ p (* 0.32 run) (* -0.40 t1))
                       (* sgn (+ xlR (* 0.10 t1))) (+ p (* 0.32 run) w (* 0.35 t1))
                       aa:*lay-stairbreak* (* 0.55 lh))
-        (aa:mkline (aa:pt (* sgn xl) (* -0.12 run)) (aa:pt (* sgn xl) (+ p run)) aa:*lay-stairarrow*)
+        ;; 天正式"绕一圈"箭头：左跑上去 → 横穿上平台 → 右跑下来
+        (aa:mkline (aa:pt (* sgn xl) (* -0.12 run)) (aa:pt (* sgn xl) (- dep (* 0.25 p))) aa:*lay-stairarrow*)
+        (aa:mkline (aa:pt (* sgn xl) (- dep (* 0.25 p))) (aa:pt (* sgn xr) (- dep (* 0.25 p))) aa:*lay-stairarrow*)
+        (aa:mkline (aa:pt (* sgn xr) (- dep (* 0.25 p))) (aa:pt (* sgn xr) (* -0.12 run)) aa:*lay-stairarrow*)
         (aa:arrowhead (aa:pt (* sgn xl) (+ p (* 0.55 run)))
                       (aa:pt (* sgn xl) (- (+ p (* 0.55 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
-        (aa:mkline (aa:pt (* sgn xr) (* -0.12 run)) (aa:pt (* sgn xr) dep) aa:*lay-stairarrow*)
         (aa:arrowhead (aa:pt (* sgn xr) (+ p (* 0.45 run)))
                       (aa:pt (* sgn xr) (- (+ p (* 0.45 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
         (aa:mktext-r (aa:pt (* sgn (- xl (* 0.9 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh (+ trot 1.5707963))

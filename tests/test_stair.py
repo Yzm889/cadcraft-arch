@@ -59,7 +59,7 @@ def main() -> int:
     assert dg["steps_total"] == 18, dg
     g2 = block_geometry(path, "AA_STAIR_LT2")
     lines2 = [x for x in g2 if x["type"] == "LINE"]
-    assert len(lines2) == 32, (len(lines2), [x["type"] for x in g2])  # 8 外框/平台/梯井 + 18 踏步 + 4 折断 + 2 杆
+    assert len(lines2) == 33, (len(lines2), [x["type"] for x in g2])  # 8 外框/平台/梯井 + 18 踏步 + 4 折断 + 3 段"绕一圈"箭头
     assert len([x for x in g2 if x["type"] == "SOLID"]) == 2, [x["type"] for x in g2]
     assert len([x for x in g2 if x["type"] == "TEXT"]) == 2, [x["type"] for x in g2]  # 上、下
     attrs2 = s.attributes("AA_STAIR_LT2")
@@ -85,7 +85,7 @@ def main() -> int:
     tp = create_stair(s, "LT4", (18000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
                       well=120.0, landing=1200.0, angle=0.0, level="TOP")
     g4 = block_geometry(path, "AA_STAIR_LT4")
-    assert len([x for x in g4 if x["type"] == "LINE"]) == 28, [x["type"] for x in g4]  # 8 外框 + 18 踏步 + 2 杆
+    assert len([x for x in g4 if x["type"] == "LINE"]) == 29, [x["type"] for x in g4]  # 8 外框 + 18 踏步 + 3 段"绕一圈"箭头
     assert len([x for x in g4 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g4]
     texts4 = [x["text"] for x in g4 if x["type"] == "TEXT"]
     assert texts4 == ["下"], texts4
