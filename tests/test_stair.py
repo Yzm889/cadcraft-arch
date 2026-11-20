@@ -49,7 +49,8 @@ def main() -> int:
     assert attrs1["AA_TYPE"] == "STAIR" and attrs1["AA_ID"] == "LT1", attrs1
     assert attrs1["AA_STEPS"] == "10" and attrs1["AA_STEPS_TOTAL"] == "10", attrs1
     assert abs(float(attrs1["AA_DEPTH"]) - 2800.0) < 1e-6, attrs1
-    assert layer_of_block(path, "AA_STAIR_LT1") - {"0"} == {LAYERS["stair"], LAYERS["stairarrow"]}
+    assert layer_of_block(path, "AA_STAIR_LT1") - {"0"} == {
+        LAYERS["stair"], LAYERS["stairarrow"], LAYERS["stairtext"]}   # 直跑没有剖断线
 
     # 2. 双跑：1200 宽、9 步、井 120、平台 1200 → 深 2×1200+2520 = 4920
     dg = create_stair(s, "LT2", (6000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
@@ -67,6 +68,9 @@ def main() -> int:
     assert abs(float(attrs2["AA_LANDING"]) - 1200.0) < 1e-6, attrs2
     assert abs(float(attrs2["AA_DEPTH"]) - 4920.0) < 1e-6, attrs2
     assert attrs2["AA_LEVEL"] == "MIDDLE" and attrs2["AA_UPSIDE"] == "LEFT", attrs2
+    assert layer_of_block(path, "AA_STAIR_LT2") - {"0"} == {
+        LAYERS["stair"], LAYERS["stairarrow"], LAYERS["stairtext"],
+        LAYERS["stairbreak"]}  # 中层有红剖断线
 
     # 2b. 首层：只画第一跑 + 45° 剖断，无箭头
     fs = create_stair(s, "LT3", (12000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,

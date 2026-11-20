@@ -46,6 +46,8 @@ DEFAULT_LAYERS = {
     "step": "AA-STEP",
     "stair": "AA-STAIR",
     "stairarrow": "AA-STAIR-ARROW",
+    "stairtext": "AA-STAIR-TEXT",
+    "stairbreak": "AA-STAIR-BREAK",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -70,6 +72,8 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "step":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
     "stair":    {"color": 2, "linetype": "Continuous", "lineweight": 0.18},
     "stairarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
+    "stairtext": {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "stairbreak": {"color": 1, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -325,7 +329,7 @@ class Session:
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
             for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
-                      "stairarrow", "sheet", "title", "table")
+                      "stairarrow", "stairtext", "stairbreak", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -1966,7 +1970,8 @@ def create_stair(
         depth = 2.0 * landing + run
         total_steps = steps * 2
 
-    session.ensure_layers([LAYERS["stair"], LAYERS["stairarrow"]])
+    session.ensure_layers([LAYERS["stair"], LAYERS["stairarrow"],
+                            LAYERS["stairtext"], LAYERS["stairbreak"]])
     sc = drawing_scale(session)
     lh = annot_size(2.5, sc)
     rot = (angle - 90.0) % 360.0
