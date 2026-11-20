@@ -42,10 +42,10 @@ def main() -> int:
     # 2) 工具表完整、每项都有 inputSchema 与 description
     tools = rpc("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 45, names
+    assert len(names) == 47, names
     for n in ("aa_new", "aa_axis", "aa_wall", "aa_opening", "aa_room",
               "aa_room_auto", "aa_split", "aa_merge", "aa_set_wall",
-              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
+              "aa_set_opening", "aa_openings", "aa_opening_table", "aa_detail_mark", "aa_opening_detail", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
         assert n in names, n
     for t in tools:
         assert t["inputSchema"]["type"] == "object", t["name"]
@@ -152,6 +152,18 @@ def main() -> int:
                                        "offset": [0, 6000], "prefix": "2"})
     assert is_err and "已有墙" in q["error"], q
 
+    # 5e) 详图：详图符号 14mm + 门窗大样（D001 门 → 1:20 放大 5 倍）
+    is_err, q = call("aa_detail_mark", {"path": str(dxf), "id": "DM1",
+                                        "at": [3000, 900], "detail": "1"})
+    assert not is_err and q["diameter"] == 1400.0 and len(q["geom_handles"]) == 4, q
+    is_err, q = call("aa_opening_detail", {"path": str(dxf), "id": "OD1",
+                                           "at": [0, -9000], "opening": "D001",
+                                           "ratio": 20})
+    assert not is_err and q["kind"] == "DOOR" and q["factor"] == 5.0 and q["dims"] == 2, q
+    is_err, q = call("aa_opening_detail", {"path": str(dxf), "id": "OD1",
+                                           "at": [0, -9000], "opening": "D001"})
+    assert is_err and "已存在" in q["error"], q
+
     # 6) 真走 stdio：拉起子进程，发 initialize + tools/list，读回两行 JSON
     proc = subprocess.Popen([sys.executable, str(MCP), "--serve"],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -166,7 +178,7 @@ def main() -> int:
         lines = [proc.stdout.readline(), proc.stdout.readline()]
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
-        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 45, r2
+        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 47, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:
         proc.stdin.close()

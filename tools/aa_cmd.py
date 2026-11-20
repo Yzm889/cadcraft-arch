@@ -52,6 +52,10 @@ from aa_lib import (  # noqa: E402
     create_stair,
     create_floor_table,
     create_opening_table,
+    create_detail_mark,
+    create_opening_detail,
+    read_detail_mark,
+    read_opening_detail,
     create_roof,
     create_elevation,
     create_section,
@@ -506,6 +510,28 @@ def main(argv: list[str] | None = None) -> int:
     p_copyfloor.add_argument("--offset", default="0,0", help="平移 dx,dy（把新层挪到另一处平面位置）")
     p_copyfloor.add_argument("--prefix", default="", help="新构件编号前缀（如 2 → 2W001）")
 
+    p_dmark = sub.add_parser("detail-mark", help="详图符号：14mm 圆（上半详图编号、下半图纸号）")
+    p_dmark.add_argument("path")
+    p_dmark.add_argument("id")
+    p_dmark.add_argument("--at", default=None, help="圆心 x,y（建符号必给；--show 可省）")
+    p_dmark.add_argument("--detail", default="", help="详图编号（如 1）")
+    p_dmark.add_argument("--sheet", default="—", help="详图所在图纸号（同图为 —）")
+    p_dmark.add_argument("--show", default=None, help="只回读已有详图符号（给符号编号）")
+
+    p_odetail = sub.add_parser("opening-detail",
+                              help="门窗大样：按已画洞口放大重画（默认 1:20），注洞口宽高")
+    p_odetail.add_argument("path")
+    p_odetail.add_argument("id")
+    p_odetail.add_argument("--at", default=None, help="洞口左下角 x,y（建大样必给）")
+    p_odetail.add_argument("--opening", default=None, help="源洞口编号（如 D001）")
+    p_odetail.add_argument("--no", default=None, help="门窗编号（如 C1515）；多樘时须用 --opening")
+    p_odetail.add_argument("--ratio", type=float, default=20.0, help="详图比例分母（默认 20 → 1:20）")
+    p_odetail.add_argument("--factor", type=float, default=None, help="直接给放大倍数（默认 出图比例/详图比例）")
+    p_odetail.add_argument("--wall-depth", type=float, default=240.0, help="两侧墙垛厚度（默认 240）")
+    p_odetail.add_argument("--title", default=None, help="图名；省略用 编号+窗/门大样")
+    p_odetail.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_odetail.add_argument("--show", default=None, help="只回读已有大样（给大样编号）")
+
     args = ap.parse_args(argv)
 
     try:
@@ -805,6 +831,24 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "copy-floor":
             off = [float(v) for v in args.offset.split(",")]
             emit(copy_floor(session, args.src_floor, args.dst_floor, off, args.prefix))
+        elif args.cmd == "detail-mark":
+            if args.show:
+                emit({"ok": True, **read_detail_mark(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建详图符号需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_detail_mark(
+                    session, args.id, _pt(args.at), args.detail, args.sheet)})
+        elif args.cmd == "opening-detail":
+            if args.show:
+                emit({"ok": True, **read_opening_detail(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建门窗大样需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_opening_detail(
+                    session, args.id, _pt(args.at), args.opening, args.no,
+                    args.ratio, args.factor, args.wall_depth, args.title,
+                    not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

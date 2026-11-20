@@ -42,6 +42,10 @@ from aa_lib import (  # noqa: E402
     create_section,
     create_floor_table,
     create_opening_table,
+    create_detail_mark,
+    create_opening_detail,
+    read_detail_mark,
+    read_opening_detail,
     create_sheet_index,
     create_sheet_set,
     copy_floor,
@@ -76,7 +80,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.34"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.35"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -865,6 +869,45 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_detail_mark",
+        "description": "详图符号（GB/T 50001）：直径 14mm 的圆 + 水平直径线，上半写详图编号、下半写图纸号（同图写 —）。与索引符号同画法，区别是直径与 AA_KIND=DETAIL_MARK。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "符号编号，如图纸内唯一 DM1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "圆心 [x, y]"},
+                "detail": {"type": "string", "description": "详图编号，如 1"},
+                "sheet": {"type": "string", "description": "详图所在图纸号；同一张图填 —", "default": "—"},
+                "show": {"type": "string", "description": "只回读已有详图符号：给符号编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_opening_detail",
+        "description": "门窗大样：从图上已画的洞口读宽高窗台高，按 --ratio（默认 1:20）放大重画一幅大样，含洞口/两侧墙垛/框/中梃/亮子/双扇/窗台板与洞口宽高尺寸，图名与比例画在块内；整块落 AA_OD_<编号>，属性回读源洞口与放大倍数。同编号多樘时须用具体洞口编号。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "大样编号，如图纸内唯一 OD1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "洞口左下角 [x, y]"},
+                "opening": {"type": "string", "description": "源洞口编号，如 D001"},
+                "no": {"type": "string", "description": "门窗编号，如 C1515；多樘时须改用 opening"},
+                "ratio": {"type": "number", "description": "详图比例分母，默认 20（1:20）", "default": 20},
+                "factor": {"type": "number", "description": "直接给放大倍数，省略按 出图比例/详图比例"},
+                "wall_depth": {"type": "number", "description": "两侧墙垛厚度，默认 240", "default": 240},
+                "title": {"type": "string", "description": "图名，省略用 编号+窗/门大样"},
+                "dims": {"type": "boolean", "description": "是否注洞口宽高", "default": True},
+                "show": {"type": "string", "description": "只回读已有大样：给大样编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_copy_floor",
         "description": "整层复制：把源层（按墙的 AA_FLOOR 过滤）的墙/门窗/房间按偏移复制到目标层，层号自动改写、门窗宿主墙与房间围合墙同步换号；目标层已有墙则拒绝叠图。楼梯/柱/台阶/散水暂不复制。",
         "inputSchema": {
@@ -1127,6 +1170,28 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_detail_mark":
+        dm = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_detail_mark(dm, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("详图符号需要 id 与 at（或用 show 回读）")
+        return create_detail_mark(dm, a["id"], _pt(a["at"], "at"),
+                                  a.get("detail", ""), a.get("sheet", "—"))
+
+    if name == "aa_opening_detail":
+        od = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_opening_detail(od, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("门窗大样需要 id 与 at（或用 show 回读）")
+        return create_opening_detail(od, a["id"], _pt(a["at"], "at"),
+                                     a.get("opening"), a.get("no"),
+                                     _num(a.get("ratio", 20), "ratio"),
+                                     a.get("factor"),
+                                     _num(a.get("wall_depth", 240), "wall_depth"),
+                                     a.get("title"), bool(a.get("dims", True)))
 
     if name == "aa_copy_floor":
         cf = _session(path)

@@ -6090,3 +6090,293 @@ def rooms_report(session: Session, csv_path: str | Path | None = None,
     return out
 
 
+# ---------------- 详图：详图符号 + 门窗大样（v1.0.35，B7 第四项） ----------------
+
+def create_detail_mark(
+    session: Session,
+    mark_id: str,
+    at: tuple[float, float],
+    detail: str,
+    sheetno: str = "—",
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """详图符号（GB/T 50001）：直径 14mm 粗圆 + 水平直径线，上半详图编号、下半图纸号。
+
+    与索引符号的区别只在直径（索引 10mm、详图 14mm）与 `AA_KIND`，图面画法一致；
+    同一张图上的详图，图纸号写 "—"。
+    """
+    block = "AA_SYM_" + mark_id
+    if session.block_exists(block):
+        raise CadError("符号 %s 已存在，请换编号" % mark_id)
+    det = str(detail).strip()
+    if not det:
+        raise CadError("详图符号必须给详图编号")
+    sc = float(scale) if scale else drawing_scale(session)
+    d = annot_size(14.0, sc)
+    session.ensure_layers([LAYERS["name"]])
+    before = session.snapshot()
+    session.lisp(
+        '(aa:idx %.3f %.3f %.4f "%s" "%s" %.4f)'
+        % (float(at[0]), float(at[1]), d,
+           det.replace('"', "'"), str(sheetno).replace('"', "'"),
+           annot_size(4.0, sc)),
+        libraries=("aa_core.lisp", "aa_symbol.lisp"),
+    )
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("详图符号没有生成任何图元")
+    att_defs = [
+        ("AA_TYPE", "component type", "SYMBOL"),
+        ("AA_ID", "component id", mark_id),
+        ("AA_KIND", "symbol kind", "DETAIL_MARK"),
+        ("AA_DETAIL", "detail no", det),
+        ("AA_SHEETNO", "sheet no", str(sheetno)),
+        ("AA_DIAM", "circle diameter", "%.4f" % d),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["name"])
+    session.expect_attributes(block, {"AA_TYPE": "SYMBOL", "AA_KIND": "DETAIL_MARK",
+                                      "AA_DETAIL": det})
+    return {"block": block, "handle": handle, "kind": "DETAIL_MARK",
+            "detail": det, "sheetno": str(sheetno), "diameter": d,
+            "geom_handles": handles}
+
+
+def read_detail_mark(session: Session, mark_id: str) -> dict[str, Any]:
+    """回读详图符号：详图编号 / 图纸号 / 圆直径。"""
+    attrs = session.attributes("AA_SYM_" + mark_id)
+    if not attrs or attrs.get("AA_KIND") != "DETAIL_MARK":
+        raise CadError("没找到详图符号 %s" % mark_id)
+    return {"id": mark_id, "detail": attrs.get("AA_DETAIL", ""),
+            "sheetno": attrs.get("AA_SHEETNO", "—"),
+            "diameter": float(attrs.get("AA_DIAM") or 0)}
+
+
+def create_opening_detail(
+    session: Session,
+    detail_id: str,
+    at: tuple[float, float],
+    opening_id: str | None = None,
+    no: str | None = None,
+    ratio: float = 20.0,
+    factor: float | None = None,
+    wall_depth: float = 240.0,
+    title: str | None = None,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """门窗大样：从图上已有洞口读尺寸，按 `ratio`（默认 1:20）放大重画一幅大样。
+
+    `at` = 洞口**左下角**（窗台面/门槛）。`opening_id` 指定具体一樘；也可用 `no` 指定编号，
+    但同编号多樘时拒绝（必须指明是哪一樘）。`factor` 给定时直接用它（= 出图比例/详图比例）。
+
+    画法（GB/T 50104 门窗大样习惯）：洞口轮廓 + 两侧墙垛断面 + 窗框/门框 + 中梃/亮子/双扇，
+    窗再加窗台板；尺寸只注洞口宽、高（窗台高注在立面/墙身节点，这里只存属性）。
+    大样图名与比例（"1:20"）一并画在块内，整块落 `AA_OD_<编号>`，属性回读源洞口与放大倍数。
+
+    **为什么放大**：我们只有模型空间一个比例（1:100 出图），1:20 的详图必须把几何放大 5 倍
+    来画，注字仍按 1:100 的纸面字高（2.5mm），所以几何乘 `factor`、文字与尺寸偏移不乘。
+    """
+    block = "AA_OD_" + detail_id
+    if session.block_exists(block):
+        raise CadError("大样 %s 已存在，请换编号" % detail_id)
+    ratio = float(ratio)
+    if ratio <= 0:
+        raise CadError("详图比例必须大于 0（收到 %s）" % ratio)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else sc / ratio
+    if f <= 0:
+        raise CadError("大样放大倍数必须大于 0（收到 %s）" % f)
+    wall_depth = float(wall_depth)
+    if wall_depth <= 0:
+        raise CadError("墙垛厚度必须大于 0（收到 %s）" % wall_depth)
+
+    ops = opening_data(session)
+    if not ops:
+        raise CadError("图上没有门窗洞口，无法生成大样")
+    if opening_id:
+        hit = [o for o in ops if o["id"] == str(opening_id)]
+        if not hit:
+            raise CadError("图上没有洞口 %s" % opening_id)
+    elif no:
+        hit = [o for o in ops if o["no"] == str(no)]
+        if not hit:
+            raise CadError("图上没有编号为 %s 的门窗" % no)
+        if len(hit) > 1:
+            raise CadError("编号 %s 在图上有多樘（%d），大样请用具体洞口编号" % (no, len(hit)))
+    else:
+        raise CadError("大样必须指定洞口编号或门窗编号")
+    o = hit[0]
+    w, hh = float(o["width"]), float(o["height"])
+    if w <= 0 or hh <= 0:
+        raise CadError("洞口 %s 的宽高不合法（%s×%s）" % (o["id"], w, hh))
+    kind = "WINDOW" if str(o["kind"]).upper().startswith("WIN") else "DOOR"
+    ref = o["no"] or o["id"]
+    if not title:
+        title = "%s %s大样" % (ref, "窗" if kind == "WINDOW" else "门")
+
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    W, H = w * f, hh * f
+    WD = wall_depth * f
+    fr = 60.0 * f            # 门窗框厚 60
+    mull = 60.0 * f          # 中梃宽 60
+    sfl = 40.0 * f           # 扇框内缩 40
+    wext = 300.0 * f         # 墙垛上下各多画 300
+
+    lay_wall = LAYERS["wall"]
+    lay_open = LAYERS["opening"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_wall, lay_open, lay_dim, lay_name])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        if not s:
+            return
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    def rect(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        seg(x1, y1, x2, y1, lay)
+        seg(x2, y1, x2, y2, lay)
+        seg(x2, y2, x1, y2, lay)
+        seg(x1, y2, x1, y1, lay)
+
+    # 洞口 + 两侧墙垛断面
+    rect(0.0, 0.0, W, H, lay_open)
+    for xs in (0.0, W):
+        d = -1.0 if xs == 0.0 else 1.0
+        seg(xs, -wext, xs + d * WD, -wext, lay_wall)
+        seg(xs, H + wext, xs + d * WD, H + wext, lay_wall)
+        seg(xs + d * WD, -wext, xs + d * WD, H + wext, lay_wall)
+
+    # 框
+    rect(fr, fr, W - fr, H - fr, lay_open)
+
+    xspans = [fr, W - fr]
+    yspans = [fr, H - fr]
+    if kind == "WINDOW":
+        if w >= 1200.0:
+            xspans = [fr, W / 2.0 - mull / 2.0, W / 2.0 + mull / 2.0, W - fr]
+        if hh >= 1800.0:
+            ty = H - fr - 600.0 * f
+            yspans = [fr, ty - mull / 2.0, ty + mull / 2.0, H - fr]
+    else:
+        if w >= 900.0:
+            seg(W / 2.0 - 20.0 * f, fr, W / 2.0 - 20.0 * f, H - fr, lay_open)
+            seg(W / 2.0 + 20.0 * f, fr, W / 2.0 + 20.0 * f, H - fr, lay_open)
+            xspans = [fr, W / 2.0 - 20.0 * f, W / 2.0 + 20.0 * f, W - fr]
+    # 中梃/亮子的分隔实体（画成两条线之间的窄条）
+    if len(xspans) == 4:
+        seg(xspans[1], fr, xspans[1], H - fr, lay_open)
+        seg(xspans[2], fr, xspans[2], H - fr, lay_open)
+    if len(yspans) == 4:
+        seg(fr, yspans[1], W - fr, yspans[1], lay_open)
+        seg(fr, yspans[2], W - fr, yspans[2], lay_open)
+
+    # 每个玻璃格再内缩 40 画扇框
+    for i in range(len(xspans) - 1):
+        for j in range(len(yspans) - 1):
+            x1, x2 = xspans[i] + sfl, xspans[i + 1] - sfl
+            y1, y2 = yspans[j] + sfl, yspans[j + 1] - sfl
+            if x2 - x1 > 100.0 * f and y2 - y1 > 100.0 * f:
+                rect(x1, y1, x2, y2, lay_open)
+
+    # 窗台板（挑出 60、厚 100，只做窗）
+    if kind == "WINDOW":
+        seg(-60.0 * f, 0.0, W + 60.0 * f, 0.0, lay_wall)
+        seg(-60.0 * f, -100.0 * f, W + 60.0 * f, -100.0 * f, lay_wall)
+        seg(-60.0 * f, 0.0, -60.0 * f, -100.0 * f, lay_wall)
+        seg(W + 60.0 * f, 0.0, W + 60.0 * f, -100.0 * f, lay_wall)
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 洞口宽：下方一道
+        dy = -100.0 * f - ann(10.0) if kind == "WINDOW" else -ann(10.0)
+        for xx in (0.0, W):
+            seg(xx, 0.0, xx, dy - ann(2.0), lay_dim)
+        seg(0.0, dy, W, dy, lay_dim)
+        for xx in (0.0, W):
+            seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
+        label = "%g" % w
+        txt(W / 2.0 - _text_w(label, th) / 2.0, dy + ann(1.2), label, th)
+        ndim += 1
+        # 洞口高：左侧一道
+        dx = -WD - ann(10.0)
+        for yy in (0.0, H):
+            seg(0.0, yy, dx - ann(2.0), yy, lay_dim)
+        seg(dx, 0.0, dx, H, lay_dim)
+        for yy in (0.0, H):
+            seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
+        label = "%g" % hh
+        txt(dx - ann(1.2) - th, H / 2.0 - _text_w(label, th) / 2.0, label, th, 1.5708)
+        ndim += 1
+
+    # 图名 + 比例，放在尺寸线以下
+    ty = dy - ann(10.0)
+    body.append('(aa:title %.3f %.3f "%s" "1:%g")'
+                % (0.0, ty, title.replace('"', "'"), ratio))
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("门窗大样没有生成任何图元")
+
+    bbox = [-WD - ann(12.0), ty - ann(5.0), W + WD, H + wext]
+    att_defs = [
+        ("AA_TYPE", "component type", "OPENING_DETAIL"),
+        ("AA_ID", "component id", detail_id),
+        ("AA_REF", "source opening", o["id"]),
+        ("AA_NO", "opening no", ref),
+        ("AA_KIND", "opening kind", kind),
+        ("AA_W", "opening width", "%.4f" % w),
+        ("AA_H", "opening height", "%.4f" % hh),
+        ("AA_SILL", "sill height", "%.4f" % float(o["sill"])),
+        ("AA_FACTOR", "enlarge factor", "%.4f" % f),
+        ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_TITLE", "detail title", title),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_name)
+    session.expect_attributes(block, {"AA_TYPE": "OPENING_DETAIL", "AA_ID": detail_id,
+                                      "AA_REF": o["id"]})
+    return {"block": block, "handle": handle, "id": detail_id, "ref": o["id"],
+            "no": ref, "kind": kind, "width": w, "height": hh,
+            "sill": float(o["sill"]), "factor": f, "ratio": "1:%g" % ratio,
+            "title": title, "dims": ndim, "bbox": bbox, "geom_handles": handles}
+
+
+def read_opening_detail(session: Session, detail_id: str) -> dict[str, Any]:
+    """回读门窗大样：源洞口、宽高窗台高、放大倍数、详图比例、图名。"""
+    attrs = session.attributes("AA_OD_" + detail_id)
+    if not attrs or attrs.get("AA_TYPE") != "OPENING_DETAIL":
+        raise CadError("没找到门窗大样 %s" % detail_id)
+    return {"id": detail_id, "ref": attrs.get("AA_REF", ""),
+            "no": attrs.get("AA_NO", ""), "kind": attrs.get("AA_KIND", ""),
+            "width": float(attrs.get("AA_W") or 0),
+            "height": float(attrs.get("AA_H") or 0),
+            "sill": float(attrs.get("AA_SILL") or 0),
+            "factor": float(attrs.get("AA_FACTOR") or 0),
+            "ratio": attrs.get("AA_RATIO", ""),
+            "title": attrs.get("AA_TITLE", "")}
+
+
