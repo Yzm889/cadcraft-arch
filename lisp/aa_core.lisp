@@ -34,6 +34,7 @@
 (setq aa:*lay-opening* "AA-OPENING")
 (setq aa:*lay-room* "AA-ROOM")
 (setq aa:*lay-column* "AA-COLUMN")
+(setq aa:*lay-step* "AA-STEP")
 
 ;; ---------- 点与向量 ----------
 

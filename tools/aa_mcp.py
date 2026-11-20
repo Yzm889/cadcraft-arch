@@ -31,6 +31,9 @@ from aa_lib import (  # noqa: E402
     bind_walls_to_axis,
     auto_rooms,
     create_axis_grid,
+    create_column,
+    create_step,
+    create_apron,
     create_opening,
     create_room,
     create_wall,
@@ -57,7 +60,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.0"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.1"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -216,6 +219,40 @@ TOOLS: list[dict[str, Any]] = [
                 "material": {"type": "string", "description": "材料，如 C30", "default": ""},
             },
             "required": ["path", "id", "at", "w"],
+        },
+    },
+    {
+        "name": "aa_step",
+        "description": "室外台阶：贴墙线不画，按踏步数/踏步宽画踏步线与两侧边线，落在 AA-STEP 层。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "台阶编号，图纸内唯一，如 ST1"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "贴墙线中点 [x, y]"},
+                "width": {"type": "number", "description": "台阶宽（沿墙向）mm"},
+                "steps": {"type": "integer", "description": "踏步数", "default": 3},
+                "tread": {"type": "number", "description": "踏步宽 mm", "default": 300},
+                "angle": {"type": "number", "description": "外挑方向（度，270=-Y）", "default": 270},
+                "rise": {"type": "number", "description": "单步高 mm（仅记录）", "default": 150},
+            },
+            "required": ["path", "id", "at", "width"],
+        },
+    },
+    {
+        "name": "aa_apron",
+        "description": "散水：沿外墙外侧的等宽带，画外沿线 + 两端收头线，落在 AA-STEP 层。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "散水编号，如 SW1"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "贴墙线中点 [x, y]"},
+                "length": {"type": "number", "description": "沿墙长 mm"},
+                "width": {"type": "number", "description": "外挑宽 mm", "default": 800},
+                "angle": {"type": "number", "description": "外挑方向（度）", "default": 270},
+            },
+            "required": ["path", "id", "at", "length"],
         },
     },
     {
@@ -665,6 +702,17 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             s, a["id"], _pt(a["at"], "at"), _num(a["w"], "w"),
             _opt(a.get("h")), a.get("kind", "RECT"),
             _num(a.get("angle", 0.0), "angle"), a.get("material", ""))}
+
+    if name == "aa_step":
+        return {"ok": True, **create_step(
+            s, a["id"], _pt(a["at"], "at"), _num(a["width"], "width"),
+            int(_num(a.get("steps", 3), "steps")), _num(a.get("tread", 300), "tread"),
+            _num(a.get("angle", 270.0), "angle"), _num(a.get("rise", 150), "rise"))}
+
+    if name == "aa_apron":
+        return {"ok": True, **create_apron(
+            s, a["id"], _pt(a["at"], "at"), _num(a["length"], "length"),
+            _num(a.get("width", 800), "width"), _num(a.get("angle", 270.0), "angle"))}
 
     if name == "aa_opening":
         return {"ok": True, **create_opening(

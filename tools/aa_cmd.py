@@ -41,6 +41,8 @@ from aa_lib import (  # noqa: E402
     create_title_mark,
     create_north_arrow,
     create_column,
+    create_step,
+    create_apron,
     rescale_annotations,
     set_drawing_scale,
     audit,
@@ -145,6 +147,25 @@ def main(argv: list[str] | None = None) -> int:
                           help="柱类型：rect 矩形 / circle 圆柱")
     p_column.add_argument("--angle", type=float, default=0.0, help="矩形柱转角（度，逆时针）")
     p_column.add_argument("--material", default="", help="材料，如 C30")
+
+    p_step = sub.add_parser("step", help="室外台阶（落在 AA-STEP）")
+    p_step.add_argument("path")
+    p_step.add_argument("id")
+    p_step.add_argument("--at", required=True, help="贴墙线中点 x,y")
+    p_step.add_argument("--w", type=float, required=True, help="台阶宽（沿墙向，mm）")
+    p_step.add_argument("--steps", type=int, default=3, help="踏步数")
+    p_step.add_argument("--tread", type=float, default=300.0, help="踏步宽（mm，默认 300）")
+    p_step.add_argument("--angle", type=float, default=270.0,
+                        help="外挑方向（度，0=+X / 90=+Y / 270=-Y，默认 270 即向下）")
+    p_step.add_argument("--rise", type=float, default=150.0, help="单步高（mm，默认 150）")
+
+    p_apron = sub.add_parser("apron", help="散水（沿外墙，落在 AA-STEP）")
+    p_apron.add_argument("path")
+    p_apron.add_argument("id")
+    p_apron.add_argument("--at", required=True, help="贴墙线中点 x,y")
+    p_apron.add_argument("--len", dest="length", type=float, required=True, help="沿墙长（mm）")
+    p_apron.add_argument("--w", type=float, default=800.0, help="外挑宽（mm，默认 800）")
+    p_apron.add_argument("--angle", type=float, default=270.0, help="外挑方向（度）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -365,6 +386,13 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_column(
                 session, args.id, _pt(args.at), args.w, args.h,
                 args.kind, args.angle, args.material)})
+        elif args.cmd == "step":
+            emit({"ok": True, **create_step(
+                session, args.id, _pt(args.at), args.w, args.steps,
+                args.tread, args.angle, args.rise)})
+        elif args.cmd == "apron":
+            emit({"ok": True, **create_apron(
+                session, args.id, _pt(args.at), args.length, args.w, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

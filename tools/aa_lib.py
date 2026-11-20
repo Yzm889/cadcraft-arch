@@ -43,6 +43,7 @@ DEFAULT_LAYERS = {
     "table": "AA-TABLE",
     "name": "AA-NAME",
     "column": "AA-COLUMN",
+    "step": "AA-STEP",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -64,6 +65,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "table":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
     "name":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "column":   {"color": 8, "linetype": "Continuous", "lineweight": 0.35},
+    "step":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -318,7 +320,7 @@ class Session:
         # 用户图档自己的图层标准优先：覆盖 aa_core 里的默认层名
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
-            for k in ("axis", "axistext", "wall", "opening", "room", "column",
+            for k in ("axis", "axistext", "wall", "opening", "room", "column", "step",
                       "sheet", "title", "table")
         )
         payload = loads + sets + code
@@ -1786,6 +1788,117 @@ def create_column(
                                       "AA_KIND": kind_u, "AA_W": "%.4f" % w})
     return {"block": block, "handle": handle, "kind": kind_u, "w": w, "h": hh,
             "angle": float(angle), "area": area, "geom_handles": handles}
+
+
+def create_step(
+    session: Session,
+    step_id: str,
+    at: tuple[float, float],
+    width: float,
+    steps: int = 3,
+    tread: float = 300.0,
+    angle: float = 270.0,
+    rise: float = 150.0,
+) -> dict[str, Any]:
+    """室外台阶（天正"台阶"做法）：贴墙面的第一条线不画（与墙线重合），
+    只画 `steps` 条踏步线（最后一条即外沿）+ 两侧边线，落在 `AA-STEP`（白 7 / 0.18）。
+
+    `at` = 贴墙线中点；`angle` = 外挑方向（度，0=+X、90=+Y、270=-Y）；
+    `width` 沿墙向；`steps` 踏步数；`tread` 踏步宽；`rise` 单步高（记录用，平面不画）。
+    总进深 = steps*tread，可回读 `AA_DEPTH`。
+    """
+    block = "AA_STEP_" + step_id
+    if session.block_exists(block):
+        raise CadError("台阶 %s 已存在，请换编号" % step_id)
+    width, tread, rise = float(width), float(tread), float(rise)
+    if width <= 0 or tread <= 0:
+        raise CadError("拒绝写入：台阶宽与踏步宽必须为正实数（收到 %s / %s）" % (width, tread))
+    if int(steps) != steps or int(steps) < 1:
+        raise CadError("拒绝写入：踏步数必须是 >=1 的整数（收到 %s）" % steps)
+    steps = int(steps)
+    depth = steps * tread
+    angle = float(angle) % 360.0
+
+    session.ensure_layers([LAYERS["step"]])
+    before = session.snapshot()
+    session.lisp('(aa:step %.4f %d %.4f)' % (width, steps, tread),
+                 libraries=("aa_core.lisp", "aa_step.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("台阶没有生成任何图元")
+
+    att_defs = [
+        ("AA_TYPE", "component type", "STEP"),
+        ("AA_ID", "component id", step_id),
+        ("AA_W", "step width along wall", "%.4f" % width),
+        ("AA_STEPS", "tread count", str(steps)),
+        ("AA_TREAD", "tread depth", "%.4f" % tread),
+        ("AA_DEPTH", "total depth", "%.4f" % depth),
+        ("AA_RISE", "rise per step", "%.4f" % rise),
+        ("AA_H", "total rise", "%.4f" % (steps * rise)),
+        ("AA_ANGLE", "outward direction deg", "%.4f" % angle),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle - 90.0, layer=LAYERS["step"])
+    session.expect_attributes(block, {"AA_TYPE": "STEP", "AA_ID": step_id,
+                                      "AA_STEPS": str(steps), "AA_W": "%.4f" % width})
+    return {"block": block, "handle": handle, "width": width, "steps": steps,
+            "tread": tread, "depth": depth, "angle": angle, "geom_handles": handles}
+
+
+def create_apron(
+    session: Session,
+    apron_id: str,
+    at: tuple[float, float],
+    length: float,
+    width: float = 800.0,
+    angle: float = 270.0,
+) -> dict[str, Any]:
+    """散水（天正"散水"做法）：沿外墙外侧的等宽带，只画外沿线 + 两端收头线，
+    贴墙那条线由外墙自身承担；落在 `AA-STEP`（与台阶同层，同为室外附属）。
+
+    `at` = 贴墙线中点；`length` 沿墙长；`width` 外挑宽（默认 800，常规 600–1000）；
+    `angle` = 外挑方向（度）。两端收头暂按垂直收头（非 45° 斜接口）。
+    """
+    block = "AA_APRON_" + apron_id
+    if session.block_exists(block):
+        raise CadError("散水 %s 已存在，请换编号" % apron_id)
+    length, width = float(length), float(width)
+    if length <= 0 or width <= 0:
+        raise CadError("拒绝写入：散水长度与外挑宽必须为正实数（收到 %s / %s）" % (length, width))
+    angle = float(angle) % 360.0
+
+    session.ensure_layers([LAYERS["step"]])
+    before = session.snapshot()
+    session.lisp('(aa:apron %.4f %.4f)' % (length, width),
+                 libraries=("aa_core.lisp", "aa_step.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("散水没有生成任何图元")
+
+    att_defs = [
+        ("AA_TYPE", "component type", "APRON"),
+        ("AA_ID", "component id", apron_id),
+        ("AA_W", "apron width", "%.4f" % width),
+        ("AA_LEN", "length along wall", "%.4f" % length),
+        ("AA_ANGLE", "outward direction deg", "%.4f" % angle),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle - 90.0, layer=LAYERS["step"])
+    session.expect_attributes(block, {"AA_TYPE": "APRON", "AA_ID": apron_id,
+                                      "AA_W": "%.4f" % width, "AA_LEN": "%.4f" % length})
+    return {"block": block, "handle": handle, "length": length, "width": width,
+            "angle": angle, "geom_handles": handles}
 
 
 def create_room(

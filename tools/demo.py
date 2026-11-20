@@ -21,6 +21,8 @@ from aa_lib import (  # noqa: E402
     create_title_mark,
     create_north_arrow,
     create_column,
+    create_step,
+    create_apron,
     create_elevation_mark,
     create_index_mark,
     create_section_mark,
@@ -76,6 +78,10 @@ def main() -> int:
     create_opening(s, "D002", "W004", "DOOR", width=900.0, pos=2400.0)
     create_opening(s, "C001", "W002", "WINDOW", width=1800.0, pos=2400.0)
     create_opening(s, "C002", "W005", "WINDOW", width=1800.0, pos=3000.0, label_side="leader")
+
+    # 室外台阶（M1021 门口，向南出挑）+ 东外墙散水
+    create_step(s, "ST1", (1000.0, -ext / 2.0), 1500.0, 2, 300.0, 270.0)
+    create_apron(s, "SW1", (10800.0 + ext / 2.0, 2400.0), 4800.0, 600.0, 0.0)
 
     # 房间（墙环闭合校验 + 内偏移面积）
     r1 = create_room(s, "R001", ["W001", "W007", "W005", "W006"], name="客厅")
