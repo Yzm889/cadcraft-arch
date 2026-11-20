@@ -37,6 +37,7 @@ DEFAULT_LAYERS = {
     "opening": "AA-OPENING",
     "room": "AA-ROOM",
     "dim": "AA-DIM",
+    "border": "AA-BORDER",
     "sheet": "AA-SHEET",
     "title": "AA-TITLE",
     "table": "AA-TABLE",
@@ -55,6 +56,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "opening":  {"color": 4, "linetype": "Continuous", "lineweight": 0.18},
     "room":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
     "dim":      {"color": 3, "linetype": "Continuous", "lineweight": 0.15},
+    "border":   {"color": 7, "linetype": "Continuous", "lineweight": 0.15},
     "sheet":    {"color": 7, "linetype": "Continuous", "lineweight": 0.70},
     "title":    {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "table":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
@@ -2139,7 +2141,7 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                         blocks[cur_name] = cur_ents
                     cur_name, cur_ents, ent = None, None, None
                 elif cur_ents is not None:
-                    ent = {"type": val, "pts": [], "lt": None, "txt": None, "r": None,
+                    ent = {"type": val, "pts": [], "lt": None, "layer": None, "txt": None, "r": None,
                            "sx": None, "sy": None, "ex": None, "ey": None}
                     cur_ents.append(ent)
             continue
@@ -2167,6 +2169,8 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
             ent["ey"] = float(val)
         elif code_n == 6:
             ent["lt"] = val
+        elif code_n == 8:
+            ent["layer"] = val
         elif code_n == 1:
             ent["txt"] = val
         elif code_n == 40:
@@ -2175,16 +2179,16 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
     out = []
     for e in blocks.get(block_name, []):
         if e["type"] == "LINE" and None not in (e["sx"], e["sy"], e["ex"], e["ey"]):
-            out.append({"type": "LINE", "lt": e["lt"], "pts": [(e["sx"], e["sy"]), (e["ex"], e["ey"])]})
+            out.append({"type": "LINE", "lt": e["lt"], "layer": e["layer"], "pts": [(e["sx"], e["sy"]), (e["ex"], e["ey"])]})
         elif e["type"] == "LWPOLYLINE":
             pts = [(p[0], p[1]) for p in e["pts"] if p[1] is not None]
             if pts:
-                out.append({"type": "LWPOLYLINE", "lt": e["lt"], "pts": pts})
+                out.append({"type": "LWPOLYLINE", "lt": e["lt"], "layer": e["layer"], "pts": pts})
         elif e["type"] in ("TEXT", "MTEXT") and e["txt"] is not None:
             at = (e["sx"], e["sy"]) if None not in (e["sx"], e["sy"]) else None
-            out.append({"type": e["type"], "text": e["txt"], "pts": [at] if at else []})
+            out.append({"type": e["type"], "text": e["txt"], "layer": e["layer"], "pts": [at] if at else []})
         elif e["type"] == "CIRCLE" and None not in (e["sx"], e["sy"], e["r"]):
-            out.append({"type": "CIRCLE", "r": e["r"], "pts": [(e["sx"], e["sy"])]})
+            out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"], "pts": [(e["sx"], e["sy"])]})
     return out
 
 
@@ -2563,7 +2567,7 @@ def create_sheet(
     图形超出内框时报错，提示换大图幅或调小比例。
     """
     lay = sheet_layout(size, scale)
-    session.ensure_layers([LAYERS["sheet"], LAYERS["title"]])
+    session.ensure_layers([LAYERS["border"], LAYERS["sheet"], LAYERS["title"]])
     block = "AA_SHEET_" + sheet_id
     if session.block_exists(block):
         raise CadError("图幅 %s 已存在，请用 set-sheet 修改或换编号" % sheet_id)
@@ -2602,14 +2606,14 @@ def create_sheet(
         segs.append(((x1, y1), (x0, y1), layer))
         segs.append(((x0, y1), (x0, y0), layer))
 
-    rect(ox0, oy0, ox1, oy1, LAYERS["sheet"])
+    rect(ox0, oy0, ox1, oy1, LAYERS["border"])          # 幅面线：细线（GB/T 14689）
     rect(ix, iy, ix + iw, iy + ih, LAYERS["sheet"])
 
     # 标题栏：贴内框右下角，尺寸按图纸 mm × 比例
     tx0 = ix + iw - lay["title_w"]
     ty0 = iy
     tw, th = TITLE_W * s, TITLE_H * s
-    rect(tx0, ty0, tx0 + tw, ty0 + th, LAYERS["title"])
+    rect(tx0, ty0, tx0 + tw, ty0 + th, LAYERS["sheet"])   # 标题栏外框用图框线（粗）
     for y in TITLE_BANDS:
         segs.append(((tx0, ty0 + y * s), (tx0 + tw, ty0 + y * s), LAYERS["title"]))
     for x in (60.0, 120.0):
@@ -2725,8 +2729,80 @@ def set_sheet(session: Session, sheet_id: str, **fields: Any) -> dict[str, Any]:
     return create_sheet(session, sheet_id, **params)
 
 
-def export(session: Session, out: str | Path, window: Sequence[float] | None = None) -> dict[str, Any]:
-    """出图：png / svg / pdf 由扩展名决定；window=(x0,y0,x1,y1) 限定图幅范围。"""
+ACI_RGB = {
+    1: (255, 60, 60), 2: (255, 235, 60), 3: (70, 230, 90), 4: (70, 220, 235),
+    5: (80, 140, 255), 6: (230, 90, 230), 7: (240, 240, 240), 8: (150, 150, 150),
+    9: (190, 190, 190),
+}
+
+LW_MIN_MM = 0.20          # 低于这个线宽按预览的 1px 细线处理，不再加粗
+
+
+def _block_geometry_cached(path, name, cache):
+    if name not in cache:
+        cache[name] = block_geometry(path, name)
+    return cache[name]
+
+
+def emphasize_lineweights(session: Session, png: str | Path, window: Sequence[float],
+                          scale: float, min_mm: float = LW_MIN_MM) -> dict[str, Any]:
+    """在已导出的 PNG 上按图层线宽补粗线（预览用）。
+
+    CADCraft 的 png 导出不画线宽（实测 0.7 与默认一样细），这里按“1 纸面 mm = scale 图纸单位”
+    算出像素换算，把线宽 ≥ min_mm 的图元在同一位置重画成对应像素粗细，颜色取图层 ACI。
+    只覆盖加粗，不改变细线，也不改 DXF 本身（打印仍按组 370 的真实线宽）。
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:                       # 没装 Pillow 就退化成原图，不报错
+        return {"thickened": 0, "skipped": "no-pillow"}
+
+    out = Path(png)
+    img = Image.open(out).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    w_px, h_px = img.size
+    x0, y0, x1, y1 = [float(v) for v in window]
+    # CLI 的 png 导出是"等比 fit 不裁切"：窗口按短边铺满，另一方向留黑边，
+    # 所以像素换算必须用 min(宽比, 高比)，再把内容居中，否则补粗线会整体偏移。
+    fit = min(w_px / (x1 - x0), h_px / (y1 - y0))
+    ox = (w_px - (x1 - x0) * fit) / 2.0
+    oy = (h_px - (y1 - y0) * fit) / 2.0
+    px_per_mm = fit * float(scale)            # 1 mm 纸面 = scale 图纸单位
+
+    table = layer_table(session.path)
+    cache: dict[str, list] = {}
+    thick = 0
+    for ref in session.references():
+        g = ref["geometry"]
+        block = g.get("block")
+        if not block:
+            continue
+        for e in _block_geometry_cached(session.path, block, cache):
+            lay = e.get("layer") or ref.get("layer") or "0"
+            spec = table.get(lay)
+            if not spec or float(spec["lineweight"]) < min_mm:
+                continue
+            width = max(1, int(round(float(spec["lineweight"]) * px_per_mm)))
+            if width < 2:
+                continue
+            color = ACI_RGB.get(spec["color"], (240, 240, 240))
+            world = [_insert_tf((p[0], p[1]), ref) for p in e["pts"] if p]
+            scr = [(ox + (p[0] - x0) * fit, oy + (y1 - p[1]) * fit) for p in world]
+            for a, b in zip(scr, scr[1:]):
+                draw.line([a, b], fill=color, width=width)
+            if e["type"] in ("LINE", "LWPOLYLINE"):
+                thick += 1
+    img.save(out)
+    return {"thickened": thick, "px_per_mm": round(px_per_mm, 2)}
+
+
+def export(session: Session, out: str | Path, window: Sequence[float] | None = None,
+           lineweights: bool = True, scale: float | None = None) -> dict[str, Any]:
+    """出图：png / svg / pdf 由扩展名决定；window=(x0,y0,x1,y1) 限定图幅范围。
+
+    png 默认补画线宽（预览看得见粗墙/粗图框）；scale 省略时自动从图幅取比例，
+    没有图幅按 1:100。svg/pdf 交给 CLI 原生输出，不补粗。
+    """
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     argv = ["run", str(session.path), "--export", str(out)]
@@ -2735,7 +2811,18 @@ def export(session: Session, out: str | Path, window: Sequence[float] | None = N
     session._exec(argv)
     if not out.exists() or out.stat().st_size < 2048:
         raise CadError("导出失败或产物异常：%s" % out)
-    return {"path": str(out), "bytes": out.stat().st_size}
+    res: dict[str, Any] = {"path": str(out), "bytes": out.stat().st_size}
+    if lineweights and out.suffix.lower() == ".png" and window:
+        s = scale if scale else None
+        if s is None:
+            for ref in session.references():
+                attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                         for a in ref["geometry"].get("attribs", [])}
+                if attrs.get("AA_TYPE") == "SHEET" and attrs.get("AA_SCALE"):
+                    s = float(attrs["AA_SCALE"])
+                    break
+        res.update(emphasize_lineweights(session, out, window, s or 100.0))
+    return res
 
 
 def sheet_window(session: Session, sheet_id: str) -> list[float]:

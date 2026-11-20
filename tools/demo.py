@@ -66,8 +66,7 @@ def main() -> int:
     r2 = create_room(s, "R002", ["W002", "W003", "W004", "W007"], name="卧室")
 
     png = OUT / "demo_floorplan.png"
-    subprocess.run([s.cli, "run", str(path), "--export", str(png)],
-                   capture_output=True, text=True, encoding="utf-8")
+    export(s, png, drawing_extent(s, pad=1500.0))
 
     # 全套交付图：加尺寸标注 + 房间表 + 门窗表
     full = OUT / "demo_full.dxf"

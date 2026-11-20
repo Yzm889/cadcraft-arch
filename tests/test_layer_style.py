@@ -42,6 +42,7 @@ def main() -> int:
         "room": (7, "Continuous", 0.18),
         "dim": (3, "Continuous", 0.15),
         "sheet": (7, "Continuous", 0.70),
+        "border": (7, "Continuous", 0.15),
         "title": (7, "Continuous", 0.25),
         "table": (7, "Continuous", 0.18),
     }
@@ -51,7 +52,7 @@ def main() -> int:
         assert got["color"] == color, (key, got)
         assert str(got["linetype"]).lower() == lt.lower(), (key, got)
         assert abs(got["lineweight"] - lw) < 0.011, (key, got)
-    print("新图 9 层规格 ok:", {LAYERS[k]: (v["color"], v["linetype"], v["lineweight"])
+    print("新图 10 层规格 ok:", {LAYERS[k]: (v["color"], v["linetype"], v["lineweight"])
                             for k, v in [("axis", table[LAYERS["axis"]]),
                                          ("wall", table[LAYERS["wall"]])]})
 
@@ -102,6 +103,26 @@ def main() -> int:
         else:
             os.environ["AA_LAYERS_FILE"] = old_env
         aa_lib.load_layer_config()
+
+    # 5. 预览补线宽：线宽 0.35 的墙在 PNG 里必须比"不补线宽"更粗
+    p3 = OUT / "test_layer_lw.dxf"
+    if p3.exists():
+        p3.unlink()
+    s3 = Session(p3)
+    s3.new_metric()
+    create_wall(s3, "W001", (0.0, 0.0), (4000.0, 0.0), thick=240.0, kind="EXTERNAL")
+    win3 = (-500.0, -500.0, 4500.0, 1500.0)
+    on = aa_lib.export(s3, OUT / "test_layer_lw_on.png", win3, lineweights=True, scale=100)
+    off = aa_lib.export(s3, OUT / "test_layer_lw_off.png", win3, lineweights=False)
+    assert on.get("thickened", 0) > 0, on
+
+    from PIL import Image
+    def bright(path):
+        im = Image.open(path).convert("L")
+        return sum(1 for p in im.convert('L').tobytes() if p > 100)
+    n_on, n_off = bright(OUT / "test_layer_lw_on.png"), bright(OUT / "test_layer_lw_off.png")
+    assert n_on > n_off, (n_on, n_off)
+    print("补线宽前后亮点数:", n_off, "->", n_on, "px_per_mm", on.get("px_per_mm"))
 
     print("PASS test_layer_style")
     return 0
