@@ -2190,6 +2190,60 @@ ELEV_ROOFS = ("FLAT", "GABLE", "EAVE", "NONE")
 SECTION_ROOFS = ("FLAT", "GABLE", "NONE")
 
 
+def _dim_segments(vals: Sequence[float], min_seg: float = 0.0) -> list[tuple[float, float]]:
+    """把一串高度/长度排成链：先去重，`min_seg>0` 时把小于它的分界点并到下一段。
+
+    并段是为了不同洞口的窗台/洞顶错开时造出 300 这类无意义杂段——注上去文字会骑到相邻尺寸上。
+    """
+    uniq: list[float] = []
+    for v in sorted(float(x) for x in vals):
+        if not uniq or abs(v - uniq[-1]) > 1e-6:
+            uniq.append(v)
+    if len(uniq) < 2:
+        return []
+    segs: list[tuple[float, float]] = []
+    acc = uniq[0]
+    for v in uniq[1:]:
+        if min_seg > 0 and v - acc < min_seg and v != uniq[-1]:
+            continue
+        segs.append((acc, v))
+        acc = v
+    return [s for s in segs if s[1] - s[0] > 1.0]
+
+
+def _dim_chain(session: Session, W, vals: Sequence[float], off: float, angle: float,
+               vertical: bool = True, min_seg: float = 0.0) -> int:
+    """注一道链式尺寸，全部落 AA-DIM，返回条数。
+
+    `W(x, y)` 是局部→世界坐标的变换（立面/剖面各自带的平移旋转）；
+    vertical=True 时尺寸线退到 x=-off（注竖向高度），否则退到 y=-off（注横向宽度）。
+    """
+    n = 0
+    cmds = []
+    for a, b in _dim_segments(vals, min_seg):
+        if vertical:
+            p1, p2 = W(0.0, a), W(0.0, b)
+            mid = W(-off, (a + b) / 2.0)
+            rot = angle + 90.0
+        else:
+            p1, p2 = W(a, 0.0), W(b, 0.0)
+            mid = W((a + b) / 2.0, -off)
+            rot = angle
+        cmds.append(("dimlinear", {"p1": [round(v, 4) for v in p1],
+                                   "p2": [round(v, 4) for v in p2],
+                                   "at": [round(mid[0], 4), round(mid[1], 4)],
+                                   "rotation": round(rot, 6)}))
+        n += 1
+    if cmds:
+        res = session.run(cmds, save=True)
+        hs = [r.get("handle") for r in res.data if r.get("handle")]
+        if hs:
+            # dimlinear 默认落在 0 层，必须显式改到 AA-DIM
+            session.run([("properties.set", {"handles": hs, "layer": LAYERS["dim"]})],
+                        save=True)
+    return n
+
+
 def create_elevation(
     session: Session,
     elev_id: str,
@@ -2496,43 +2550,6 @@ def create_elevation(
         def W(x, y):
             return (float(at[0]) + x * ca - y * sa, float(at[1]) + x * sa + y * ca)
 
-        def chain(ys, off, tag):
-            nonlocal dim_n
-            uniq: list[float] = []
-            for y in sorted(ys):
-                if not uniq or abs(y - uniq[-1]) > 1e-6:
-                    uniq.append(y)
-            # 小于 5mm（=500）的分界点直接并到下一段：不同洞口的窗台/洞顶错开时会
-            # 造出 300 这种没有意义的杂段，注上去文字必然骑在相邻尺寸上
-            min_seg = annot_size(5.0, sc)
-            segs: list[tuple[float, float]] = []
-            acc = uniq[0]
-            for y in uniq[1:]:
-                if y - acc < min_seg and y != uniq[-1]:
-                    continue
-                segs.append((acc, y))
-                acc = y
-            cmds = []
-            for y1, y2 in segs:
-                if y2 - y1 <= 1.0:
-                    continue
-                # 尺寸界线从墙内皮（x=0）起，尺寸线退到 x=-off
-                p1, p2 = W(0.0, y1), W(0.0, y2)
-                mid = W(-off, (y1 + y2) / 2.0)
-                cmds.append(("dimlinear", {
-                    "p1": [round(v, 4) for v in p1],
-                    "p2": [round(v, 4) for v in p2],
-                    "at": [round(mid[0], 4), round(mid[1], 4)],
-                    "rotation": round(angle + 90.0, 6)}))
-                dim_n += 1
-            if cmds:
-                res = session.run(cmds, save=True)
-                hs = [r.get("handle") for r in res.data if r.get("handle")]
-                if hs:
-                    # dimlinear 默认落在 0 层，必须显式改到 AA-DIM
-                    session.run([("properties.set",
-                                  {"handles": hs, "layer": LAYERS["dim"]})], save=True)
-
         session.ensure_layers([LAYERS["dim"]])
         session.ensure_dim_style(text_height=annot_size(2.5, sc),
                                  arrow_size=annot_size(1.5, sc),
@@ -2541,11 +2558,13 @@ def create_elevation(
         for op in ops:
             b = rows[op["floor"] - 1]["elev"]
             ys_a += [b + op["sill"], b + op["sill"] + op["h"]]
-        chain(ys_a, annot_size(9.0, sc), "detail")
+        dim_n += _dim_chain(session, W, ys_a, annot_size(9.0, sc), angle,
+                            True, annot_size(5.0, sc))
         # 中道把女儿墙/脊高也带上，否则 1200 的女儿墙或 1800 的脊高在立面上一段都没注
-        chain([0.0] + [r["elev"] for r in rows] + [top, total_top],
-              annot_size(16.0, sc), "floor")
-        chain([0.0, total_top], annot_size(23.0, sc), "total")
+        dim_n += _dim_chain(session, W,
+                            [0.0] + [r["elev"] for r in rows] + [top, total_top],
+                            annot_size(16.0, sc), angle)
+        dim_n += _dim_chain(session, W, [0.0, total_top], annot_size(23.0, sc), angle)
 
     return {"block": block, "handle": handle, "width": width,
             "floors": len(rows), "top": top, "total": total_top,
@@ -2572,6 +2591,7 @@ def create_section(
     inner_walls: Sequence[dict[str, Any]] = (),
     beams: Sequence[dict[str, Any]] = (),
     stairs: Sequence[dict[str, Any]] = (),
+    dims: bool = True,
 ) -> dict[str, Any]:
     """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
 
@@ -2588,6 +2608,8 @@ def create_section(
     `stairs` = 楼梯断面 `[{floor, x0, x1, treads}]`：从 floor 层楼面爬到上一层，踏步
     逐级画"一平一竖"，再加一条梯段板斜线（板厚取楼板厚）与两端收头。
     剖面暂不画基础、材料图例。
+    `dims=True`（默认）在左侧注三道竖向尺寸（洞口/层高/总高，口径同立面）并在
+    底部注一道横向尺寸（墙厚 + 净宽 + 隔墙/楼梯分段），全部落 AA-DIM。
     """
     block = "AA_SECTION_" + section_id
     if session.block_exists(block):
@@ -2929,10 +2951,44 @@ def create_section(
     session.expect_attributes(block, {"AA_TYPE": "SECTION", "AA_ID": section_id,
                                       "AA_ROOF": roof_u,
                                       "AA_FLOORS": str(len(rows))})
+
+    # 尺寸：左侧三道竖向（洞口/层高/总高，口径同立面）+ 底部一道横向（墙厚/净宽/隔墙/楼梯）
+    dim_n = 0
+    if dims:
+        ca, sa = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+
+        def W(x, y):
+            return (float(at[0]) + x * ca - y * sa, float(at[1]) + x * sa + y * ca)
+
+        session.ensure_layers([LAYERS["dim"]])
+        session.ensure_dim_style(text_height=annot_size(2.5, sc),
+                                 arrow_size=annot_size(1.5, sc),
+                                 ext_offset=annot_size(1.0, sc))
+        ys_a = [0.0] + [r["elev"] for r in rows] + [top]
+        for o in ops_cut:
+            ys_a += [o["elev0"], o["elev1"]]
+        dim_n += _dim_chain(session, W, ys_a, annot_size(9.0, sc), angle,
+                            True, annot_size(5.0, sc))
+        dim_n += _dim_chain(session, W,
+                            [0.0] + [r["elev"] for r in rows] + [top, total_top],
+                            annot_size(16.0, sc), angle)
+        dim_n += _dim_chain(session, W, [0.0, total_top], annot_size(23.0, sc), angle)
+
+        # 横向细部只注内皮到内皮的分段（隔墙/楼梯）：墙厚 240 在 1:100 上只有 2.4mm，
+        # 注上去数字挤成一团，墙厚交给 AA_WALL 属性与墙身详图
+        xs_h = [wall, width - wall]
+        for iw in iwalls:
+            xs_h += [iw["x"], iw["x"] + iw["thick"]]
+        for st in sts:
+            xs_h += [st["x0"], st["x1"]]
+        dim_n += _dim_chain(session, W, xs_h, annot_size(9.0, sc), angle, False)
+        # 底部第二道：总宽（0..width，含两端墙厚），与竖向的"总高"对应
+        dim_n += _dim_chain(session, W, [0.0, width], annot_size(16.0, sc), angle, False)
+
     return {"block": block, "handle": handle, "width": width, "floors": len(rows),
             "top": top, "total": total_top, "roof": roof_u, "slab": slab,
             "wall": wall, "angle": angle, "rows": rows, "inner_walls": len(iwalls),
-            "beams": len(bms), "stairs": len(sts),
+            "beams": len(bms), "stairs": len(sts), "dims": dim_n,
             "openings": len(ops_cut), "geom_handles": handles}
 
 

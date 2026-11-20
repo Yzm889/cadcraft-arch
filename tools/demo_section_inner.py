@@ -79,7 +79,7 @@ def main() -> int:
         beams=[{"floor": 2, "x0": 240.0, "x1": 2520.0, "h": 500.0}],
     )
     create_title_mark(s, "T01", (3000.0, -1200.0), "一层平面图", SCALE)
-    create_title_mark(s, "T02", (1380.0, -10200.0), "1-1 剖面图", SCALE)
+    create_title_mark(s, "T02", (1380.0, -11700.0), "1-1 剖面图", SCALE)
 
     e = drawing_extent(s, pad=0.0)
     print("extent: %r" % (e,))

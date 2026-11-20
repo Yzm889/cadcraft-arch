@@ -61,7 +61,7 @@ def main() -> int:
         stairs=[{"floor": 1, "x0": 240.0, "x1": 3240.0, "treads": 12}],
     )
     create_title_mark(s, "T01", (3000.0, -1200.0), "一层平面图", SCALE)
-    create_title_mark(s, "T02", (2760.0, -10200.0), "1-1 剖面图", SCALE)
+    create_title_mark(s, "T02", (2760.0, -11700.0), "1-1 剖面图", SCALE)
 
     e = drawing_extent(s, pad=0.0)
     print("extent: %r" % (e,))

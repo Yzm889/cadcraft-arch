@@ -253,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     p_profile.add_argument("--slab", type=float, default=100.0, help="楼板厚（mm）")
     p_profile.add_argument("--wallth", type=float, default=240.0, help="外墙厚（mm）")
     p_profile.add_argument("--parapet", type=float, default=1200.0, help="女儿墙高（mm）")
+    p_profile.add_argument("--no-dims", action="store_true",
+                           help="不注左侧三道竖向 + 底部两道横向尺寸（默认注）")
     p_profile.add_argument("--rise", type=float, default=0.0, help="双坡脊高（mm）")
     p_profile.add_argument("--no-marks", action="store_true", help="不注标高")
     p_profile.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
@@ -603,7 +605,8 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_section(
                 session, args.id, _pt(args.at), args.w, floors, ops, args.side,
                 args.slab, args.roof, args.parapet, args.rise, args.wallth,
-                not args.no_marks, args.angle, iwalls, bms, sts)})
+                not args.no_marks, args.angle, iwalls, bms, sts,
+                not args.no_dims)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

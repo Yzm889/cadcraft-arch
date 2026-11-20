@@ -65,6 +65,21 @@ def main() -> int:
     assert has_h(11800.0, 0.0, 240.0), "左端女儿墙压顶应在 y=11800、0..240"
     assert has_h(11800.0, 5760.0, 6000.0), "右端女儿墙压顶应在 y=11800、5760..6000"
 
+    # 尺寸：左侧三道竖向 + 底部两道横向（v1.0.31；横向细部不注墙厚）
+    dims = [e for e in s.entities()["entities"] if e["type"] == "Dimension"]
+    assert r["dims"] == 10, r["dims"]
+    assert len(dims) == 10, len(dims)
+    for d in dims:
+        assert d.get("layer") == LAYERS["dim"], d.get("layer")
+    v_dims = [d for d in dims if d["geometry"]["defpt"]["x"] < 0]
+    h_dims = [d for d in dims if d["geometry"]["defpt"]["y"] < 0]
+    assert len(v_dims) == 8 and len(h_dims) == 2, (len(v_dims), len(h_dims))
+    got = sorted(round(float(d["geometry"]["measurement"]), 1) for d in v_dims)
+    # 剖面总高比立面多 100 屋面板：10500 → 11800 这一段是 1300（板 100 + 女儿墙 1200）
+    assert got == [1300.0, 3300.0, 3300.0, 3600.0, 3600.0, 3600.0, 3600.0, 11800.0], got
+    fa = sorted(round(float(d["geometry"]["measurement"]), 1) for d in h_dims)
+    assert fa == [5520.0, 6000.0], fa   # 净宽 6000-2×240=5520 / 总宽 6000
+
     layers = layer_of_block(path, "AA_SECTION_P1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
     attrs = s.attributes("AA_SECTION_P1")

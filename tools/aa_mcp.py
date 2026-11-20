@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.30"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.31"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -802,6 +802,7 @@ TOOLS: list[dict[str, Any]] = [
                 "wall": {"type": "number", "description": "外墙厚 mm", "default": 240},
                 "marks": {"type": "boolean", "description": "是否注标高", "default": True},
                 "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+                "dims": {"type": "boolean", "description": "注尺寸：左侧三道竖向（洞口/层高/总高）+ 底部两道横向（墙厚净宽/总宽），落 AA-DIM", "default": True},
             },
             "required": ["path", "id", "at", "width", "floors"],
         },
@@ -1007,7 +1008,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("wall", 240), "wall"), bool(a.get("marks", True)),
             _num(a.get("angle", 0.0), "angle"),
             a.get("inner_walls", []) or [], a.get("beams", []) or [],
-            a.get("stairs", []) or [])}
+            a.get("stairs", []) or [], bool(a.get("dims", True)))}
 
     if name == "aa_floor_table":
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],
