@@ -2212,15 +2212,20 @@ def _dim_segments(vals: Sequence[float], min_seg: float = 0.0) -> list[tuple[flo
 
 
 def _dim_chain(session: Session, W, vals: Sequence[float], off: float, angle: float,
-               vertical: bool = True, min_seg: float = 0.0) -> int:
+               vertical: bool = True, min_seg: float = 0.0,
+               min_len: float = 0.0) -> int:
     """注一道链式尺寸，全部落 AA-DIM，返回条数。
 
     `W(x, y)` 是局部→世界坐标的变换（立面/剖面各自带的平移旋转）；
     vertical=True 时尺寸线退到 x=-off（注竖向高度），否则退到 y=-off（注横向宽度）。
+    `min_len`：段长小于它的**不注**（窄房间的 1.1m 净空在 1:100 上注不下，
+    dimlinear 的文字锚点不归我们控，会骑到相邻尺寸上）。
     """
     n = 0
     cmds = []
     for a, b in _dim_segments(vals, min_seg):
+        if min_len > 0 and b - a < min_len:
+            continue
         if vertical:
             p1, p2 = W(0.0, a), W(0.0, b)
             mid = W(-off, (a + b) / 2.0)
@@ -2981,7 +2986,8 @@ def create_section(
             xs_h += [iw["x"], iw["x"] + iw["thick"]]
         for st in sts:
             xs_h += [st["x0"], st["x1"]]
-        dim_n += _dim_chain(session, W, xs_h, annot_size(9.0, sc), angle, False)
+        dim_n += _dim_chain(session, W, xs_h, annot_size(9.0, sc), angle, False,
+                            min_len=annot_size(15.0, sc))
         # 底部第二道：总宽（0..width，含两端墙厚），与竖向的"总高"对应
         dim_n += _dim_chain(session, W, [0.0, width], annot_size(16.0, sc), angle, False)
 

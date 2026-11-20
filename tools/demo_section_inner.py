@@ -70,7 +70,7 @@ def main() -> int:
     assert [(o["side"], o["kind"]) for o in cut_ops] == [("LEFT", "DOOR")], cut_ops
 
     create_section(
-        s, "P1", (0.0, -9000.0), 2760.0, FLOORS,
+        s, "P1", (0.0, -10400.0), 2760.0, FLOORS,
         openings=cut_ops, side="BOTH", slab=100.0, roof="FLAT", parapet=900.0,
         wall=240.0,
         inner_walls=[{"x": 1380.0, "thick": 120.0,
@@ -79,15 +79,15 @@ def main() -> int:
         beams=[{"floor": 2, "x0": 240.0, "x1": 2520.0, "h": 500.0}],
     )
     create_title_mark(s, "T01", (3000.0, -1200.0), "一层平面图", SCALE)
-    create_title_mark(s, "T02", (1380.0, -11700.0), "1-1 剖面图", SCALE)
+    create_title_mark(s, "T02", (1380.0, -13700.0), "1-1 剖面图", SCALE)
 
     e = drawing_extent(s, pad=0.0)
     print("extent: %r" % (e,))
-    export(s, OUT / "demo_section_inner.png", window=(-1800.0, -10600.0, 7600.0, 4400.0))
+    export(s, OUT / "demo_section_inner.png", window=(-1800.0, -15200.0, 7600.0, 4400.0))
     export(s, OUT / "demo_section_inner_low.png",
-           window=(-300.0, -9400.0, 3300.0, -6970.0))
+           window=(-300.0, -10800.0, 3300.0, -8370.0))
     export(s, OUT / "demo_section_inner_high.png",
-           window=(-300.0, -6970.0, 3300.0, -4540.0))
+           window=(-300.0, -8370.0, 3300.0, -5940.0))
     return 0
 
 
