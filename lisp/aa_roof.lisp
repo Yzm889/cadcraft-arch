@@ -67,17 +67,11 @@
         (aa:slopearrow cx cy cx gy1 hw aa:*lay-roofarrow*)
         (aa:slopearrow cx cy cx gy2 hw aa:*lay-roofarrow*))
       (if (= kind 1)
-          ;; ---- 双坡：正脊（贯到檐口） + 两坡找坡箭头 ----
+          ;; ---- 双坡：正脊（贯到檐口），坡屋面不加找坡箭头 ----
           (progn
             (if (= ridgex 1)
-                (progn
-                  (aa:mkline (aa:pt ox1 cy) (aa:pt ox2 cy) aa:*lay-roof*)
-                  (aa:slopearrow cx (- cy (* 0.12 od)) cx oy1 hw aa:*lay-roofarrow*)
-                  (aa:slopearrow cx (+ cy (* 0.12 od)) cx oy2 hw aa:*lay-roofarrow*))
-                (progn
-                  (aa:mkline (aa:pt cx oy1) (aa:pt cx oy2) aa:*lay-roof*)
-                  (aa:slopearrow (- cx (* 0.12 ow)) cy ox1 cy hw aa:*lay-roofarrow*)
-                  (aa:slopearrow (+ cx (* 0.12 ow)) cy ox2 cy hw aa:*lay-roofarrow*))))
+                (aa:mkline (aa:pt ox1 cy) (aa:pt ox2 cy) aa:*lay-roof*)
+                (aa:mkline (aa:pt cx oy1) (aa:pt cx oy2) aa:*lay-roof*)))
           (if (= kind 2)
               ;; ---- 四坡：正脊 + 四条 45° 斜脊（都落在檐口外轮廓上） ----
               (progn
@@ -88,17 +82,13 @@
                       (aa:mkline (aa:pt ox1 oy1) (aa:pt (+ ox1 m) cy) aa:*lay-roof*)
                       (aa:mkline (aa:pt ox1 oy2) (aa:pt (+ ox1 m) cy) aa:*lay-roof*)
                       (aa:mkline (aa:pt ox2 oy1) (aa:pt (- ox2 m) cy) aa:*lay-roof*)
-                      (aa:mkline (aa:pt ox2 oy2) (aa:pt (- ox2 m) cy) aa:*lay-roof*)
-                      (aa:slopearrow cx (- cy (* 0.12 od)) cx oy1 hw aa:*lay-roofarrow*)
-                      (aa:slopearrow cx (+ cy (* 0.12 od)) cx oy2 hw aa:*lay-roofarrow*))
+                      (aa:mkline (aa:pt ox2 oy2) (aa:pt (- ox2 m) cy) aa:*lay-roof*))
                     (progn
                       (aa:mkline (aa:pt cx (+ oy1 m)) (aa:pt cx (- oy2 m)) aa:*lay-roof*)
                       (aa:mkline (aa:pt ox1 oy1) (aa:pt cx (+ oy1 m)) aa:*lay-roof*)
                       (aa:mkline (aa:pt ox2 oy1) (aa:pt cx (+ oy1 m)) aa:*lay-roof*)
                       (aa:mkline (aa:pt ox1 oy2) (aa:pt cx (- oy2 m)) aa:*lay-roof*)
-                      (aa:mkline (aa:pt ox2 oy2) (aa:pt cx (- oy2 m)) aa:*lay-roof*)
-                      (aa:slopearrow (- cx (* 0.12 ow)) cy ox1 cy hw aa:*lay-roofarrow*)
-                      (aa:slopearrow (+ cx (* 0.12 ow)) cy ox2 cy hw aa:*lay-roofarrow*))))
+                      (aa:mkline (aa:pt ox2 oy2) (aa:pt cx (- oy2 m)) aa:*lay-roof*))))
               ;; ---- 单坡：低端檐沟 + 单向找坡 ----
               (progn
                 (aa:rectpl ox1 oy1 ox2 (+ oy1 gut) aa:*lay-roof*)

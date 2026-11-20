@@ -3,8 +3,8 @@
 要点：
   · 平屋顶：檐口轮廓 + 檐沟内线 2 条多段线，四角雨水口 4 个方框 + 4 条中横线，
     南北两条找坡箭头（2 LINE + 2 SOLID）
-  · 双坡：轮廓 + 正脊 1 条 + 2 条找坡杆 + 2 箭头
-  · 四坡：轮廓 + 正脊 + 四条 45° 斜脊 = 5 条直线 + 2 箭头
+  · 双坡：轮廓 + 正脊 1 条（坡屋面不注找坡箭头）
+  · 四坡：轮廓 + 正脊 + 四条 45° 斜脊 = 5 条直线
   · 单坡：轮廓 + 檐沟 2 条多段线 + 1 条找坡杆 + 1 箭头
   · 檐口外挑计入平面面积：6000×4000 外挑 600 -> 7200×5200 = 37.44 m2
   · 重名 / 错类型 / 尺寸非正 / 负外挑 / 檐沟过宽 拒绝
@@ -62,13 +62,13 @@ def main() -> int:
     gable = create_roof(s, "RF2", (10000.0, 0.0), "GABLE", 6000.0, 4000.0, ridge="X")
     g = block_geometry(path, "AA_ROOF_RF2")
     np, nl, ns = kinds(g)
-    assert (np, nl, ns) == (1, 3, 2), (np, nl, ns)   # 轮廓 / 正脊+2 杆 / 2 箭头
+    assert (np, nl, ns) == (1, 1, 0), (np, nl, ns)   # 轮廓 / 正脊
     assert s.attributes("AA_ROOF_RF2")["AA_KIND"] == "GABLE"
 
     hip = create_roof(s, "RF3", (20000.0, 0.0), "HIP", 6000.0, 4000.0)
     g = block_geometry(path, "AA_ROOF_RF3")
     np, nl, ns = kinds(g)
-    assert (np, nl, ns) == (1, 7, 2), (np, nl, ns)   # 正脊 + 4 斜脊
+    assert (np, nl, ns) == (1, 5, 0), (np, nl, ns)   # 正脊 + 4 斜脊
 
     shed = create_roof(s, "RF4", (0.0, 6000.0), "SHED", 6000.0, 4000.0)
     g = block_geometry(path, "AA_ROOF_RF4")

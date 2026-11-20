@@ -13,6 +13,8 @@
 (setq aa:*title-h* 500.0)       ; 图名 5mm
 (setq aa:*title-scale-h* 350.0) ; 比例 3.5mm
 (setq aa:*name-h* 350.0)        ; 指北针 N 3.5mm
+(setq aa:*title-base* 250.0)    ; 图名线离字底 2.5mm
+(setq aa:*title-gap* 400.0)     ; 图名与比例的水平间距 4mm
 
 ;; 文字宽度粗估：按 0.9 字高/字计（中文接近 1.0、数字接近 0.6，取折中）。
 ;; 不用 ascii —— 该函数不在已实测通过的 LISP 子集里。
@@ -24,8 +26,8 @@
   (setq h aa:*title-h*
         hs aa:*title-scale-h*
         w (aa:text-w nm h)
-        gap 400.0
-        base (- y 150.0))
+        gap aa:*title-gap*
+        base (- y aa:*title-base*))
   (aa:mktext (aa:pt x y) nm aa:*lay-name* h)
   ;; 图名下：粗线（图框线层 0.70）
   (aa:mkline (aa:pt x base) (aa:pt (+ x w) base) aa:*lay-sheet*)

@@ -963,8 +963,10 @@ def create_title_mark(
     before = session.snapshot()
     session.lisp(
         "(progn (setq aa:*title-h* %.4f) (setq aa:*title-scale-h* %.4f)"
-        " (setq aa:*name-h* %.4f) (aa:title %.3f %.3f \"%s\" \"%s\"))"
+        " (setq aa:*name-h* %.4f) (setq aa:*title-base* %.4f) (setq aa:*title-gap* %.4f)"
+        " (aa:title %.3f %.3f \"%s\" \"%s\"))"
         % (annot_size(5.0, sc), annot_size(3.5, sc), annot_size(3.5, sc),
+           annot_size(2.5, sc), annot_size(4.0, sc),
            float(at[0]), float(at[1]), name.replace('"', "'"), label),
         libraries=("aa_core.lisp", "aa_symbol.lisp"),
     )
