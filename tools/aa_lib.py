@@ -44,6 +44,7 @@ DEFAULT_LAYERS = {
     "name": "AA-NAME",
     "column": "AA-COLUMN",
     "step": "AA-STEP",
+    "stair": "AA-STAIR",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -66,6 +67,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "name":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "column":   {"color": 8, "linetype": "Continuous", "lineweight": 0.35},
     "step":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "stair":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -320,7 +322,7 @@ class Session:
         # 用户图档自己的图层标准优先：覆盖 aa_core 里的默认层名
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
-            for k in ("axis", "axistext", "wall", "opening", "room", "column", "step",
+            for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
                       "sheet", "title", "table")
         )
         payload = loads + sets + code
@@ -1718,6 +1720,7 @@ def refresh_opening_labels(session: Session, wall_ids: Sequence[str] | None = No
 
 
 COLUMN_KINDS = ("RECT", "CIRCLE")
+STAIR_KINDS = ("STRAIGHT", "DOGLEG")
 
 
 def create_column(
@@ -1899,6 +1902,103 @@ def create_apron(
                                       "AA_W": "%.4f" % width, "AA_LEN": "%.4f" % length})
     return {"block": block, "handle": handle, "length": length, "width": width,
             "angle": angle, "geom_handles": handles}
+
+
+def create_stair(
+    session: Session,
+    stair_id: str,
+    at: tuple[float, float],
+    kind: str = "STRAIGHT",
+    width: float = 1200.0,
+    steps: int = 10,
+    tread: float = 280.0,
+    rise: float = 150.0,
+    well: float = 120.0,
+    landing: float = 1200.0,
+    angle: float = 90.0,
+) -> dict[str, Any]:
+    """楼梯（天正平面做法）：直跑 STRAIGHT / 双跑 U 形 DOGLEG。
+
+    `at` = 起步踏步前缘中点，`angle` = 上行方向（度，90=+Y 向上）。
+    `width` 是单跑梯段宽；`steps` 是**每跑**踏步数（双跑总踏步 = 2×steps）；
+    `tread` 踏步宽；`well` 梯井宽（双跑用，直跑忽略）；`landing` 平台深（双跑用）。
+    总水平投影：直跑 = steps*tread；双跑 = 2*landing + steps*tread。
+
+    图形：踏步线 + 梯段边线 + 上行箭头（实心三角），落 `AA-STAIR`（白 7 / 0.18）。
+    剖断线、踏步数文字暂不画（规格 §26 注明）。
+    """
+    block = "AA_STAIR_" + stair_id
+    if session.block_exists(block):
+        raise CadError("楼梯 %s 已存在，请换编号" % stair_id)
+    kind_u = str(kind).upper()
+    if kind_u not in STAIR_KINDS:
+        raise CadError("楼梯类型只能是 STRAIGHT / DOGLEG（收到 %r）" % kind)
+    width, tread, rise = float(width), float(tread), float(rise)
+    if width <= 0 or tread <= 0:
+        raise CadError("拒绝写入：梯段宽与踏步宽必须为正实数（收到 %s / %s）" % (width, tread))
+    if int(steps) != steps or int(steps) < 2:
+        raise CadError("拒绝写入：每跑踏步数必须是 >=2 的整数（收到 %s）" % steps)
+    steps = int(steps)
+    well, landing = float(well), float(landing)
+    if kind_u == "DOGLEG":
+        if well < 0:
+            raise CadError("拒绝写入：梯井宽不能为负（收到 %s）" % well)
+        if landing <= 0:
+            raise CadError("拒绝写入：平台深必须为正实数（收到 %s）" % landing)
+    angle = float(angle) % 360.0
+
+    run = steps * tread
+    if kind_u == "STRAIGHT":
+        depth = run
+        total_steps = steps
+    else:
+        depth = 2.0 * landing + run
+        total_steps = steps * 2
+
+    session.ensure_layers([LAYERS["stair"]])
+    sc = drawing_scale(session)
+    lh = annot_size(2.5, sc)
+    rot = (angle - 90.0) % 360.0
+    trot = math.pi if 135.0 <= rot <= 225.0 else 0.0
+    before = session.snapshot()
+    if kind_u == "STRAIGHT":
+        session.lisp('(aa:stair-straight %.4f %d %.4f %.4f %.6f)' % (width, steps, tread, lh, trot),
+                     libraries=("aa_core.lisp", "aa_symbol.lisp", "aa_stair.lisp"))
+    else:
+        session.lisp('(aa:stair-dogleg %.4f %d %.4f %.4f %.4f %.4f %.6f)'
+                     % (width, steps, tread, well, landing, lh, trot),
+                     libraries=("aa_core.lisp", "aa_symbol.lisp", "aa_stair.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("楼梯没有生成任何图元")
+
+    att_defs = [
+        ("AA_TYPE", "component type", "STAIR"),
+        ("AA_ID", "component id", stair_id),
+        ("AA_KIND", "stair kind", kind_u),
+        ("AA_W", "flight width", "%.4f" % width),
+        ("AA_STEPS", "steps per flight", str(steps)),
+        ("AA_STEPS_TOTAL", "total steps", str(total_steps)),
+        ("AA_TREAD", "tread depth", "%.4f" % tread),
+        ("AA_RISE", "riser height", "%.4f" % rise),
+        ("AA_RUN", "run per flight", "%.4f" % run),
+        ("AA_DEPTH", "total plan depth", "%.4f" % depth),
+        ("AA_WELL", "well width", "%.4f" % (well if kind_u == "DOGLEG" else 0.0)),
+        ("AA_LANDING", "landing depth", "%.4f" % (landing if kind_u == "DOGLEG" else 0.0)),
+        ("AA_ANGLE", "up direction deg", "%.4f" % angle),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle - 90.0, layer=LAYERS["stair"])
+    session.expect_attributes(block, {"AA_TYPE": "STAIR", "AA_ID": stair_id,
+                                      "AA_KIND": kind_u, "AA_STEPS": str(steps)})
+    return {"block": block, "handle": handle, "kind": kind_u, "width": width,
+            "steps": steps, "steps_total": total_steps, "tread": tread, "run": run,
+            "depth": depth, "angle": angle, "geom_handles": handles}
 
 
 def create_room(

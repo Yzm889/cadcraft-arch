@@ -36,6 +36,7 @@ from aa_lib import (  # noqa: E402
     create_column,
     create_step,
     create_apron,
+    create_stair,
     create_opening,
     create_room,
     create_wall,
@@ -603,6 +604,29 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_stair",
+        "description": "楼梯：直跑 / 双跑 U 形（踏步线 + 梯段边线 + 上行箭头），落在 AA-STAIR 层；步数/宽/进深可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "楼梯编号，如图纸内唯一 LT1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "起步踏步前缘中点 [x, y]"},
+                "kind": {"type": "string", "enum": ["STRAIGHT", "DOGLEG"],
+                         "description": "直跑 / 双跑 U 形", "default": "STRAIGHT"},
+                "width": {"type": "number", "description": "单跑梯段宽 mm", "default": 1200},
+                "steps": {"type": "integer", "description": "每跑踏步数（>=2）", "default": 10},
+                "tread": {"type": "number", "description": "踏步宽 mm", "default": 280},
+                "rise": {"type": "number", "description": "踏步高 mm", "default": 150},
+                "well": {"type": "number", "description": "梯井宽 mm（双跑用）", "default": 120},
+                "landing": {"type": "number", "description": "平台深 mm（双跑用）", "default": 1200},
+                "angle": {"type": "number", "description": "上行方向（度，90=+Y）", "default": 90},
+            },
+            "required": ["path", "id", "at"],
+        },
+    },
+    {
         "name": "aa_batch",
         "description": "批量事务：按顺序执行多个工具调用，任一失败自动回滚到调用前的图纸状态（零残留），返回逐步结果。",
         "inputSchema": {
@@ -735,6 +759,14 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         s.new_metric(_num(a["scale"], "scale") if a.get("scale") else None)
         return {"ok": True, "path": str(s.path), "units": "mm",
                 "scale": drawing_scale(s)}
+
+    if name == "aa_stair":
+        return {"ok": True, **create_stair(
+            s, a["id"], _pt(a["at"], "at"), a.get("kind", "STRAIGHT"),
+            _num(a.get("width", 1200), "width"),
+            int(_num(a.get("steps", 10), "steps")), _num(a.get("tread", 280), "tread"),
+            _num(a.get("rise", 150), "rise"), _num(a.get("well", 120), "well"),
+            _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"))}
 
     if name == "aa_batch":
         return aa_batch(path, a["ops"], bool(a.get("rollback", True)))

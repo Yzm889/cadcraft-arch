@@ -43,6 +43,7 @@ from aa_lib import (  # noqa: E402
     create_column,
     create_step,
     create_apron,
+    create_stair,
     rescale_annotations,
     set_drawing_scale,
     audit,
@@ -166,6 +167,21 @@ def main(argv: list[str] | None = None) -> int:
     p_apron.add_argument("--len", dest="length", type=float, required=True, help="沿墙长（mm）")
     p_apron.add_argument("--w", type=float, default=800.0, help="外挑宽（mm，默认 800）")
     p_apron.add_argument("--angle", type=float, default=270.0, help="外挑方向（度）")
+
+    p_stair = sub.add_parser("stair", help="楼梯：直跑 / 双跑 U 形（落在 AA-STAIR）")
+    p_stair.add_argument("path")
+    p_stair.add_argument("id")
+    p_stair.add_argument("--at", required=True, help="起步踏步前缘中点 x,y")
+    p_stair.add_argument("--kind", default="straight", choices=["straight", "dogleg"],
+                         help="straight 直跑 / dogleg 双跑 U 形")
+    p_stair.add_argument("--w", type=float, default=1200.0, help="单跑梯段宽（mm）")
+    p_stair.add_argument("--steps", type=int, default=10, help="每跑踏步数")
+    p_stair.add_argument("--tread", type=float, default=280.0, help="踏步宽（mm，默认 280）")
+    p_stair.add_argument("--rise", type=float, default=150.0, help="踏步高（mm，默认 150）")
+    p_stair.add_argument("--well", type=float, default=120.0, help="梯井宽（mm，双跑用）")
+    p_stair.add_argument("--landing", type=float, default=1200.0, help="平台深（mm，双跑用）")
+    p_stair.add_argument("--angle", type=float, default=90.0,
+                         help="上行方向（度，90=+Y 向上，默认 90）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -393,6 +409,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "apron":
             emit({"ok": True, **create_apron(
                 session, args.id, _pt(args.at), args.length, args.w, args.angle)})
+        elif args.cmd == "stair":
+            emit({"ok": True, **create_stair(
+                session, args.id, _pt(args.at), args.kind, args.w, args.steps,
+                args.tread, args.rise, args.well, args.landing, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})
