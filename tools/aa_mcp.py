@@ -37,6 +37,7 @@ from aa_lib import (  # noqa: E402
     create_step,
     create_apron,
     create_stair,
+create_roof,
     create_floor_table,
     read_floors,
     create_opening,
@@ -65,7 +66,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.1"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.15"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -633,6 +634,29 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_roof",
+        "description": "屋顶平面：平屋顶（檐沟+四角雨水口+找坡）/ 双坡 / 四坡 / 单坡，檐口外挑计入平面面积；落 AA-ROOF 与 AA-ROOF-ARROW 层。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "屋顶编号，如图纸唯一 RF1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "屋面投影（建筑轮廓）左下角 [x, y]"},
+                "kind": {"type": "string", "enum": ["FLAT", "GABLE", "HIP", "SHED"],
+                         "description": "平屋顶 / 双坡 / 四坡 / 单坡", "default": "FLAT"},
+                "width": {"type": "number", "description": "屋面宽 mm（沿 X）", "default": 6000},
+                "depth": {"type": "number", "description": "屋面进深 mm（沿 Y）", "default": 4000},
+                "overhang": {"type": "number", "description": "檐口外挑 mm", "default": 600},
+                "gutter": {"type": "number", "description": "檐沟宽 mm", "default": 300},
+                "ridge": {"type": "string", "enum": ["X", "Y"],
+                          "description": "屋脊方向（坡屋顶用）", "default": "X"},
+                "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+            },
+            "required": ["path", "id", "at"],
+        },
+    },
+    {
         "name": "aa_floor_table",
         "description": "楼层表：写入各层层号/层高/平面图号/层名，起算标高自动累加，画成表并落成 FLOOR_TABLE 构件；立面、剖面后续据此生成。",
         "inputSchema": {
@@ -804,6 +828,13 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("rise", 150), "rise"), _num(a.get("well", 120), "well"),
             _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"),
             a.get("level", "MIDDLE"), a.get("side", "LEFT"))}
+
+    if name == "aa_roof":
+        return {"ok": True, **create_roof(
+            s, a["id"], _pt(a["at"], "at"), a.get("kind", "FLAT"),
+            _num(a.get("width", 6000), "width"), _num(a.get("depth", 4000), "depth"),
+            _num(a.get("overhang", 600), "overhang"), _num(a.get("gutter", 300), "gutter"),
+            a.get("ridge", "X"), _num(a.get("angle", 0.0), "angle"))}
 
     if name == "aa_floor_table":
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],

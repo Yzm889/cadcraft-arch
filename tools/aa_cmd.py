@@ -45,6 +45,7 @@ from aa_lib import (  # noqa: E402
     create_apron,
     create_stair,
     create_floor_table,
+create_roof,
     read_floors,
     rescale_annotations,
     set_drawing_scale,
@@ -188,6 +189,20 @@ def main(argv: list[str] | None = None) -> int:
                          help="层类型：first 首层 / middle 中层 / top 顶层")
     p_stair.add_argument("--side", default="left", choices=["left", "right"],
                          help="上楼位置：left 左边 / right 右边（双跑用）")
+
+    p_roof = sub.add_parser("roof", help="屋顶平面：平 / 双坡 / 四坡 / 单坡（落在 AA-ROOF）")
+    p_roof.add_argument("path")
+    p_roof.add_argument("id")
+    p_roof.add_argument("--at", required=True, help="屋面投影左下角 x,y")
+    p_roof.add_argument("--kind", default="flat", choices=["flat", "gable", "hip", "shed"],
+                        help="flat 平屋顶 / gable 双坡 / hip 四坡 / shed 单坡")
+    p_roof.add_argument("--w", type=float, default=6000.0, help="屋面宽（mm，沿 X）")
+    p_roof.add_argument("--d", type=float, default=4000.0, help="屋面进深（mm，沿 Y）")
+    p_roof.add_argument("--oh", type=float, default=600.0, help="檐口外挑（mm，默认 600）")
+    p_roof.add_argument("--gutter", type=float, default=300.0, help="檐沟宽（mm，默认 300）")
+    p_roof.add_argument("--ridge", default="x", choices=["x", "y"],
+                        help="屋脊方向：x 沿宽向 / y 沿进深向（坡屋顶用）")
+    p_roof.add_argument("--angle", type=float, default=0.0, help="整体旋转（度，0=宽边水平）")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -429,6 +444,10 @@ def main(argv: list[str] | None = None) -> int:
                 session, args.id, _pt(args.at), args.kind, args.w, args.steps,
                 args.tread, args.rise, args.well, args.landing, args.angle,
                 args.level, args.side)})
+        elif args.cmd == "roof":
+            emit({"ok": True, **create_roof(
+                session, args.id, _pt(args.at), args.kind, args.w, args.d,
+                args.oh, args.gutter, args.ridge, args.angle)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

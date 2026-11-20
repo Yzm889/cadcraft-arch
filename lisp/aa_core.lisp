@@ -36,6 +36,8 @@
 (setq aa:*lay-column* "AA-COLUMN")
 (setq aa:*lay-step* "AA-STEP")
 (setq aa:*lay-stair* "AA-STAIR")(setq aa:*lay-stairarrow* "AA-STAIR-ARROW")(setq aa:*lay-stairtext* "AA-STAIR-TEXT")(setq aa:*lay-stairbreak* "AA-STAIR-BREAK")
+(setq aa:*lay-roof* "AA-ROOF")
+(setq aa:*lay-roofarrow* "AA-ROOF-ARROW")
 
 ;; ---------- 点与向量 ----------
 

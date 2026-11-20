@@ -48,6 +48,8 @@ DEFAULT_LAYERS = {
     "stairarrow": "AA-STAIR-ARROW",
     "stairtext": "AA-STAIR-TEXT",
     "stairbreak": "AA-STAIR-BREAK",
+    "roof": "AA-ROOF",
+    "roofarrow": "AA-ROOF-ARROW",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -74,6 +76,8 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "stairarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
     "stairtext": {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
     "stairbreak": {"color": 7, "linetype": "DASHED", "lineweight": 0.18},
+    "roof":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
+    "roofarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -329,7 +333,7 @@ class Session:
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
             for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
-                      "stairarrow", "stairtext", "stairbreak", "sheet", "title", "table")
+                      "stairarrow", "stairtext", "stairbreak", "roof", "roofarrow", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -2020,6 +2024,100 @@ def create_stair(
             "steps": steps, "steps_total": total_steps, "tread": tread, "run": run,
             "depth": depth, "angle": angle, "level": level_u, "side": side_u,
             "geom_handles": handles}
+
+
+ROOF_KINDS = ("FLAT", "GABLE", "HIP", "SHED")
+
+
+def create_roof(
+    session: Session,
+    roof_id: str,
+    at: tuple[float, float],
+    kind: str = "FLAT",
+    width: float = 6000.0,
+    depth: float = 4000.0,
+    overhang: float = 600.0,
+    gutter: float = 300.0,
+    ridge: str = "X",
+    angle: float = 0.0,
+) -> dict[str, Any]:
+    """屋顶平面（GB/T 50104 屋顶平面图 + 天正"屋顶"做法）。
+
+    `at` = 屋面投影（建筑外轮廓）左下角，`width/depth` 沿本地 +X/+Y。
+    `kind`：FLAT 平屋顶（檐沟 + 四角雨水口 + 南北找坡）/
+            GABLE 双坡（正脊 + 两坡）/ HIP 四坡（正脊 + 四条 45° 斜脊）/ SHED 单坡。
+    `overhang` 檐口外挑；`gutter` 檐沟宽；`ridge` 屋脊方向 X/Y；`angle` 整体旋转。
+
+    图形落 `AA-ROOF`（白 7 / 0.25）与 `AA-ROOF-ARROW`（绿 3 / 0.18），
+    找坡箭头一律指向下坡（檐口 / 檐沟）。暂不画天沟、女儿墙压顶、上人孔、坡度文字。
+    """
+    block = "AA_ROOF_" + roof_id
+    if session.block_exists(block):
+        raise CadError("屋顶 %s 已存在，请换编号" % roof_id)
+    kind_u = str(kind).upper()
+    if kind_u not in ROOF_KINDS:
+        raise CadError("屋顶类型只能是 FLAT / GABLE / HIP / SHED（收到 %r）" % kind)
+    ridge_u = str(ridge).upper()
+    if ridge_u not in ("X", "Y"):
+        raise CadError("屋脊方向只能是 X / Y（收到 %r）" % ridge)
+    width, depth = float(width), float(depth)
+    overhang, gutter = float(overhang), float(gutter)
+    if width <= 0 or depth <= 0:
+        raise CadError("拒绝写入：屋面宽与进深必须为正实数（收到 %s / %s）" % (width, depth))
+    if overhang < 0:
+        raise CadError("拒绝写入：檐口外挑不能为负（收到 %s）" % overhang)
+    if gutter <= 0:
+        raise CadError("拒绝写入：檐沟宽必须为正实数（收到 %s）" % gutter)
+    if kind_u == "FLAT":
+        if 2.0 * (overhang + gutter) >= min(width, depth):
+            raise CadError("拒绝写入：檐沟 %s + 外挑 %s 太大，屋面已经没有净面积（%s×%s）"
+                           % (gutter, overhang, width, depth))
+    if kind_u in ("GABLE", "HIP") and ridge_u == "X" and depth < 1000.0:
+        raise CadError("拒绝写入：屋脊沿 X 时进深太小（收到 %s），画不出两坡" % depth)
+    angle = float(angle) % 360.0
+
+    session.ensure_layers([LAYERS["roof"], LAYERS["roofarrow"]])
+    sc = drawing_scale(session)
+    lh = annot_size(2.5, sc)
+    kind_code = {"FLAT": 0, "GABLE": 1, "HIP": 2, "SHED": 3}[kind_u]
+    ridgex = 1 if ridge_u == "X" else 0
+    before = session.snapshot()
+    session.lisp('(aa:roof %.4f %.4f %.4f %.4f %d %d %.6f)'
+                 % (width, depth, overhang, gutter, kind_code, ridgex, lh),
+                 libraries=("aa_core.lisp", "aa_roof.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("屋顶没有生成任何图元")
+
+    outer_w = width + 2.0 * overhang
+    outer_d = depth + 2.0 * overhang
+    area = outer_w * outer_d
+    att_defs = [
+        ("AA_TYPE", "component type", "ROOF"),
+        ("AA_ID", "component id", roof_id),
+        ("AA_KIND", "roof kind", kind_u),
+        ("AA_W", "roof width", "%.4f" % width),
+        ("AA_D", "roof depth", "%.4f" % depth),
+        ("AA_OVERHANG", "eave overhang", "%.4f" % overhang),
+        ("AA_GUTTER", "gutter width", "%.4f" % gutter),
+        ("AA_RIDGE", "ridge direction", ridge_u),
+        ("AA_ANGLE", "rotation deg", "%.4f" % angle),
+        ("AA_AREA", "plan area incl overhang", "%.4f" % area),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            rotation=angle, layer=LAYERS["roof"])
+    session.expect_attributes(block, {"AA_TYPE": "ROOF", "AA_ID": roof_id,
+                                      "AA_KIND": kind_u,
+                                      "AA_W": "%.4f" % width})
+    return {"block": block, "handle": handle, "kind": kind_u, "width": width,
+            "depth": depth, "overhang": overhang, "gutter": gutter,
+            "ridge": ridge_u, "angle": angle, "area": area,
+            "outer_w": outer_w, "outer_d": outer_d, "geom_handles": handles}
 
 
 def create_room(
