@@ -44,6 +44,8 @@ from aa_lib import (  # noqa: E402
     create_step,
     create_apron,
     create_stair,
+    create_floor_table,
+    read_floors,
     rescale_annotations,
     set_drawing_scale,
     audit,
@@ -309,6 +311,15 @@ def main(argv: list[str] | None = None) -> int:
     p_openings.add_argument("--table", default=None, help="在图上插入表格，给左下角 x,y")
     p_openings.add_argument("--title", default="门窗表")
 
+    p_floors = sub.add_parser("floors", help="楼层表：层号/标高/层高/平面图号，立面剖面据此生成")
+    p_floors.add_argument("path")
+    p_floors.add_argument("id")
+    p_floors.add_argument("--at", required=True, help="表格左上角 x,y")
+    p_floors.add_argument("--title", default="楼层表")
+    p_floors.add_argument("--floor", action="append", required=True,
+                          help='每层一行："层号,层高,平面图号,层名[,标高mm]"；可重复')
+    p_floors.add_argument("--show", default=None, help="只回读已有楼层表（给表编号）")
+
     p_dim = sub.add_parser("dim", help="尺寸标注：外墙墙段长度 + 洞口宽，标在建筑外侧")
     p_dim.add_argument("path")
     p_dim.add_argument("--opening-off", type=float, default=700.0, help="洞口尺寸线离墙面距离")
@@ -451,6 +462,22 @@ def main(argv: list[str] | None = None) -> int:
             # 画完墙立刻规整它自己与相邻墙的裁剪/合角
             res["normalized"] = normalize_around(session, args.id)
             emit({"ok": True, **res})
+        elif args.cmd == "floors":
+            if args.show:
+                emit({"ok": True, "floors": read_floors(session, args.show)})
+            else:
+                items = []
+                for spec in args.floor:
+                    parts = [p.strip() for p in spec.split(",")]
+                    while len(parts) < 4:
+                        parts.append("")
+                    row = {"no": parts[0], "height": parts[1], "plan": parts[2],
+                           "name": parts[3]}
+                    if len(parts) > 4 and parts[4]:
+                        row["elev"] = parts[4]
+                    items.append(row)
+                emit(create_floor_table(session, args.id, _pt(args.at), items,
+                                        args.title))
         elif args.cmd == "opening":
             emit({"ok": True, **create_opening(
                 session, args.id, args.wall, args.kind,

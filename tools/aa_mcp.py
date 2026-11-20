@@ -37,6 +37,8 @@ from aa_lib import (  # noqa: E402
     create_step,
     create_apron,
     create_stair,
+    create_floor_table,
+    read_floors,
     create_opening,
     create_room,
     create_wall,
@@ -631,6 +633,36 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_floor_table",
+        "description": "楼层表：写入各层层号/层高/平面图号/层名，起算标高自动累加，画成表并落成 FLOOR_TABLE 构件；立面、剖面后续据此生成。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "表编号，如图纸内唯一 FC1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "表格左上角 [x, y]"},
+                "title": {"type": "string", "description": "表名", "default": "楼层表"},
+                "floors": {
+                    "type": "array",
+                    "description": "自下而上每层一条：{no, height, plan, name, elev?}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "no": {"type": "string", "description": "层号，如 1、2、-1"},
+                            "height": {"type": "number", "description": "层高 mm"},
+                            "plan": {"type": "string", "description": "平面图号，如 建施-01"},
+                            "name": {"type": "string", "description": "层名，如 首层"},
+                            "elev": {"type": "number", "description": "标高 mm，省略则按层高累加"},
+                        },
+                        "required": ["height"],
+                    },
+                },
+            },
+            "required": ["path", "id", "at", "floors"],
+        },
+    },
+    {
         "name": "aa_batch",
         "description": "批量事务：按顺序执行多个工具调用，任一失败自动回滚到调用前的图纸状态（零残留），返回逐步结果。",
         "inputSchema": {
@@ -772,6 +804,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("rise", 150), "rise"), _num(a.get("well", 120), "well"),
             _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"),
             a.get("level", "MIDDLE"), a.get("side", "LEFT"))}
+
+    if name == "aa_floor_table":
+        return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],
+                                  a.get("title", "楼层表"))
 
     if name == "aa_batch":
         return aa_batch(path, a["ops"], bool(a.get("rollback", True)))

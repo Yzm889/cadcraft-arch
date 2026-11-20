@@ -4361,6 +4361,93 @@ def draw_table(session: Session, table_at: tuple[float, float], title: str,
             "block": block, "id": table_id, "handle": handle}
 
 
+FLOOR_HEADER = ["层号", "楼层标高", "层高", "平面图号", "层名"]
+
+
+def create_floor_table(
+    session: Session,
+    table_id: str,
+    at: tuple[float, float],
+    floors: list[dict[str, Any]],
+    title: str = "楼层表",
+    scale: float | None = None,
+    widths: list[float] | None = None,
+) -> dict[str, Any]:
+    """楼层表：各层层号 / 标高 / 层高 / 平面图号 / 层名，画成表并成为后续立、剖面的数据源。
+
+    floors 每项 {no, height, plan, name, elev?}；elev 省略时按层高自下而上累加（首层 ±0.000）。
+    表本身还是 draw_table 画的，只是把 AA_TYPE 改写成 FLOOR_TABLE，并回读校验层数/总高。
+    """
+    sc = float(scale) if scale else drawing_scale(session)
+    if not floors:
+        raise CadError("楼层表至少要有一层")
+    norm: list[dict[str, Any]] = []
+    elev = 0.0
+    for i, f in enumerate(floors):
+        no = str(f.get("no") or (i + 1)).strip()
+        try:
+            h = float(f.get("height") or 0)
+        except (TypeError, ValueError):
+            raise CadError("第 %d 层层高不是数字：%r" % (i + 1, f.get("height")))
+        if h <= 0:
+            raise CadError("第 %d 层层高必须大于 0（当前 %s）" % (i + 1, h))
+        if f.get("elev") in (None, ""):
+            e = elev
+        else:
+            try:
+                e = float(f["elev"])
+            except (TypeError, ValueError):
+                raise CadError("第 %d 层标高不是数字：%r" % (i + 1, f["elev"]))
+        if i and e <= norm[-1]["elev"] + 1e-6:
+            raise CadError("第 %d 层标高 %s 没有高于下一层 %s，请按自下而上排序"
+                           % (i + 1, format_elevation(e / 1000.0),
+                              format_elevation(norm[-1]["elev"] / 1000.0)))
+        if i and e < norm[-1]["elev"] + norm[-1]["height"] - 1e-6:
+            raise CadError("第 %d 层标高 %s 低于下一层顶 %s，层高与标高对不上"
+                           % (i + 1, format_elevation(e / 1000.0),
+                              format_elevation((norm[-1]["elev"] + norm[-1]["height"]) / 1000.0)))
+        norm.append({"no": no, "elev": e, "height": h,
+                     "plan": str(f.get("plan") or "").strip(),
+                     "name": str(f.get("name") or "").strip()})
+        elev = e + h
+
+    rows = [[f["no"], format_elevation(f["elev"] / 1000.0), "%.0f" % f["height"],
+             f["plan"], f["name"]] for f in norm]
+    if widths is None:
+        widths = [16.0, 26.0, 20.0, 32.0, 26.0]
+    res = draw_table(session, at, title, FLOOR_HEADER, rows,
+                     [w * sc for w in widths], table_id=table_id, scale=sc)
+    session.run([("attedit", {"handle": res["handle"],
+                              "values": {"AA_TYPE": "FLOOR_TABLE"}})], save=True)
+    attrs = session.attributes(res["block"])
+    if attrs.get("AA_TYPE") != "FLOOR_TABLE":
+        raise CadError("楼层表 AA_TYPE 回写失败：%s" % attrs.get("AA_TYPE"))
+    return {"ok": True, "block": res["block"], "id": table_id, "handle": res["handle"],
+            "at": res["at"], "width": res["width"], "height": res["height"],
+            "count": len(norm), "floors": norm,
+            "total_height": round(elev, 4),
+            "top_elev": round(norm[-1]["elev"], 4)}
+
+
+def read_floors(session: Session, table_id: str) -> list[dict[str, Any]]:
+    """回读楼层表（从表体数据反解），给出立面/剖面要用的层号、标高、层高、图号。"""
+    attrs = session.attributes("AA_TABLE_" + table_id)
+    if not attrs or attrs.get("AA_TYPE") != "FLOOR_TABLE":
+        raise CadError("没找到楼层表 %s" % table_id)
+    rows = [r.split("~") for r in attrs.get("AA_ROWS", "").split("@@") if r]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        cells = r + [""] * (5 - len(r))
+        text = cells[1].replace("±", "")
+        try:
+            elev = float(text) * 1000.0
+        except ValueError:
+            raise CadError("楼层表里标高解析不了：%r" % cells[1])
+        out.append({"no": cells[0], "elev": elev, "height": float(cells[2]),
+                    "plan": cells[3], "name": cells[4]})
+    return out
+
+
 def openings_report(session: Session, csv_path: str | Path | None = None,
                     table_at: tuple[float, float] | None = None,
                     title: str = "门窗表") -> dict[str, Any]:
