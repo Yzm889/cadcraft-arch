@@ -30,6 +30,8 @@ from aa_lib import (  # noqa: E402
     Session,
     annotate,
     auto_axis,
+    axis_grids,
+    bind_walls_to_axis,
     auto_rooms,
     create_axis_grid,
     create_opening,
@@ -108,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
                             help="同一根轴上的墙段位置聚类容差（mm）")
     p_axis_auto.add_argument("--ext", type=float, default=2400.0, help="轴线端伸出最外轴的距离")
     p_axis_auto.add_argument("--min-len", type=float, default=0.0, help="忽略短于该长度的墙")
+    p_axis_auto.add_argument("--no-bind", action="store_true", help="只出轴网，不回填墙的轴号")
+
+    p_axis_bind = sub.add_parser("axis-bind", help="按现有轴网回填每堵墙的 AX1/AX2 轴号")
+    p_axis_bind.add_argument("path")
+    p_axis_bind.add_argument("--grid", default=None, help="指定轴网编号，默认用图上的")
+    p_axis_bind.add_argument("--tol", type=float, default=50.0, help="端点与轴的允许偏差 mm")
+    p_axis_bind.add_argument("--only-empty", action="store_true", help="只填空的，不覆盖已有轴号")
 
     p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")
     p_layers.add_argument("path", nargs="?", default=None,
@@ -126,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
     p_wall.add_argument("--mat", default="")
     p_wall.add_argument("--ax1", default="")
     p_wall.add_argument("--ax2", default="")
+    p_wall.add_argument("--snap-axis", action="store_true", help="把端点吸附到最近轴线（先轴后墙）")
+    p_wall.add_argument("--snap-tol", type=float, default=300.0, help="吸附允许距离 mm")
 
     p_op = sub.add_parser("opening", help="门窗开洞")
     p_op.add_argument("path")
@@ -269,7 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "wall":
             res = create_wall(
                 session, args.id, _pt(args.p1), _pt(args.p2),
-                args.thick, args.kind, args.mat, args.ax1, args.ax2)
+                args.thick, args.kind, args.mat, args.ax1, args.ax2,
+                snap_axis=args.snap_axis, snap_tol=args.snap_tol)
             # 画完墙立刻规整它自己与相邻墙的裁剪/合角
             res["normalized"] = normalize_around(session, args.id)
             emit({"ok": True, **res})

@@ -66,6 +66,15 @@ def main() -> int:
     assert attrs["AA_MODE"] == "AUTO" and attrs["AA_XPOS"].startswith("0.00;"), attrs
     assert attrs["AA_SKIP"] == "W007", attrs
 
+    # 轴号回填：每堵墙的 AX1/AX2 应等于它起点/终点所在的轴线
+    assert res["ax_bound"] >= 1, res.get("ax_bound")
+    from aa_lib import wall_data
+    got = {w["id"]: (w["ax1"], w["ax2"]) for w in wall_data(s)}
+    assert got["W001"] == ("1", "2"), got
+    assert got["W002"] == ("2", "3"), got
+    assert got["W003"] == ("A", "B"), got       # 竖墙两端落在横轴 A/B
+    assert got["W007"] == ("", ""), got         # 斜墙不套轴号
+
     # 同名重来 -> 拒绝，且文件字节不变
     size = path.stat().st_size
     try:
@@ -73,6 +82,19 @@ def main() -> int:
     except CadError as e:
         assert "已存在" in str(e), e
     assert path.stat().st_size == size
+
+    # 先轴后墙：端点离轴 110mm，--snap-axis 应吸到轴上并自动带出轴号
+    p1snap = OUT / "test_axis_snap.dxf"
+    if p1snap.exists():
+        p1snap.unlink()
+    p1snap.write_bytes(path.read_bytes())
+    s4 = Session(p1snap)
+    r4 = create_wall(s4, "W900", (110.0, 110.0), (5990.0, 110.0), thick=240.0,
+                     snap_axis=True)
+    assert r4["snapped"]["p1"] == [0.0, 0.0], r4
+    assert r4["snapped"]["p2"] == [6000.0, 0.0], r4
+    assert r4["length"] == 6000.0, r4
+    assert (r4["ax1"], r4["ax2"]) == ("1", "2"), r4
 
     # 容差：把 6000 的墙挪到 6004 仍应合成一根轴（用新图验证）
     p2 = OUT / "test_axis_auto_tol.dxf"

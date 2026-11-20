@@ -27,6 +27,8 @@ from aa_lib import (  # noqa: E402
     LAYERS,
     LAYER_STYLES,
     auto_axis,
+    axis_grids,
+    bind_walls_to_axis,
     auto_rooms,
     create_axis_grid,
     create_opening,
@@ -50,7 +52,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.0"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.2"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -137,6 +139,22 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_axis_bind",
+        "description": "按现有轴网回填每堵墙的 AX1/AX2：横墙两个端点对应纵轴 1/2/3，"
+                       "竖墙两个端点对应横轴 A/B/C；斜墙不套轴号。只改属性不改几何。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "grid": {"type": "string", "description": "轴网编号，默认用图上全部轴网"},
+                "tol": {"type": "number", "description": "端点与轴的允许偏差 mm", "default": 50},
+                "only_empty": {"type": "boolean", "description": "只填空的，不覆盖已有轴号",
+                               "default": False},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_wall",
         "description": "画一堵墙（中心线 p1→p2）。画完自动与相邻墙做裁剪与转角合角，并回读校验。",
         "inputSchema": {
@@ -152,6 +170,9 @@ TOOLS: list[dict[str, Any]] = [
                 "mat": {"type": "string", "description": "材质", "default": ""},
                 "ax1": {"type": "string", "description": "关联轴号 1", "default": ""},
                 "ax2": {"type": "string", "description": "关联轴号 2", "default": ""},
+                "snap_axis": {"type": "boolean", "description": "端点吸附到最近轴线（先轴后墙）",
+                              "default": False},
+                "snap_tol": {"type": "number", "description": "吸附允许距离 mm", "default": 300},
             },
             "required": ["path", "id", "p1", "p2"],
         },
@@ -440,11 +461,18 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("xstart", 0), "xstart"), _num(a.get("ystart", 0), "ystart"),
             _num(a.get("ext", 1000), "ext"))}
 
+    if name == "aa_axis_bind":
+        return {"ok": True, **bind_walls_to_axis(
+            s, a.get("grid"), _num(a.get("tol", 50), "tol"),
+            bool(a.get("only_empty")))}
+
     if name == "aa_wall":
         res = create_wall(
             s, a["id"], _pt(a["p1"], "p1"), _pt(a["p2"], "p2"),
             _num(a.get("thick", 240), "thick"), a.get("kind", "INTERNAL"),
-            a.get("mat", ""), a.get("ax1", ""), a.get("ax2", ""))
+            a.get("mat", ""), a.get("ax1", ""), a.get("ax2", ""),
+            snap_axis=bool(a.get("snap_axis")),
+            snap_tol=_num(a.get("snap_tol", 300), "snap_tol"))
         res["normalized"] = normalize_around(s, a["id"])
         return {"ok": True, **res}
 

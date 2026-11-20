@@ -467,6 +467,16 @@ class Session:
                 out.append(e)
         return out
 
+    def component_handle(self, prefix: str, ident: str) -> str | None:
+        """按"块前缀 + 构件编号"取参照句柄（attedit 需要句柄）。"""
+        target = prefix + ident
+        for e in self.components(prefix):
+            g = e["geometry"]
+            attrs = {a["tag"]: a.get("text", {}).get("value", "") for a in g.get("attribs", [])}
+            if g["block"] == target or attrs.get("AA_ID") == ident:
+                return e["handle"]
+        return None
+
     # ---------- 断言 ----------
 
     def expect_attributes(self, block: str, expected: dict[str, str]) -> None:
@@ -683,6 +693,8 @@ def auto_axis(
     if not all(g["lt"] == "CENTER" for g in geom if g["type"] == "LINE"):
         raise CadError("轴线线型回读不符：应全部为 CENTER")
 
+    bound = bind_walls_to_axis(session, grid_id=grid_id, tol=tol)
+
     return {
         "block": block,
         "handle": handle,
@@ -693,7 +705,97 @@ def auto_axis(
         "lines": n_line,
         "skipped": skipped,
         "geom_handles": handles,
+        "ax_bound": bound["bound"],
+        "walls": bound["walls"],
     }
+
+
+def axis_grids(session: Session) -> list[dict[str, Any]]:
+    """读图上的全部轴网（自动/等距都算），返回轴位与编号序列。"""
+    out = []
+    for e in session.components("AA_AXGRID_"):
+        g = e["geometry"]
+        attrs = {a["tag"]: a.get("text", {}).get("value", "") for a in g.get("attribs", [])}
+        if attrs.get("AA_TYPE") != "AXGRID":
+            continue
+        xs = [float(v) for v in (attrs.get("AA_XPOS") or "").split(";") if v]
+        ys = [float(v) for v in (attrs.get("AA_YPOS") or "").split(";") if v]
+        if not xs or not ys:                       # 等距轴网没有 XPOS/YPOS，按间距还原
+            x0 = float(attrs.get("AA_XSTART", "0") or 0)
+            y0 = float(attrs.get("AA_YSTART", "0") or 0)
+            xs = [x0 + i * float(attrs.get("AA_XSPACE", "0") or 0)
+                  for i in range(int(attrs.get("AA_XCOUNT", "0") or 0))]
+            ys = [y0 + i * float(attrs.get("AA_YSPACE", "0") or 0)
+                  for i in range(int(attrs.get("AA_YCOUNT", "0") or 0))]
+        out.append({
+            "id": attrs.get("AA_ID", ""),
+            "block": g["block"],
+            "handle": e["handle"],
+            "mode": attrs.get("AA_MODE", "EVEN"),
+            "xpos": xs,
+            "ypos": ys,
+            "ver": [s for s in (attrs.get("AA_VER") or "").split(";") if s],
+            "hor": [s for s in (attrs.get("AA_HOR") or "").split(";") if s],
+        })
+    return out
+
+
+def _axis_label(value: float, positions: Sequence[float], labels: Sequence[str],
+                tol: float) -> str:
+    if not positions or not labels:
+        return ""
+    best_i, best_d = -1, None
+    for i, p in enumerate(positions):
+        d = abs(p - value)
+        if best_d is None or d < best_d:
+            best_i, best_d = i, d
+    if best_d is not None and best_d <= tol and best_i < len(labels):
+        return labels[best_i]
+    return ""
+
+
+def bind_walls_to_axis(session: Session, grid_id: str | None = None, tol: float = 50.0,
+                       only_empty: bool = False) -> dict[str, Any]:
+    """按轴网回填墙的 AA_AX1 / AA_AX2（墙起点/终点所在的轴线编号）。
+
+    正交墙的端点一定落在"垂直于墙方向"的那组轴上：横墙的两个端点对应纵轴 1/2/3，
+    竖墙的两个端点对应横轴 A/B/C。超出 tol 找不到轴就留空，不硬套编号。
+    只改属性、不重建几何（用 attedit 就地写值），所以墙线、洞口、裁剪都不受影响。
+    """
+    grids = [g for g in axis_grids(session) if grid_id in (None, g["id"])]
+    if not grids:
+        raise CadError("图上没有轴网，无法回填墙轴号")
+    updates: list[dict[str, Any]] = []
+    for w in wall_data(session):
+        ang = float(w["rotation_rad"])
+        if abs(math.sin(ang)) <= 1e-3:
+            horiz = True
+        elif abs(math.cos(ang)) <= 1e-3:
+            horiz = False
+        else:
+            continue                    # 斜墙不硬套轴号（如同 auto_axis 的做法）
+        a1 = a2 = ""
+        for g in grids:
+            if horiz:
+                l1 = _axis_label(w["p1"][0], g["xpos"], g["ver"], tol)
+                l2 = _axis_label(w["p2"][0], g["xpos"], g["ver"], tol)
+            else:
+                l1 = _axis_label(w["p1"][1], g["ypos"], g["hor"], tol)
+                l2 = _axis_label(w["p2"][1], g["ypos"], g["hor"], tol)
+            if l1 or l2:
+                a1, a2 = l1, l2
+                break
+        if only_empty and (w["ax1"] or w["ax2"]):
+            continue
+        if (a1, a2) == (w["ax1"], w["ax2"]):
+            continue
+        h = session.component_handle("AA_WALL_", w["id"])
+        if not h:
+            continue
+        session.run([("attedit", {"handle": h, "values": {"AA_AX1": a1, "AA_AX2": a2}})],
+                    save=True)
+        updates.append({"wall": w["id"], "ax1": a1, "ax2": a2})
+    return {"bound": len(updates), "walls": updates}
 
 
 def wall_info(session: Session, wall_id: str) -> dict[str, Any]:
@@ -1962,9 +2064,36 @@ def create_wall(
     ax2: str = "",
     root: str = "",
     sides: list[tuple[float, float, float, float]] | None = None,
+    snap_axis: bool = False,
+    snap_tol: float = 300.0,
 ) -> dict[str, Any]:
-    """墙体：LISP 生成本地几何 -> block -> insert（起点+旋转）-> 回读校验。"""
+    """墙体：LISP 生成本地几何 -> block -> insert（起点+旋转）-> 回读校验。
+
+    snap_axis=True 时先把端点吸附到最近轴线（"先轴后墙"），吸附量在返回值里如实报告；
+    画完若图上有轴网，会自动回填 ax1/ax2（原有的非空值不覆盖）。
+    """
     block = "AA_WALL_" + wall_id
+    snapped = None
+    if snap_axis:
+        grids = axis_grids(session)
+        if grids:
+            p1s = list(p1)
+            p2s = list(p2)
+            for i in (0, 1):
+                c = "x" if i == 0 else "y"
+                for pt in (p1s, p2s):
+                    best, bd = None, None
+                    for g in grids:
+                        for v in (g["xpos"] if c == "x" else g["ypos"]):
+                            d = abs(v - pt[i])
+                            if bd is None or d < bd:
+                                best, bd = v, d
+                    if best is not None and bd is not None and bd <= snap_tol:
+                        pt[i] = best
+            if tuple(p1s) != tuple(p1) or tuple(p2s) != tuple(p2):
+                snapped = {"p1": [round(v, 3) for v in p1s],
+                           "p2": [round(v, 3) for v in p2s]}
+                p1, p2 = tuple(p1s), tuple(p2s)
     session.ensure_layers([LAYERS["wall"]])
 
     before = session.snapshot()
@@ -2023,13 +2152,21 @@ def create_wall(
             "AA_KIND": kind,
         },
     )
-    return {
+    bound = bind_walls_to_axis(session, tol=50.0, only_empty=True) if axis_grids(session) else None
+    res = {
         "block": block,
         "handle": handle,
         "length": float(length),
         "angle_deg": float(angle) * 57.29577951308232,
         "geom_handles": handles,
     }
+    if snapped:
+        res["snapped"] = snapped
+    if bound is not None:
+        for u in bound["walls"]:
+            if u["wall"] == wall_id:
+                res["ax1"], res["ax2"] = u["ax1"], u["ax2"]
+    return res
 
 
 def layer_table(path) -> dict[str, dict[str, Any]]:
