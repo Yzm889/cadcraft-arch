@@ -1967,7 +1967,7 @@ def create_stair(
         depth = run
         total_steps = steps
     else:
-        depth = 2.0 * landing + run
+        depth = landing + run
         total_steps = steps * 2
 
     session.ensure_layers([LAYERS["stair"], LAYERS["stairarrow"],
