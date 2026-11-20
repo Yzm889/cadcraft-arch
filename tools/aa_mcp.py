@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.22"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.23"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -698,6 +698,8 @@ TOOLS: list[dict[str, Any]] = [
                 "overhang": {"type": "number", "description": "檐口外挑 mm", "default": 600},
                 "marks": {"type": "boolean", "description": "是否注标高", "default": True},
                 "angle": {"type": "number", "description": "整体旋转（度）", "default": 0},
+                "wall": {"type": "string", "description": "从平面上这道墙（如 W001）读门窗并与 openings 合并，省得手抄坐标"},
+                "flip": {"type": "boolean", "description": "该墙在平面上从右往左画（朝北的墙），窗口左边距需镜像", "default": False},
             },
             "required": ["path", "id", "at", "width", "floors"],
         },
@@ -933,7 +935,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             a["floors"], a.get("openings", []) or [], a.get("roof", "FLAT"),
             _num(a.get("parapet", 1200), "parapet"), _num(a.get("rise", 0), "rise"),
             _num(a.get("overhang", 600), "overhang"),
-            bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"))}
+            bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"),
+            a.get("wall") or None, bool(a.get("flip", False)))}
 
     if name == "aa_profile":
         return {"ok": True, **create_section(

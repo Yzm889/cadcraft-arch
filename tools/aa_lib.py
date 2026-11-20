@@ -2167,6 +2167,8 @@ def create_elevation(
     overhang: float = 600.0,
     marks: bool = True,
     angle: float = 0.0,
+    wall: str | None = None,
+    flip: bool = False,
 ) -> dict[str, Any]:
     """建筑立面（GB/T 50104 立面图做法，按楼层表数据生成）。
 
@@ -2174,7 +2176,11 @@ def create_elevation(
     [{height, elev?, no?, plan?, name?}]（也可直接喂 `read_floors` 的结果）。
     `openings` = [{floor: 1 起层号, x: 洞口左边距, w, h, sill, kind: WINDOW/DOOR}]，
     只做直立矩形洞口（窗加中横线，门只描框）。
-    `roof`：FLAT 平屋顶（挑檐 + 女儿墙 + 压顶）/ GABLE 双坡（山墙三角）/ NONE 无。
+    `wall` 给了就**从平面读这道墙上的门窗**（`read_facade_openings`），和 `openings`
+    里手填的合并使用：常用的做法是一层门窗由平面派生，二三层用 `openings` 补。
+    `flip=True` 表示这面墙在平面上是从右往左画的（如朝北的墙），窗口左边距要翻过来。
+    `roof`：FLAT 平屋顶（挑檐 + 女儿墙 + 压顶）/ GABLE 双坡（山墙三角）/
+    EAVE 双坡正对檐口（檐口 + 屋脊）/ NONE 无。
     `marks=True` 时每道楼层线右侧注标高（±0.000 / 3.600 …）。
 
     图元：地坪线粗、外轮廓粗落 `AA-ELEV`；楼层线、门窗、女儿墙压顶落
@@ -2200,8 +2206,11 @@ def create_elevation(
             raise CadError("拒绝写入：檐口外挑不能为负（收到 %s）" % overhang)
     angle = float(angle) % 360.0
 
+    src: list[dict[str, Any]] = list(openings or ())
+    if wall:
+        src = read_facade_openings(session, wall, flip=flip) + src
     ops: list[dict[str, Any]] = []
-    for i, op in enumerate(openings):
+    for i, op in enumerate(src):
         if not isinstance(op, dict):
             raise CadError("门窗数据必须是对象（收到 %r）" % (op,))
         fl = int(op.get("floor", 1) or 1)
@@ -2768,6 +2777,35 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "labelside": attrs.get("AA_LABELSIDE", "in") or "in",
             }
         )
+    return out
+
+
+def read_facade_openings(
+    session: Session,
+    wall_id: str,
+    flip: bool = False,
+    floor: int = 1,
+) -> list[dict[str, Any]]:
+    """把平面上一道墙的门窗反解成立面可用的洞口清单（x 为洞口左边距）。
+
+    `x` 的零点取"站在室外看这面墙时的左下角"：
+      · 墙的起点在人的左手边 → flip=False，x = AA_POS；
+      · 墙的起点在人的右手边（如朝北的墙，从左往右看是墙的终点）→ flip=True，
+        x = 墙长 - AA_POS - 洞宽。
+    这样立面门窗位置与平面是同一套数据，不用手填坐标。
+    """
+    info = wall_info(session, wall_id)
+    length = float(info["length"])
+    out: list[dict[str, Any]] = []
+    for o in opening_data(session):
+        if o["wallid"] != wall_id:
+            continue
+        w = float(o["width"])
+        x = (length - float(o["pos"]) - w) if flip else float(o["pos"])
+        out.append({"floor": int(floor), "x": x, "w": w,
+                    "h": float(o["height"]), "sill": float(o["sill"]),
+                    "kind": o["kind"], "no": o["no"]})
+    out.sort(key=lambda d: d["x"])
     return out
 
 

@@ -223,6 +223,10 @@ def main(argv: list[str] | None = None) -> int:
     p_elevation.add_argument("--oh", type=float, default=600.0, help="檐口外挑（mm）")
     p_elevation.add_argument("--no-marks", action="store_true", help="不注标高")
     p_elevation.add_argument("--angle", type=float, default=0.0, help="整体旋转（度）")
+    p_elevation.add_argument("--from-wall", dest="wall",
+                             help="从平面上这道墙（如 W001）读门窗，与 --open 合并")
+    p_elevation.add_argument("--flip", action="store_true",
+                             help="这面墙在平面上从右往左画（如朝北的墙），窗口左边距要翻")
 
     p_profile = sub.add_parser("profile",
                                help="建筑剖面：地坪 + 楼板 + 屋面板 + 外墙/女儿墙（落 AA-ELEV）")
@@ -513,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_elevation(
                 session, args.id, _pt(args.at), args.w, floors, ops,
                 args.roof, args.parapet, args.rise, args.oh,
-                not args.no_marks, args.angle)})
+                not args.no_marks, args.angle, args.wall, args.flip)})
         elif args.cmd == "profile":
             floors = []
             for spec in args.floor:

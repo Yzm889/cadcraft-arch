@@ -26,6 +26,7 @@ from aa_lib import (
     create_wall,
     drawing_extent,
     export,
+    read_facade_openings,
     read_floors,
     set_drawing_scale,
     sheet_window,
@@ -61,8 +62,10 @@ def main() -> int:
         create_wall(s, wid, p1, p2, thick=240.0, snap_axis=True,
                     kind="EXTERNAL" if wid in ("W001", "W002", "W003", "W004") else "PARTITION")
     create_opening(s, "M001", "W001", "DOOR", width=900.0, pos=1500.0, no="M0921")
-    create_opening(s, "C001", "W001", "WINDOW", width=1500.0, pos=5000.0, no="C1215")
-    create_opening(s, "C002", "W003", "WINDOW", width=1200.0, pos=5600.0, no="C0915")
+    create_opening(s, "C001", "W001", "WINDOW", width=1500.0, pos=5000.0,
+                    height=1500.0, sill=900.0, no="C1215")
+    create_opening(s, "C002", "W003", "WINDOW", width=1200.0, pos=5600.0,
+                    height=1500.0, sill=900.0, no="C0915")
     create_room(s, "R001", ["W001", "W002", "W003", "W004"], name="客厅")
     # 1-1 剖切符号：切在 X=2000（正好穿过首层门的中间），往下（左）看
     create_section_mark(s, "SM1", (2000.0, -1200.0), (2000.0, 5700.0),
@@ -76,16 +79,21 @@ def main() -> int:
     create_floor_table(s, "FT1", (8500.0, 1500.0), FLOORS, scale=SCALE)
 
     # 立面 / 剖面 放下方
+    # 一层门窗不再手填坐标：直接读平面 W001 上的 AA_OPENING（x = 洞口左边距）
+    plan_ops = read_facade_openings(s, "W001")
+    want = [(1500.0, 900.0, 2100.0, 0.0), (5000.0, 1500.0, 1500.0, 900.0)]
+    got = [(o["x"], o["w"], o["h"], o["sill"]) for o in plan_ops]
+    assert got == want, "平面门窗与立面口径对不上：%r != %r" % (got, want)
+
+    elev_ops = plan_ops + [
+        {"floor": 2, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 2, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 3, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+        {"floor": 3, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
+    ]
     create_elevation(
         s, "E1", (0.0, -16000.0), 7200.0, FLOORS,
-        openings=[
-            {"floor": 1, "x": 1500.0, "w": 900.0, "h": 2100.0, "sill": 0.0, "kind": "DOOR"},
-            {"floor": 1, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-            {"floor": 2, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-            {"floor": 2, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-            {"floor": 3, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-            {"floor": 3, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
-        ],
+        openings=elev_ops,
         roof="EAVE", parapet=0.0, rise=1800.0, overhang=600.0)
     create_section(
         s, "P1", (9000.0, -16000.0), 4500.0, FLOORS,
