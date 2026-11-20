@@ -134,7 +134,7 @@
         (aa:arrowhead (aa:pt (* sgn xl) (+ p (* 0.55 run)))
                       (aa:pt (* sgn xl) (- (+ p (* 0.55 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
         (aa:arrowhead (aa:pt (* sgn xr) (+ p (* 0.45 run)))
-                      (aa:pt (* sgn xr) (- (+ p (* 0.45 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
+                      (aa:pt (* sgn xr) (+ (+ p (* 0.45 run)) 320.0)) 80.0 aa:*lay-stairarrow*)
         (aa:mktext-r (aa:pt (* sgn (+ xl (* 0.6 lh))) (* -1.05 lh)) "上" aa:*lay-stairtext* lh trot)
         (aa:mktext-r (aa:pt (* sgn (+ xr (* 0.6 lh))) (* -1.05 lh)) "下" aa:*lay-stairtext* lh trot))))
   (aa:hs))
