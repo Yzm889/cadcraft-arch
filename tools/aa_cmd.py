@@ -55,8 +55,10 @@ from aa_lib import (  # noqa: E402
     create_detail_mark,
     create_opening_detail,
     create_wall_node,
+    create_stair_detail,
     read_detail_mark,
     read_opening_detail,
+    read_stair_detail,
     read_wall_node,
     create_roof,
     create_elevation,
@@ -552,6 +554,18 @@ def main(argv: list[str] | None = None) -> int:
     p_wnode.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_wnode.add_argument("--show", default=None, help="只回读已有节点")
 
+    p_sdetail = sub.add_parser("stair-detail",
+                               help="楼梯间大样：按已画楼梯放大重画（默认 1:20）")
+    p_sdetail.add_argument("path")
+    p_sdetail.add_argument("id")
+    p_sdetail.add_argument("--at", default=None, help="大样左下角 x,y")
+    p_sdetail.add_argument("--stair", dest="stair_id", default=None, help="源楼梯编号")
+    p_sdetail.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
+    p_sdetail.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
+    p_sdetail.add_argument("--title", default=None, help="图名")
+    p_sdetail.add_argument("--no-dims", action="store_true", help="不注尺寸")
+    p_sdetail.add_argument("--show", default=None, help="只回读已有大样")
+
     args = ap.parse_args(argv)
 
     try:
@@ -879,6 +893,15 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.at), args.kind, args.wall_thick,
                     args.slab, args.sill, args.parapet, args.cap, args.cap_out,
                     args.ratio, args.factor, args.title, not args.no_dims)})
+        elif args.cmd == "stair-detail":
+            if args.show:
+                emit({"ok": True, **read_stair_detail(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("建楼梯大样需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_stair_detail(
+                    session, args.id, _pt(args.at), args.stair_id, args.ratio,
+                    args.factor, args.title, not args.no_dims)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0

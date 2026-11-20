@@ -6601,3 +6601,224 @@ def read_wall_node(session: Session, node_id: str) -> dict[str, Any]:
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", ""),
             "title": attrs.get("AA_TITLE", "")}
+
+
+# ---------------- 详图：楼梯间大样（v1.0.37，B7 第四项续） ----------------
+
+def create_stair_detail(
+    session: Session,
+    detail_id: str,
+    at: tuple[float, float],
+    stair_id: str | None = None,
+    ratio: float = 20.0,
+    factor: float | None = None,
+    title: str | None = None,
+    dims: bool = True,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """楼梯间大样（1:20）：从图上已有楼梯读参数，放大重画平面。
+
+    `at` = 大样左下角（**上行方向朝上**，不再沿用平面里的旋转角；详图按正向摆放）。
+    直跑 STRAIGHT 画：梯段轮廓 + 踏步线 + 梯段宽/踏步总长两道尺寸；
+    双跑 DOGLEG 画：外轮廓 + 梯井 + 平台带 + 两跑踏步 + 箭头 + 梯段宽/踏步总长/平台深三道尺寸。
+    尺寸文字写真实 mm（含 "10×280=2800" 这种踏步表达式），几何按 `factor = 出图比例/详图比例` 放大。
+    """
+    block = "AA_SD_" + detail_id
+    if session.block_exists(block):
+        raise CadError("楼梯大样 %s 已存在，请换编号" % detail_id)
+    if not stair_id:
+        raise CadError("楼梯大样必须给源楼梯编号")
+    attrs = session.attributes("AA_STAIR_" + str(stair_id))
+    if not attrs or attrs.get("AA_TYPE") != "STAIR":
+        raise CadError("图上没有楼梯 %s" % stair_id)
+    ratio = float(ratio)
+    if ratio <= 0:
+        raise CadError("详图比例必须大于 0（收到 %s）" % ratio)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else sc / ratio
+    if f <= 0:
+        raise CadError("大样放大倍数必须大于 0（收到 %s）" % f)
+
+    kind = (attrs.get("AA_KIND") or "STRAIGHT").upper()
+    W = float(attrs.get("AA_W") or 0)
+    steps = int(float(attrs.get("AA_STEPS") or 0))
+    tread = float(attrs.get("AA_TREAD") or 0)
+    well = float(attrs.get("AA_WELL") or 0)
+    landing = float(attrs.get("AA_LANDING") or 0)
+    level = (attrs.get("AA_LEVEL") or "MIDDLE").upper()
+    if W <= 0 or steps < 2 or tread <= 0:
+        raise CadError("楼梯 %s 的梯段宽/踏步数/踏步宽不合法" % stair_id)
+    run = steps * tread
+    if kind == "DOGLEG":
+        if well < 0 or landing <= 0:
+            raise CadError("双跑楼梯 %s 的梯井/平台深不合法" % stair_id)
+        total_w = 2.0 * W + well
+        depth = run + landing
+    else:
+        total_w = W
+        depth = run
+
+    ann = lambda mm: annot_size(mm, sc)  # noqa: E731
+    Wf, WF = W * f, total_w * f
+    RUNF, DEPF = run * f, (landing * f if kind == "DOGLEG" else 0.0)
+    WELLF = well * f
+    TRF = tread * f
+
+    lay_stair = LAYERS["stair"]
+    lay_arrow = LAYERS["stairarrow"]
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_stair, lay_arrow, lay_dim, lay_name])
+
+    body: list[str] = []
+
+    def seg(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (x1, y1, x2, y2, lay))
+
+    def txt(x: float, y: float, s: str, hgt: float, ang: float = 0.0) -> None:
+        if not s:
+            return
+        body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
+                    % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
+
+    def rect(x1: float, y1: float, x2: float, y2: float, lay: str) -> None:
+        seg(x1, y1, x2, y1, lay)
+        seg(x2, y1, x2, y2, lay)
+        seg(x2, y2, x1, y2, lay)
+        seg(x1, y2, x1, y1, lay)
+
+    if kind != "DOGLEG":
+        rect(0.0, 0.0, Wf, RUNF, lay_stair)
+        for k in range(1, steps):
+            yy = k * TRF
+            seg(0.0, yy, Wf, yy, lay_stair)
+        # 箭头：中部向上 + 小三角头（头长/半宽按 2.5/1.8mm 纸面，不随梯段放大）
+        ax = Wf / 2.0
+        hl = ann(5.0)
+        hw = ann(1.8)
+        apex = RUNF * 0.85
+        seg(ax, RUNF * 0.12, ax, apex, lay_arrow)
+        seg(ax, apex, ax - hw, apex - hl, lay_arrow)
+        seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+    else:
+        # 左跑 + 梯井 + 右跑 + 平台带
+        rect(0.0, 0.0, WF, DEPF + RUNF, lay_stair)
+        seg(Wf, 0.0, Wf, RUNF, lay_stair)
+        seg(Wf + WELLF, 0.0, Wf + WELLF, RUNF, lay_stair)
+        seg(0.0, RUNF, Wf, RUNF, lay_stair)
+        seg(Wf + WELLF, RUNF, WF, RUNF, lay_stair)
+        seg(0.0, RUNF + DEPF, WF, RUNF + DEPF, lay_stair)
+        for k in range(1, steps):
+            yy = k * TRF
+            seg(0.0, yy, Wf, yy, lay_stair)
+            seg(Wf + WELLF, yy, WF, yy, lay_stair)
+        ax = Wf / 2.0
+        hl = ann(5.0)
+        hw = ann(1.8)
+        apex = RUNF * 0.85
+        seg(ax, RUNF * 0.1, ax, apex, lay_arrow)
+        seg(ax, apex, ax - hw, apex - hl, lay_arrow)
+        seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+
+    ndim = 0
+    if dims:
+        th = ann(2.5)
+        tick = ann(2.0)
+        # 梯段宽：下方水平一道（x 0..Wf）
+        dy = -ann(10.0)
+        for xx in (0.0, Wf):
+            seg(xx, 0.0, xx, dy - ann(2.0), lay_dim)
+        seg(0.0, dy, Wf, dy, lay_dim)
+        for xx in (0.0, Wf):
+            seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
+        label = "%g" % W
+        txt(Wf / 2.0 - _text_w(label, th) / 2.0, dy - ann(4.0), label, th)
+        ndim += 1
+
+        # 踏步总长：左侧竖向一道（y 0..RUNF），文字 步数×踏步宽=总长
+        dx = -ann(10.0)
+        for yy in (0.0, RUNF):
+            seg(0.0, yy, dx - ann(2.0), yy, lay_dim)
+        seg(dx, 0.0, dx, RUNF, lay_dim)
+        for yy in (0.0, RUNF):
+            seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
+        label = "%d×%g=%g" % (steps, tread, run)
+        txt(dx - ann(1.2) - _text_w(label, th), RUNF / 2.0 - th / 2.0, label, th, 1.5708)
+        ndim += 1
+
+        if kind == "DOGLEG":
+            # 平台深：右侧竖向一道（y RUNF..RUNF+DEPF）
+            rx = WF + ann(10.0)
+            for yy in (RUNF, RUNF + DEPF):
+                seg(WF, yy, rx + ann(2.0), yy, lay_dim)
+            seg(rx, RUNF, rx, RUNF + DEPF, lay_dim)
+            for yy in (RUNF, RUNF + DEPF):
+                seg(rx - tick, yy + tick, rx + tick, yy - tick, lay_dim)
+            label = "%g" % landing
+            txt(rx + ann(1.2), (RUNF + DEPF / 2.0) - th * 4.0, label, th, 1.5708)
+            ndim += 1
+
+    if not title:
+        title = "楼梯间详图"
+    ty = -ann(24.0) if dims else -ann(10.0)
+    body.append('(aa:title %.3f %.3f "%s" "1:%g")'
+                % (0.0, ty, title.replace('"', "'"), ratio))
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("楼梯大样没有生成任何图元")
+
+    bbox = [-ann(30.0), ty - ann(6.0), WF + ann(18.0), RUNF + DEPF + ann(16.0)]
+    att_defs = [
+        ("AA_TYPE", "component type", "STAIR_DETAIL"),
+        ("AA_ID", "component id", detail_id),
+        ("AA_REF", "source stair", str(stair_id)),
+        ("AA_KIND", "stair kind", kind),
+        ("AA_W", "flight width", "%.4f" % W),
+        ("AA_STEPS", "steps per flight", str(steps)),
+        ("AA_TREAD", "tread depth", "%.4f" % tread),
+        ("AA_RUN", "run per flight", "%.4f" % run),
+        ("AA_WELL", "well width", "%.4f" % well),
+        ("AA_LANDING", "landing depth", "%.4f" % landing),
+        ("AA_LEVEL", "floor level type", level),
+        ("AA_FACTOR", "enlarge factor", "%.4f" % f),
+        ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_TITLE", "detail title", title),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_name)
+    session.expect_attributes(block, {"AA_TYPE": "STAIR_DETAIL", "AA_ID": detail_id,
+                                      "AA_REF": str(stair_id)})
+    return {"block": block, "handle": handle, "id": detail_id, "ref": str(stair_id),
+            "kind": kind, "width": W, "steps": steps, "tread": tread, "run": run,
+            "well": well, "landing": landing, "level": level,
+            "factor": f, "ratio": "1:%g" % ratio, "title": title,
+            "dims": ndim, "bbox": bbox, "geom_handles": handles}
+
+
+def read_stair_detail(session: Session, detail_id: str) -> dict[str, Any]:
+    """回读楼梯大样：源楼梯、类型、梯段宽/踏步数/踏步宽/梯井/平台、倍数、比例、图名。"""
+    attrs = session.attributes("AA_SD_" + detail_id)
+    if not attrs or attrs.get("AA_TYPE") != "STAIR_DETAIL":
+        raise CadError("没找到楼梯大样 %s" % detail_id)
+    return {"id": detail_id, "ref": attrs.get("AA_REF", ""),
+            "kind": attrs.get("AA_KIND", ""),
+            "width": float(attrs.get("AA_W") or 0),
+            "steps": int(float(attrs.get("AA_STEPS") or 0)),
+            "tread": float(attrs.get("AA_TREAD") or 0),
+            "run": float(attrs.get("AA_RUN") or 0),
+            "well": float(attrs.get("AA_WELL") or 0),
+            "landing": float(attrs.get("AA_LANDING") or 0),
+            "level": attrs.get("AA_LEVEL", ""),
+            "factor": float(attrs.get("AA_FACTOR") or 0),
+            "ratio": attrs.get("AA_RATIO", ""),
+            "title": attrs.get("AA_TITLE", "")}
