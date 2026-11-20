@@ -37,6 +37,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    rescale_annotations,
     export,
     layer_table,
     merge_walls,
@@ -54,7 +55,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.3"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.4"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -390,6 +391,19 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_rescale",
+        "description": "换出图比例时整批重画注记：轴号圈/字高、房间名、门窗编号、图名、指北针按 mm 规格重算，尺寸标注删掉重画。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "scale": {"type": "number", "description": "新比例分母（1:50 填 50）"},
+                "rebuild_dims": {"type": "boolean", "description": "是否重画尺寸标注", "default": True},
+            },
+            "required": ["path", "scale"],
+        },
+    },
+    {
         "name": "aa_sheet",
         "description": "图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏 9 格；不给 at 时按图形外廓自动居中排图。",
         "inputSchema": {
@@ -507,6 +521,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **create_north_arrow(
             s, a.get("id", "N001"), _pt(a["at"], "at"),
             _opt(a.get("size")))}
+
+    if name == "aa_rescale":
+        return {"ok": True, **rescale_annotations(
+            s, _num(a["scale"], "scale"), bool(a.get("rebuild_dims", True)))}
 
     if name == "aa_wall":
         res = create_wall(

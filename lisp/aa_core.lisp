@@ -25,6 +25,8 @@
 (setq aa:*win-frame* 60.0)
 ;; 门窗编号字高：1.8mm @1:100 => 180
 (setq aa:*label-h* 180.0)
+;; 房间名字高：2.5mm @1:100 => 250（换比例时由驱动层 setq 覆盖）
+(setq aa:*room-h* 250.0)
 
 (setq aa:*lay-axis* "AA-AXIS")
 (setq aa:*lay-axistext* "AA-AXISTEXT")

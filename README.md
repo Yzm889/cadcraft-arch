@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v0.9.3，已实测跑通）
+## 现状（v0.9.4，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -28,13 +28,14 @@
 | 出图 | `export` | 完成 | 按扩展名导出 png/svg/pdf；`--sheet` 自动按图幅取窗口，PNG/PDF 均实测有产物（含 5% 余量、不裁切）；**PNG 按图层线宽自动补粗**（墙 0.35 / 图框 0.70 在预览里就是粗线，按 1:100 换像素，实测补粗后亮点数 3844→65316） |
 | 图层标准 | `layers` | 完成 | 11 个标准层开图即建：轴线红 CENTER 0.15、墙白 0.35、门窗青 0.18、标注绿 0.15、图框 0.70、图名 0.25；层被改坏后下次绘制自动纠回，回读 DXF 层表（62/6/370）校验，不符即报错；`--fix` 可批量矫正老图 |
 | 图名标注 | `title` | 完成 | 图名（5mm@1:100）+ 右侧比例（3.5mm）+ 图名下粗线（图框层 0.70）+ 比例下细线；落在 `AA-NAME`，属性存 `AA_TEXT`/`AA_SCALE` |
-| 指北针 | `north` | 完成 | 细线圆（直径 24mm@1:100）+ 等腰三角指针（尾部宽 3mm），落在 `AA-NAME`，`AA_R` 可回读 |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，23 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| 指北针 | `north` | 完成 | 细线圆（直径 24mm@出图比例）+ 等腰三角指针（尾部宽 3mm），落在 `AA-NAME`，`AA_R` 可回读 |
+| 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，24 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (19 tests)
+python tests/run_all.py     # ALL PASS (20 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -99,6 +100,9 @@ python tools/aa_cmd.py dim out.dxf
 # 9b. 图名（图名 + 比例 + 下画线）与指北针
 python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图 --scale 100
 python tools/aa_cmd.py north out.dxf N001 --at 15500,4300
+
+# 9c. 换出图比例：所有注记按 mm 规格重画（轴号圈/字、房间名、门窗编号、图名、指北针、尺寸）
+python tools/aa_cmd.py rescale out.dxf --scale 50
 
 # 10. 出图：A3@1:100 图框 + 标题栏（不给 --at 就按图形外廓自动居中排图）
 python tools/aa_cmd.py sheet out.dxf S001 --size A3 --scale 100 \
@@ -240,7 +244,8 @@ Agent 不必拼命令行：`tools/aa_mcp.py` 是一个标准 **stdio MCP 服务�
 | `aa_axis_bind` | 按轴网回填墙的 AX1/AX2（横墙端点→1/2/3，竖墙端点→A/B/C） |
 | `aa_layers` | 查看/校正标准图层的颜色、线型、线宽（`fix=true` 自动纠正） |
 | `aa_title` | 图名标注：图名 + 比例 + 下画线 |
-| `aa_north` | 指北针（圆 + 三角指针，直径默认 2400） |
+| `aa_north` | 指北针（圆 + 三角指针，直径按比例取 24mm） |
+| `aa_rescale` | 换出图比例时整批重画注记（轴号/房间名/门窗编号/图名/指北针/尺寸） |
 | `aa_wall` | 画墙，画完自动规整邻墙裁剪与合角；`snap_axis=true` 端点吸附到轴线 |
 | `aa_opening` | 墙体真实开洞 + 门窗符号 + 自动编号（`frame` 窗框厚、`no` 编号可覆盖）|
 | `aa_room` / `aa_room_auto` | 显式墙环建房间 / 自动搜环建房间 |

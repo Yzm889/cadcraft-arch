@@ -18,6 +18,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    rescale_annotations,
     create_wall,
     drawing_extent,
     export,
@@ -99,6 +100,20 @@ def main() -> int:
     win = sheet_window(ss, "S001")
     export(ss, OUT / "demo_sheet.png", win)
     export(ss, OUT / "demo_sheet.pdf", win)
+
+    # 比例联动演示：同一张图改成 1:50 出图（A2 图幅），注记字号在纸上不变
+    s50 = OUT / "demo_scale_50.dxf"
+    if s50.exists():
+        s50.unlink()
+    s50.write_bytes(full.read_bytes())
+    sf50 = Session(s50)
+    rescale_annotations(sf50, 50)
+    create_sheet(
+        sf50, "S001", size="A2", scale=50,
+        project="CADCraft 演示工程", drawing="一层平面图", number="建-01",
+        date="2026-11-20", design="严", drawn="严", check="", unit="CADCraft",
+    )
+    export(sf50, OUT / "demo_scale_50.png", sheet_window(sf50, "S001"))
 
     print("rooms: 客厅 %.0f mm²  卧室 %.0f mm²" % (r1["area"], r2["area"]))
     print("png:", png, png.exists())

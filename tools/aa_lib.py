@@ -139,6 +139,32 @@ def layer_key_by_name(name: str) -> str | None:
     return None
 
 
+def annot_size(mm: float, scale: float) -> float:
+    """图上注写的 mm 尺寸 -> 图元单位。1:100 时 2.5mm 文字 = 250 图元单位。"""
+    return float(mm) * float(scale)
+
+
+def drawing_scale(session, fallback: float = 100.0) -> float:
+    """当前图档的出图比例分母：优先取图上 `AA_SHEET` 的 AA_SCALE，没有图幅按 100。
+
+    `session.annot_scale` 可显式覆盖（CLI/MCP 的 --scale 参数走这里），
+    这样"先画标注、后套图框"和"先套图框、后画标注"两种顺序都成立。
+    """
+    forced = getattr(session, "annot_scale", None)
+    if forced:
+        return float(forced)
+    for e in session.components("AA_SHEET_"):
+        g = e["geometry"]
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in g.get("attribs", [])}
+        if attrs.get("AA_TYPE") == "SHEET" and attrs.get("AA_SCALE"):
+            try:
+                return float(attrs["AA_SCALE"])
+            except ValueError:
+                break
+    return float(fallback)
+
+
 load_layer_config()
 
 _DEFAULT_CLI_CANDIDATES = [
@@ -336,17 +362,17 @@ class Session:
 
         默认样式的字高与箭头极小，不建样式直接标注，图上只有一堆细短线。
         1:100 出图：字高 2.5mm => 250、箭头 1.5mm => 150、尺寸界线偏移 1mm => 100。
+        规格每次调用都重设：换出图比例时，旧样式必须被就地改成新的字高/箭头，
+        否则 1:50 的图上字还是按 1:100 配的，越看越小。
         """
-        if getattr(self, "_dim_ready", False):
+        key = (name, float(text_height), float(arrow_size), float(ext_offset))
+        if getattr(self, "_dim_key", None) == key:
             return
-        styles = self.run([("dimstyle.list", {})], save=False).last().get("styles") or []
-        exist = {x.get("name") if isinstance(x, dict) else x for x in styles}
-        if name not in exist:
-            self.run([("dimstyle", {"name": name, "textHeight": text_height,
-                                    "arrowSize": arrow_size,
-                                    "extOffset": ext_offset})], save=True)
+        self.run([("dimstyle", {"name": name, "textHeight": text_height,
+                                "arrowSize": arrow_size,
+                                "extOffset": ext_offset})], save=True)
         self.run([("dimstyle", {"name": name, "current": True})], save=True)
-        self._dim_ready = True
+        self._dim_key = key
 
     def block_exists(self, name: str) -> bool:
         names = self.info().get("blocks", [])
@@ -508,17 +534,26 @@ def create_axis_grid(
     yspace: float,
     xstart: float = 0.0,
     ystart: float = 0.0,
-    ext: float = 2400.0,
+    ext: float | None = None,
+    scale: float | None = None,
 ) -> dict[str, Any]:
-    """轴网：LISP 生成几何 -> block 归集 -> insert 带属性 -> 回读校验。"""
+    """轴网：LISP 生成几何 -> block 归集 -> insert 带属性 -> 回读校验。
+
+    轴号圈直径 8mm、字高 3mm、轴线外伸 24mm，按出图比例换算（1:100 => 800/300/2400）。
+    """
     block = "AA_AXGRID_" + grid_id
+    sc = float(scale) if scale else drawing_scale(session)
+    if ext is None:
+        ext = annot_size(24.0, sc)
     session.ensure_layers([LAYERS["axis"], LAYERS["axistext"]])
     session.ensure_linetypes()          # 轴线用 CENTER 点划线，先确保图档里有这个线型
 
     before = session.snapshot()
     value = session.lisp(
-        "(aa:axis \"%s\" %d %s %d %s %s %s %s)"
-        % (grid_id, xcount, xspace, ycount, yspace, xstart, ystart, ext),
+        "(progn (setq aa:*axis-r* %.4f) (setq aa:*axis-h* %.4f)"
+        " (aa:axis \"%s\" %d %s %d %s %s %s %s))"
+        % (annot_size(4.0, sc), annot_size(3.0, sc),
+           grid_id, xcount, xspace, ycount, yspace, xstart, ystart, ext),
         libraries=("aa_core.lisp", "aa_axis.lisp"),
     )
     handles = session.new_handles(before)
@@ -603,8 +638,9 @@ def auto_axis(
     session: Session,
     grid_id: str = "AX001",
     tol: float = 50.0,
-    ext: float = 2400.0,
+    ext: float | None = None,
     min_len: float = 0.0,
+    scale: float | None = None,
 ) -> dict[str, Any]:
     """按现有墙段自动生成轴网：竖墙 -> 纵向轴线（编 1、2、3…），横墙 -> 横向轴线（编 A、B、C…）。
 
@@ -618,6 +654,10 @@ def auto_axis(
     block = "AA_AXGRID_" + grid_id
     if session.block_exists(block):
         raise CadError("轴网 %s 已存在，请换编号（自动轴网不会覆盖已有轴网）" % grid_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    if ext is None:
+        ext = annot_size(24.0, sc)
+    gap = annot_size(4.0, sc)          # 轴号圈与轴线端点的间隙 = 半径，保持相切
 
     xs_raw: list[float] = []
     ys_raw: list[float] = []
@@ -651,12 +691,13 @@ def auto_axis(
     for x, lab in zip(xs, ver):
         body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
                     % (x, y0 - ext, x, y1 + ext, LAYERS["axis"]))
-        body.append('(aa:axistag %.3f %.3f "%s")' % (x, y1 + ext + 400.0, lab))
+        body.append('(aa:axistag %.3f %.3f "%s")' % (x, y1 + ext + gap, lab))
     for y, lab in zip(ys, hor):
         body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
                     % (x0 - ext, y, x1 + ext, y, LAYERS["axis"]))
-        body.append('(aa:axistag %.3f %.3f "%s")' % (x0 - ext - 400.0, y, lab))
-    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+        body.append('(aa:axistag %.3f %.3f "%s")' % (x0 - ext - gap, y, lab))
+    session.lisp("(progn (setq aa:*axis-r* %.4f) (setq aa:*axis-h* %.4f) %s (princ \"ok\"))"
+                 % (annot_size(4.0, sc), annot_size(3.0, sc), " ".join(body)),
                  libraries=("aa_core.lisp", "aa_axis.lisp"))
     handles = session.new_handles(before)
 
@@ -808,6 +849,7 @@ def create_title_mark(
     at: tuple[float, float],
     name: str,
     scale: str | int | float | None = None,
+    scale_denom: float | None = None,
 ) -> dict[str, Any]:
     """图名标注：图名 + 比例 + 图名下粗线 + 比例下细线（GB/T 50001 图名注写习惯）。
 
@@ -819,23 +861,34 @@ def create_title_mark(
     block = "AA_SYM_" + sym_id
     if session.block_exists(block):
         raise CadError("符号 %s 已存在，请换编号" % sym_id)
-    sc = "" if scale in (None, "") else ("1:%g" % float(scale))
+    denom = scale_denom
+    label = ""
+    if scale not in (None, ""):
+        text = str(scale)
+        denom = float(text.split(":")[-1]) if ":" in text else float(text)
+        label = "1:%g" % denom
+    sc = float(denom) if denom else drawing_scale(session)
     session.ensure_layers([LAYERS["name"], LAYERS["sheet"]])
     before = session.snapshot()
     session.lisp(
-        '(aa:title %.3f %.3f "%s" "%s")'
-        % (float(at[0]), float(at[1]), name.replace('"', "'"), sc),
+        "(progn (setq aa:*title-h* %.4f) (setq aa:*title-scale-h* %.4f)"
+        " (setq aa:*name-h* %.4f) (aa:title %.3f %.3f \"%s\" \"%s\"))"
+        % (annot_size(5.0, sc), annot_size(3.5, sc), annot_size(3.5, sc),
+           float(at[0]), float(at[1]), name.replace('"', "'"), label),
         libraries=("aa_core.lisp", "aa_symbol.lisp"),
     )
     handles = session.new_handles(before)
     if not handles:
         raise CadError("图名标注没有生成任何图元")
+    sc = float(denom) if denom else drawing_scale(session)
     att_defs = [
         ("AA_TYPE", "component type", "TITLEMARK"),
         ("AA_ID", "component id", sym_id),
         ("AA_KIND", "symbol kind", "TITLE"),
         ("AA_TEXT", "title text", name),
-        ("AA_SCALE", "drawing scale", sc),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
     ]
     att_vals = {t: v for t, _p, v in att_defs}
     att_handles = session.define_attributes(att_defs)
@@ -844,8 +897,8 @@ def create_title_mark(
     session.expect_attributes(
         block, {"AA_TYPE": "TITLEMARK", "AA_ID": sym_id, "AA_TEXT": name}
     )
-    return {"block": block, "handle": handle, "text": name, "scale": sc,
-            "geom_handles": handles}
+    return {"block": block, "handle": handle, "text": name, "scale": label,
+            "scale_denom": sc, "geom_handles": handles}
 
 
 def create_north_arrow(
@@ -853,21 +906,24 @@ def create_north_arrow(
     sym_id: str,
     at: tuple[float, float],
     size: float | None = None,
+    scale: float | None = None,
 ) -> dict[str, Any]:
-    """指北针（GB/T 50001 习惯）：细线圆 + 指针，圆直径 1:100 出图取 24mm。
+    """指北针（GB/T 50001 习惯）：细线圆 + 指针，圆直径 24mm@出图比例。
 
-    `size` 为图元单位（mm）；不传则按 2400（=24mm @1:100）。
+    `size` 为图元单位（mm）；不传则按 24mm × 出图比例（1:100 => 2400）。
     """
     block = "AA_SYM_" + sym_id
     if session.block_exists(block):
         raise CadError("符号 %s 已存在，请换编号" % sym_id)
-    d = 2400.0 if size is None else float(size)
+    sc = float(scale) if scale else drawing_scale(session)
+    d = annot_size(24.0, sc) if size is None else float(size)
     if d <= 0:
         raise CadError("指北针直径必须为正：%r" % (size,))
     session.ensure_layers([LAYERS["name"]])
     before = session.snapshot()
     session.lisp(
-        "(aa:north %.3f %.3f %.3f)" % (float(at[0]), float(at[1]), d),
+        "(progn (setq aa:*name-h* %.4f) (aa:north %.3f %.3f %.3f))"
+        % (annot_size(3.5, sc), float(at[0]), float(at[1]), d),
         libraries=("aa_core.lisp", "aa_symbol.lisp"),
     )
     handles = session.new_handles(before)
@@ -878,6 +934,8 @@ def create_north_arrow(
         ("AA_ID", "component id", sym_id),
         ("AA_KIND", "symbol kind", "NORTH"),
         ("AA_R", "arrow radius", "%.3f" % (d / 2.0)),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
     ]
     att_vals = {t: v for t, _p, v in att_defs}
     att_handles = session.define_attributes(att_defs)
@@ -887,6 +945,118 @@ def create_north_arrow(
         block, {"AA_TYPE": "TITLEMARK", "AA_ID": sym_id, "AA_KIND": "NORTH"}
     )
     return {"block": block, "handle": handle, "diameter": d, "geom_handles": handles}
+
+
+def _rebuild_axis_grid(session: Session, grid: dict[str, Any], scale: float) -> dict[str, Any]:
+    """按新比例重画一套已有轴网（轴位与编号保持不变，只重算圈半径/字高/间隙）。"""
+    block = grid["block"]
+    if not delete_component(session, block):
+        raise CadError("轴网 %s 不存在，无法重画" % grid["id"])
+    xs, ys = grid["xpos"], grid["ypos"]
+    if not xs or not ys:
+        raise CadError("轴网 %s 缺少轴位数据，无法按比例重画" % grid["id"])
+    ext = annot_size(24.0, scale)
+    gap = annot_size(4.0, scale)
+    session.ensure_layers([LAYERS["axis"], LAYERS["axistext"]])
+    session.ensure_linetypes()
+    before = session.snapshot()
+    body = []
+    for x, lab in zip(xs, grid["ver"]):
+        body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
+                    % (x, min(ys) - ext, x, max(ys) + ext, LAYERS["axis"]))
+        body.append('(aa:axistag %.3f %.3f "%s")' % (x, max(ys) + ext + gap, lab))
+    for y, lab in zip(ys, grid["hor"]):
+        body.append('(aa:mkline-lt (list %.3f %.3f) (list %.3f %.3f) "%s" "CENTER")'
+                    % (min(xs) - ext, y, max(xs) + ext, y, LAYERS["axis"]))
+        body.append('(aa:axistag %.3f %.3f "%s")' % (min(xs) - ext - gap, y, lab))
+    session.lisp("(progn (setq aa:*axis-r* %.4f) (setq aa:*axis-h* %.4f) %s (princ \"ok\"))"
+                 % (annot_size(4.0, scale), annot_size(3.0, scale), " ".join(body)),
+                 libraries=("aa_core.lisp", "aa_axis.lisp"))
+    handles = session.new_handles(before)
+
+    att_defs = [
+        ("AA_TYPE", "component type", "AXGRID"),
+        ("AA_ID", "component id", grid["id"]),
+        ("AA_MODE", "grid mode", grid["mode"]),
+        ("AA_XCOUNT", "x axis count", str(len(xs))),
+        ("AA_YCOUNT", "y axis count", str(len(ys))),
+        ("AA_XPOS", "vertical axis positions", ";".join("%.2f" % v for v in xs)),
+        ("AA_YPOS", "horizontal axis positions", ";".join("%.2f" % v for v in ys)),
+        ("AA_VER", "vertical labels", ";".join(grid["ver"])),
+        ("AA_HOR", "horizontal labels", ";".join(grid["hor"])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["axis"])
+    session.expect_attributes(block, {"AA_TYPE": "AXGRID", "AA_ID": grid["id"]})
+    return {"grid": grid["id"], "lines": len(handles), "handle": handle}
+
+
+def rescale_annotations(session: Session, scale: float,
+                        rebuild_dims: bool = True) -> dict[str, Any]:
+    """把图上所有"按 mm 出图"的注记整批改成新比例：轴号圈/轴号字、房间名、
+    门窗编号、图名、指北针，以及尺寸标注（删掉重画）。
+
+    做法是"删组件 -> 用原属性重画"，墙/门窗几何参数一个不改，只改字高与圈径。
+    """
+    sc = float(scale)
+    if sc <= 0:
+        raise CadError("比例必须为正数：%r" % (scale,))
+    prev = getattr(session, "annot_scale", None)
+    session.annot_scale = sc
+    try:
+        grids = [_rebuild_axis_grid(session, g, sc) for g in axis_grids(session)]
+
+        openings = opening_data(session)
+        for o in openings:
+            delete_component(session, o["block"])
+            create_opening(session, o["id"], o["wallid"], o["kind"],
+                           o["width"], o["pos"], o["height"], o["sill"],
+                           o["frame"], o["no"], o["labelside"])
+
+        rooms = room_data(session)
+        for r in rooms:
+            delete_component(session, r["block"])
+            create_room(session, r["id"], r["walls"], r["name"])
+
+        symbols = []
+        for e in session.components("AA_SYM_"):
+            g = e["geometry"]
+            attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                     for a in g.get("attribs", [])}
+            sym_id = attrs.get("AA_ID") or g["block"][len("AA_SYM_"):]
+            at = ((float(attrs.get("AA_ATX", "0") or 0),
+                   float(attrs.get("AA_ATY", "0") or 0))
+                  if attrs.get("AA_ATX") else
+                  (g["insert"]["x"], g["insert"]["y"]))
+            delete_component(session, g["block"])
+            if attrs.get("AA_KIND") == "NORTH":
+                size = 2.0 * float(attrs.get("AA_R", "0") or 0)
+                ratio = size / (24.0 * (prev or 100.0)) if prev else 1.0
+                create_north_arrow(session, sym_id, at,
+                                   size=24.0 * sc * ratio, scale=sc)
+                symbols.append({"id": sym_id, "kind": "NORTH"})
+            elif attrs.get("AA_KIND") == "TITLE":
+                create_title_mark(session, sym_id, at,
+                                  attrs.get("AA_TEXT", ""),
+                                  scale=("%g" % sc) if attrs.get("AA_SCALE") else None)
+                symbols.append({"id": sym_id, "kind": "TITLE"})
+
+        dims = 0
+        if rebuild_dims:
+            res = annotate(session, scale=sc)
+            dims = res["dims"]
+    finally:
+        if prev is None:
+            try:
+                del session.annot_scale
+            except AttributeError:
+                pass
+        else:
+            session.annot_scale = prev
+    return {"scale": sc, "grids": grids, "openings": len(openings),
+            "rooms": len(rooms), "symbols": symbols, "dims": dims}
 
 
 def wall_info(session: Session, wall_id: str) -> dict[str, Any]:
@@ -1028,9 +1198,10 @@ def create_opening(
     session.ensure_layers([LAYERS["opening"]])
 
     before = session.snapshot()
+    sc = drawing_scale(session)
     value = session.lisp(
-        '(aa:opening %s %s %s "%s" %s "%s" %s %s)'
-        % (pos, width, thick, kind, frame, no, label_rot, side),
+        '(progn (setq aa:*label-h* %.4f) (aa:opening %s %s %s "%s" %s "%s" %s %s))'
+        % (annot_size(1.8, sc), pos, width, thick, kind, frame, no, label_rot, side),
         libraries=("aa_core.lisp", "aa_opening.lisp"),
     )
     handles = session.new_handles(before)
@@ -1162,15 +1333,18 @@ def _room_inner(edges: list[tuple[tuple[float, float], tuple[float, float], str]
 
 
 def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]],
-                area: float, wall_ids: Sequence[str], name: str) -> dict[str, Any]:
+                area: float, wall_ids: Sequence[str], name: str,
+                scale: float | None = None) -> dict[str, Any]:
     """把算好的房间轮廓落图：LISP 画名称 -> block -> insert -> 回读校验。"""
     block = "AA_ROOM_" + room_id
     session.ensure_layers([LAYERS["room"]])
+    sc = float(scale) if scale else drawing_scale(session)
 
     pts_lisp = " ".join("(list %.4f %.4f 0.0)" % (p[0], p[1]) for p in inner)
     before = session.snapshot()
     value = session.lisp(
-        '(aa:room (list %s) "%s")' % (pts_lisp, name),
+        '(progn (setq aa:*room-h* %.4f) (aa:room (list %s) "%s"))'
+        % (annot_size(2.5, sc), pts_lisp, name),
         libraries=("aa_core.lisp", "aa_room.lisp"),
     )
     handles = session.new_handles(before)
@@ -1630,8 +1804,9 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
     return (dx / ln, dy / ln) if ln else (1.0, 0.0)
 
 
-def annotate(session: Session, opening_off: float = 900.0, wall_off: float = 2000.0,
-             clear: bool = True, exterior_only: bool = True) -> dict[str, Any]:
+def annotate(session: Session, opening_off: float | None = None,
+             wall_off: float | None = None, clear: bool = True,
+             exterior_only: bool = True, scale: float | None = None) -> dict[str, Any]:
     """给外墙标尺寸：墙段长度在外层、洞口宽在内层，都标在建筑外侧。
 
     - 外侧判断：取所有墙中点均值作为"建筑内部参考点"，
@@ -1645,13 +1820,20 @@ def annotate(session: Session, opening_off: float = 900.0, wall_off: float = 200
     walls = wall_data(session)
     if not walls:
         raise CadError("拒绝标注：图纸里没有墙")
+    sc = float(scale) if scale else drawing_scale(session)
+    if opening_off is None:
+        opening_off = annot_size(9.0, sc)      # 内层尺寸线离墙 9mm
+    if wall_off is None:
+        wall_off = annot_size(20.0, sc)        # 外层尺寸线离墙 20mm
     if exterior_only:
         walls = [w for w in walls if _is_exterior(session, w)]
     if not walls:
         raise CadError("拒绝标注：没找到可标注的外墙")
 
     session.ensure_layers([LAYERS["dim"]])
-    session.ensure_dim_style()
+    session.ensure_dim_style(text_height=annot_size(2.5, sc),
+                             arrow_size=annot_size(1.5, sc),
+                             ext_offset=annot_size(1.0, sc))
 
     if clear:
         old = [e["handle"] for e in session.entities().get("entities", [])

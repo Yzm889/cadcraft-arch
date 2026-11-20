@@ -41,7 +41,7 @@ def main() -> int:
     attrs = s.attributes("AA_SYM_T001")
     assert attrs["AA_TYPE"] == "TITLEMARK", attrs
     assert attrs["AA_TEXT"] == "一层平面图", attrs
-    assert attrs["AA_SCALE"] == "1:100", attrs
+    assert attrs["AA_SCALE"] == "100", attrs
 
     layers = layer_of_block(path, "AA_SYM_T001")
     assert LAYERS["name"] in layers, layers

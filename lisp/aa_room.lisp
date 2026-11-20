@@ -23,5 +23,5 @@
         per (aa:polyperim pts)
         c (aa:centroid pts))
   (if (> (strlen name) 0)
-      (aa:mktext c name aa:*lay-room* 250.0))
+    (aa:mktext c name aa:*lay-room* aa:*room-h*))
   (strcat (rtos area 2 2) "#" (rtos per 2 2)))

@@ -40,6 +40,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    rescale_annotations,
     export,
     layer_table,
     merge_walls,
@@ -133,7 +134,13 @@ def main(argv: list[str] | None = None) -> int:
     p_north.add_argument("--at", required=True, help="圆心 x,y")
     p_north.add_argument("--size", type=float, default=None, help="圆直径（图元单位），默认 2400=24mm@1:100")
 
-    p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")    p_layers.add_argument("path", nargs="?", default=None,
+    p_rescale = sub.add_parser("rescale", help="按新出图比例重画全部注记（轴号/房间名/门窗编号/图名/指北针/尺寸）")
+    p_rescale.add_argument("path")
+    p_rescale.add_argument("--scale", type=float, required=True, help="新比例分母，如 50 表示 1:50")
+    p_rescale.add_argument("--no-dims", action="store_true", help="不重画尺寸标注")
+
+    p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")
+    p_layers.add_argument("path", nargs="?", default=None,
                           help="图纸路径；省略则只列出标准规格，不读图")
     p_layers.add_argument("--fix", action="store_true",
                           help="按标准建层/纠偏（缺层新建，颜色线型线宽不符就改），并回读校验")
@@ -297,6 +304,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "north":
             emit({"ok": True, **create_north_arrow(
                 session, args.id, _pt(args.at), args.size)})
+        elif args.cmd == "rescale":
+            emit({"ok": True, **rescale_annotations(
+                session, args.scale, rebuild_dims=not args.no_dims)})
         elif args.cmd == "wall":
             res = create_wall(
                 session, args.id, _pt(args.p1), _pt(args.p2),
