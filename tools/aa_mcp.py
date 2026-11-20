@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.25"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.26"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -741,10 +741,25 @@ TOOLS: list[dict[str, Any]] = [
                 "side": {"type": "string", "enum": ["BOTH", "LEFT", "RIGHT"],
                          "description": "BOTH 两端外墙都剖（默认）；LEFT/RIGHT 半剖，只在那一端画墙带", "default": "BOTH"},
                 "inner_walls": {"type": "array",
-                                "description": "被剖到的室内隔墙 {x, thick}，x 从剖面左端室内面起算",
+                                "description": "被剖到的室内隔墙 {x, thick, openings?}，x 从剖面左端室内面起算",
                                 "items": {"type": "object",
-                                          "properties": {"x": {"type": "number"},
-                                                         "thick": {"type": "number", "default": 120}},
+                                          "properties": {
+                                              "x": {"type": "number"},
+                                              "thick": {"type": "number", "default": 120},
+                                              "openings": {
+                                                  "type": "array",
+                                                  "description": "该隔墙上被剖到的门窗 {floor, h, sill, kind}",
+                                                  "items": {"type": "object",
+                                                            "properties": {
+                                                                "floor": {"type": "integer", "default": 1},
+                                                                "h": {"type": "number"},
+                                                                "sill": {"type": "number", "default": 0},
+                                                                "kind": {"type": "string",
+                                                                         "enum": ["WINDOW", "DOOR"],
+                                                                         "default": "DOOR"},
+                                                            },
+                                                            "required": ["h"]}},
+                                          },
                                           "required": ["x"]}},
                 "beams": {"type": "array",
                           "description": "梁 {floor, x0, x1, h}，挂在那一层楼板底",

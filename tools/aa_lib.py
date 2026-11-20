@@ -2511,8 +2511,8 @@ def create_section(
                                % ("左" if ops_cut[a]["side"] == "LEFT" else "右",
                                   ops_cut[a]["elev0"], ops_cut[b]["elev0"]))
 
-    # 被剖到的室内隔墙：只给位置与厚度，贯穿墙顶
-    iwalls: list[dict[str, float]] = []
+    # 被剖到的室内隔墙：只给位置与厚度，贯穿墙顶；可挂剖到的门窗
+    iwalls: list[dict[str, Any]] = []
     for i, wd in enumerate(inner_walls or ()):
         if not isinstance(wd, dict):
             raise CadError("剖面隔墙必须是对象（收到 %r）" % (wd,))
@@ -2526,7 +2526,34 @@ def create_section(
         for other in iwalls:
             if min(x + t, other["x"] + other["thick"]) - max(x, other["x"]) > 1e-6:
                 raise CadError("第 %d 道剖面隔墙与已有隔墙在剖面上重叠" % (i + 1))
-        iwalls.append({"x": x, "thick": t})
+        iops: list[dict[str, Any]] = []
+        for k, op in enumerate(wd.get("openings", []) or ()):
+            if not isinstance(op, dict):
+                raise CadError("第 %d 道隔墙的第 %d 个洞口必须是对象" % (i + 1, k + 1))
+            fl = int(op.get("floor", 1) or 1)
+            if not (1 <= fl <= len(rows)):
+                raise CadError("第 %d 道隔墙第 %d 个洞口层号 %s 超出 1..%d"
+                               % (i + 1, k + 1, fl, len(rows)))
+            hh, sill = float(op.get("h", 0.0)), float(op.get("sill", 0.0))
+            if hh <= 0:
+                raise CadError("第 %d 道隔墙第 %d 个洞口高必须为正（收到 %s）" % (i + 1, k + 1, hh))
+            if sill < 0:
+                raise CadError("第 %d 道隔墙第 %d 个洞口窗台高不能为负" % (i + 1, k + 1))
+            if sill + hh > rows[fl - 1]["height"] + 1e-6:
+                raise CadError("第 %d 道隔墙第 %d 个洞口高出本层：sill %s + h %s > 层高 %s"
+                               % (i + 1, k + 1, sill, hh, rows[fl - 1]["height"]))
+            kd = str(op.get("kind", "WINDOW")).upper()
+            if kd not in ("WINDOW", "DOOR"):
+                raise CadError("第 %d 道隔墙第 %d 个洞口类型只能是 WINDOW / DOOR" % (i + 1, k + 1))
+            iops.append({"kind": kd, "h": hh, "sill": sill,
+                         "elev0": rows[fl - 1]["elev"] + sill,
+                         "elev1": rows[fl - 1]["elev"] + sill + hh})
+        for a in range(len(iops)):
+            for b in range(a + 1, len(iops)):
+                if min(iops[a]["elev1"], iops[b]["elev1"]) - \
+                        max(iops[a]["elev0"], iops[b]["elev0"]) > 1e-6:
+                    raise CadError("第 %d 道隔墙上的两个洞口竖向重叠" % (i + 1))
+        iwalls.append({"x": x, "thick": t, "ops": iops})
 
     # 梁：挂在楼板底，从 x0 到 x1
     bms: list[dict[str, Any]] = []
@@ -2582,29 +2609,40 @@ def create_section(
     else:
         code.append(L(width - wall, 0.0, width - wall, top, det))
 
-    # 被剖到的室内隔墙：同宽窄带，从地坪贯到墙顶
+    # 被剖到的室内隔墙：同宽窄带，从地坪贯到墙顶；带门窗时按洞口断墙
     for iw in iwalls:
-        code.append(L(iw["x"], 0.0, iw["x"], top, lev))
-        code.append(L(iw["x"] + iw["thick"], 0.0, iw["x"] + iw["thick"], top, lev))
+        g_iw = [(o["elev0"], o["elev1"]) for o in iw["ops"]]
+        code += wall_segments(iw["x"], g_iw) + wall_segments(iw["x"] + iw["thick"], g_iw)
 
     # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门扇冒头线 + 窗台板向室内挑出
-    boxes = {"LEFT": (0.0, wall, 1.0), "RIGHT": (width - wall, width, -1.0)}
-    for op in ops_cut:
-        x0, x1, prot = boxes[op["side"]]
+    def cut_opening(x0, x1, prot, op):
         b, t2 = op["elev0"], op["elev1"]
         if b > 1e-6:
             code.append(L(x0, b, x1, b, det))
         code.append(L(x0, t2, x1, t2, det))
-        if x1 - x0 > 2 * frame_s:
+        framed = x1 - x0 > 2 * frame_s
+        if framed:
             code.append(L(x0 + frame_s, b, x0 + frame_s, t2, det))
             code.append(L(x1 - frame_s, b, x1 - frame_s, t2, det))
-            if op["kind"] == "WINDOW":
+        if op["kind"] == "WINDOW":
+            if framed:
                 code.append(L((x0 + x1) / 2.0, b, (x0 + x1) / 2.0, t2, det))
-                # 窗台板向室内挑出 60，剖面上一眼能认出是窗
-                code.append(L(x0, b, x1 + prot * 60.0, b, det))
-            else:
-                code.append(L(x0 + frame_s, t2 - min(500.0, op["h"] / 4.0),
-                              x1 - frame_s, t2 - min(500.0, op["h"] / 4.0), det))
+            # 窗台板向室内挑出 60，剖面上一眼能认出是窗
+            code.append(L(x0, b, x1 + prot * 60.0, b, det))
+        else:
+            # 门扇上冒头线（薄墙也能认出是门）
+            hy = t2 - min(500.0, op["h"] / 4.0)
+            left = x0 + frame_s if framed else x0
+            right = x1 - frame_s if framed else x1
+            code.append(L(left, hy, right, hy, det))
+
+    boxes = {"LEFT": (0.0, wall, 1.0), "RIGHT": (width - wall, width, -1.0)}
+    for op in ops_cut:
+        x0, x1, prot = boxes[op["side"]]
+        cut_opening(x0, x1, prot, op)
+    for iw in iwalls:
+        for op in iw["ops"]:
+            cut_opening(iw["x"], iw["x"] + iw["thick"], 1.0, op)
 
     # 楼板（每层楼面一条板顶 + 一条板底；首层地面即地坪，不重复）
     # 两端被剖到的墙之间净宽内画，不穿进墙带
@@ -2879,12 +2917,14 @@ def read_cut_openings(
     p2: tuple[float, float],
     floor: int = 1,
     tol: float = 1.0,
+    walls: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """沿剖切线找被切到的墙与洞口，直接给 `create_section` 的 `openings`。
 
     `p1` = 剖面图上左端在平面上的对应点，`p2` = 右端对应点（剖切符号的两个端点）。
     剖切线穿过墙身时，才把墙上的门窗算进来；洞口被切到（切点落在洞口宽度内）才出。
     侧别按"离 p1 近还是离 p2 近"判：近 p1 → LEFT，近 p2 → RIGHT。
+    `walls` 可只取其中几道墙（如只取两端外墙、把隔墙留给 `inner_walls`）。
     """
     a, b = (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1]))
     dx, dy = b[0] - a[0], b[1] - a[1]
@@ -2894,9 +2934,12 @@ def read_cut_openings(
     ux, uy = dx / length, dy / length
 
     ops_all = opening_data(session)
+    pick = set(walls) if walls else None
     out: list[dict[str, Any]] = []
     for e in session.components("AA_WALL_"):
         wid = e["geometry"]["block"][len("AA_WALL_"):]
+        if pick is not None and wid not in pick:
+            continue
         info = wall_info(session, wid)
         wl = float(info["length"])
         if wl <= 1e-9:

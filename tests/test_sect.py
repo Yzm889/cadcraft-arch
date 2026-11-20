@@ -98,6 +98,17 @@ def main() -> int:
     a5 = s.attributes("AA_SECTION_P5")
     assert a5["AA_INWALLS"] == "1" and a5["AA_BEAMS"] == "1", a5
 
+    # 隔墙上也开洞（120 薄墙）：墙带在 0..2100 断开，只留洞口上口 + 门扇冒头线
+    po = create_section(s, "P6", (0.0, 60000.0), 6000.0, floors, (),
+                        "BOTH", 100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0,
+                        [{"x": 2400.0, "thick": 120.0,
+                          "openings": [{"floor": 1, "h": 2100.0, "sill": 0.0,
+                                        "kind": "DOOR"}]}])
+    assert po["inner_walls"] == 1 and po["openings"] == 0, po
+    g = block_geometry(path, "AA_SECTION_P6")
+    nl, nt = counts(g)
+    assert (nl, nt) == (39, 4), (nl, nt)
+
     # 隔墙压到外墙 / 梁方向反了 -> 拒绝
     try:
         create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",

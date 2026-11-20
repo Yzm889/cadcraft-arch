@@ -250,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
                            choices=["BOTH", "LEFT", "RIGHT"],
                            help="BOTH 两端外墙都剖（默认）；LEFT/RIGHT 半剖，只在那一端画墙带")
     p_profile.add_argument("--inwall", action="append", default=[],
-                           help='被剖到的室内隔墙："x,厚"（x 从剖面左端室内面起算）')
+                           help='被剖到的室内隔墙："x,厚" 或 "x,厚,层号,洞高,窗台高[,WINDOW|DOOR]"')
     p_profile.add_argument("--beam", action="append", default=[],
                            help='梁："层号,x0,x1,梁高"（挂在那一层楼板底）')
 
@@ -552,8 +552,15 @@ def main(argv: list[str] | None = None) -> int:
             iwalls = []
             for spec in args.inwall:
                 parts = [p.strip() for p in spec.split(",")]
-                iwalls.append({"x": float(parts[0]),
-                               "thick": float(parts[1]) if len(parts) > 1 and parts[1] else 120.0})
+                iw = {"x": float(parts[0]),
+                      "thick": float(parts[1]) if len(parts) > 1 and parts[1] else 120.0}
+                if len(parts) > 4 and parts[2]:
+                    op = {"floor": int(parts[2]), "h": float(parts[3]),
+                          "sill": float(parts[4])}
+                    if len(parts) > 5 and parts[5]:
+                        op["kind"] = parts[5]
+                    iw["openings"] = [op]
+                iwalls.append(iw)
             bms = []
             for spec in args.beam:
                 parts = [p.strip() for p in spec.split(",")]

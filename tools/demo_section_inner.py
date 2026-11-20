@@ -57,22 +57,26 @@ def main() -> int:
                    height=2100.0, no="M0921")
     create_opening(s, "C001", "W002", "WINDOW", width=1500.0, pos=1200.0,
                    height=1500.0, sill=900.0, no="C1215")
-    # 隔墙上的门放在切不到的 x=4200，避免剖面隔墙要开洞（暂不支持）
-    create_opening(s, "M002", "W005", "DOOR", width=800.0, pos=4200.0,
+    # 隔墙上的门就开在剖切线位置（X=900），剖面隔墙要按它断墙
+    create_opening(s, "M002", "W005", "DOOR", width=800.0, pos=900.0,
                    height=2100.0, no="M0821")
 
     create_section_mark(s, "SM1", (900.0, -1200.0), (900.0, 4200.0),
                         direction="left", no="1", scale=SCALE)
 
-    cut_ops = read_cut_openings(s, (900.0, -1200.0), (900.0, 4200.0))
+    cut_all = read_cut_openings(s, (900.0, -1200.0), (900.0, 4200.0))
+    assert [(o["wall"], o["side"]) for o in cut_all] == [("W001", "LEFT"), ("W005", "LEFT")], cut_all
+    cut_ops = read_cut_openings(s, (900.0, -1200.0), (900.0, 4200.0), walls=["W001"])
     assert [(o["side"], o["kind"]) for o in cut_ops] == [("LEFT", "DOOR")], cut_ops
 
     create_section(
         s, "P1", (0.0, -9000.0), 2760.0, FLOORS,
         openings=cut_ops, side="BOTH", slab=100.0, roof="FLAT", parapet=900.0,
         wall=240.0,
-        inner_walls=[{"x": 1380.0, "thick": 120.0}],
-        beams=[{"floor": 2, "x0": 0.0, "x1": 2760.0, "h": 500.0}],
+        inner_walls=[{"x": 1380.0, "thick": 120.0,
+                      "openings": [{"floor": 1, "h": 2100.0, "sill": 0.0,
+                                   "kind": "DOOR"}]}],
+        beams=[{"floor": 2, "x0": 240.0, "x1": 2520.0, "h": 500.0}],
     )
     create_title_mark(s, "T01", (3000.0, -1200.0), "一层平面图", SCALE)
     create_title_mark(s, "T02", (1380.0, -10200.0), "1-1 剖面图", SCALE)
@@ -80,8 +84,10 @@ def main() -> int:
     e = drawing_extent(s, pad=0.0)
     print("extent: %r" % (e,))
     export(s, OUT / "demo_section_inner.png", window=(-1800.0, -10600.0, 7600.0, 4400.0))
-    export(s, OUT / "demo_section_inner_sect.png",
-           window=(-500.0, -10300.0, 3400.0, -7500.0))
+    export(s, OUT / "demo_section_inner_low.png",
+           window=(-300.0, -9400.0, 3300.0, -6970.0))
+    export(s, OUT / "demo_section_inner_high.png",
+           window=(-300.0, -6970.0, 3300.0, -4540.0))
     return 0
 
 
