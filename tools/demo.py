@@ -11,8 +11,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from aa_lib import (  # noqa: E402
     Session,
+    annot_size,
     annotate,
     auto_axis,
+    create_axis_grid,
     create_opening,
     create_room,
     create_sheet,
@@ -25,6 +27,7 @@ from aa_lib import (  # noqa: E402
     normalize_around,
     openings_report,
     rooms_report,
+    set_drawing_scale,
     sheet_window,
 )
 
@@ -114,6 +117,43 @@ def main() -> int:
         date="2026-11-20", design="严", drawn="严", check="", unit="CADCraft",
     )
     export(sf50, OUT / "demo_scale_50.png", sheet_window(sf50, "S001"))
+
+    # 正常流程演示：开图先定 1:50，再画所有构件（对比 demo_scale_50 的"画完再改比例"）
+    pre = OUT / "demo_scale_pre.dxf"
+    if pre.exists():
+        pre.unlink()
+    sp = Session(pre)
+    sp.new_metric()
+    set_drawing_scale(sp, 50, rescale=False)
+    create_axis_grid(sp, "AX001", 3, 3600.0, 2, 4500.0, ext=annot_size(24.0, 50))
+    for wid, p1, p2 in (
+        ("W001", (0.0, 0.0), (7200.0, 0.0)),
+        ("W002", (0.0, 0.0), (0.0, 4500.0)),
+        ("W003", (7200.0, 0.0), (7200.0, 4500.0)),
+        ("W004", (0.0, 4500.0), (7200.0, 4500.0)),
+    ):
+        create_wall(sp, wid, p1, p2, thick=240.0, snap_axis=True)
+    create_opening(sp, "M001", "W001", "DOOR", width=900.0, pos=1200.0, no="M0921")
+    create_opening(sp, "C001", "W001", "WINDOW", width=1500.0, pos=4200.0, no="C1215")
+    create_room(sp, "R001", ["W001", "W002", "W003", "W004"], name="客厅")
+    annotate(sp)
+    ext_sp = drawing_extent(sp, pad=0.0)
+    create_title_mark(
+        sp, "T001",
+        ((ext_sp[0] + ext_sp[2]) / 2.0 - annot_size(30.0, 50),
+         ext_sp[1] - annot_size(20.0, 50)),
+        "一层平面图", None)
+    sheet_pre = create_sheet(
+        sp, "S001", size="AUTO",
+        project="CADCraft 演示工程", drawing="一层平面图", number="建-01",
+        date="2026-11-20", design="严", drawn="严", check="", unit="CADCraft",
+    )
+    # 指北针放在内框右上角（跟着图幅走，不跟模型坐标）
+    create_north_arrow(
+        sp, "N001",
+        (sheet_pre["at"][0] + sheet_pre["inner"][0] - annot_size(30.0, 50),
+         sheet_pre["at"][1] + sheet_pre["inner"][1] - annot_size(30.0, 50)))
+    export(sp, OUT / "demo_scale_pre.png", sheet_window(sp, "S001"))
 
     print("rooms: 客厅 %.0f mm²  卧室 %.0f mm²" % (r1["area"], r2["area"]))
     print("png:", png, png.exists())

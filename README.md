@@ -4,11 +4,11 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v0.9.4，已实测跑通）
+## 现状（v0.9.6，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
-| 新建公制图纸 | `new` | 完成 | — |
+| 新建公制图纸 | `new` | 完成 | 建图即建 11 个标准层；`--scale 100` 可开图就定出图比例 |
 | 轴网（等距） | `axis` | 完成 | 4 纵 + 3 横、14 个图元、10 项属性、DWG 往返 |
 | **轴网自动** | `axis-auto` | 完成 | 由墙反推轴线：竖墙 x 聚类、横墙 y 聚类（`--tol` 50mm 合同轴）、竖轴编 1/2/3、横轴编 A/B/C、轴线端外伸 2400、斜墙跳过并记 `AA_SKIP`；回读校验线数/圈数/文字/线型（全 CENTER）；**生成时顺手把每堵墙的 AX1/AX2 回填**（横墙端点→1/2/3，竖墙端点→A/B/C，斜墙留空） |
 | 墙轴号回填 | `axis-bind` | 完成 | 对已有图按轴网回填墙的 AX1/AX2，只改属性不改几何（`--only-empty` 不覆盖手填值、`--tol` 可调） |
@@ -24,18 +24,19 @@
 | 改门窗参数 | `set-opening` | 完成 | 改位置/宽度/类型/窗框厚/编号后重建符号并重排所属墙缺口；越界/重叠拒绝且文件字节不变 |
 | 门窗表 | `openings` | 完成 | 同编号合并计数，列洞口宽高/樘数/所在墙；CSV 与图上表格（6 列，编号窄、所在墙宽）|
 | 尺寸标注 | `dim` | 完成 | 外墙墙段长度标外层、洞口宽标内层，落在 `AA-DIM` 层；内墙自动跳过，重跑幂等、回读测量值 |
-| 图框 + 标题栏 | `sheet` / `set-sheet` | 完成 | GB/T 14689 图幅（A0–A4）、装订边 25、其余边 A0/A1=10 其余 5；标题栏 180×56 九格（GB/T 10609.1）；不给位置按全图外廓（墙/房间/轴号/尺寸/表格）自动居中排图，装不下直接报错；重复编号拒绝、改标题栏后块唯一且属性同步 |
+| 图框 + 标题栏 | `sheet` / `set-sheet` | 完成 | GB/T 14689 图幅（A0–A4）、装订边 25、其余边 A0/A1=10 其余 5；标题栏 180×56 九格（GB/T 10609.1）；不给位置按全图外廓（墙/房间/轴号/尺寸/表格）自动居中排图；`--size AUTO` 按外廓挑最小能装下的图幅，指定图幅装不下时自动升一级并在结果里回传 `promoted`；重复编号拒绝、改标题栏后块唯一且属性同步 |
 | 出图 | `export` | 完成 | 按扩展名导出 png/svg/pdf；`--sheet` 自动按图幅取窗口，PNG/PDF 均实测有产物（含 5% 余量、不裁切）；**PNG 按图层线宽自动补粗**（墙 0.35 / 图框 0.70 在预览里就是粗线，按 1:100 换像素，实测补粗后亮点数 3844→65316） |
 | 图层标准 | `layers` | 完成 | 11 个标准层开图即建：轴线红 CENTER 0.15、墙白 0.35、门窗青 0.18、标注绿 0.15、图框 0.70、图名 0.25；层被改坏后下次绘制自动纠回，回读 DXF 层表（62/6/370）校验，不符即报错；`--fix` 可批量矫正老图 |
 | 图名标注 | `title` | 完成 | 图名（5mm@1:100）+ 右侧比例（3.5mm）+ 图名下粗线（图框层 0.70）+ 比例下细线；落在 `AA-NAME`，属性存 `AA_TEXT`/`AA_SCALE` |
 | 指北针 | `north` | 完成 | 细线圆（直径 24mm@出图比例）+ 等腰三角指针（尾部宽 3mm），落在 `AA-NAME`，`AA_R` 可回读 |
-| 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画 |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，24 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
+| 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，25 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (20 tests)
+python tests/run_all.py     # ALL PASS (21 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -57,8 +58,12 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 ## 用法
 
 ```bash
-# 1. 新建图纸
-python tools/aa_cmd.py new out.dxf
+# 1. 新建图纸（--scale 开图即定出图比例，之后画的注记都按它取 mm 规格）
+python tools/aa_cmd.py new out.dxf --scale 100
+
+# 1b. 中途定/改比例（默认把已有注记整批重画；--no-rescale 只改标记）
+python tools/aa_cmd.py scale out.dxf                 # 查询当前比例
+python tools/aa_cmd.py scale out.dxf --set 50
 
 # 2a. 轴网（等距）：3 道纵轴 @3600，2 道横轴 @4800
 python tools/aa_cmd.py axis out.dxf AX001 --xcount 3 --xspace 3600 --ycount 2 --yspace 4800
@@ -97,16 +102,18 @@ python tools/aa_cmd.py set-opening out.dxf D001 --pos 1500 --width 900
 # 9. 尺寸标注（外墙墙段 + 洞口宽）
 python tools/aa_cmd.py dim out.dxf
 
-# 9b. 图名（图名 + 比例 + 下画线）与指北针
-python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图 --scale 100
+# 9b. 图名（图名 + 比例 + 下画线）与指北针；--scale 省略则跟图档比例
+python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图
+python tools/aa_cmd.py title out.dxf T001 --at 0,-6600 --name 一层平面图 --scale ""
 python tools/aa_cmd.py north out.dxf N001 --at 15500,4300
 
-# 9c. 换出图比例：所有注记按 mm 规格重画（轴号圈/字、房间名、门窗编号、图名、指北针、尺寸）
+# 9c. 已画完再改比例：所有注记按 mm 规格重画（补救路径，正常优先用第 1 步的 --scale）
 python tools/aa_cmd.py rescale out.dxf --scale 50
 
-# 10. 出图：A3@1:100 图框 + 标题栏（不给 --at 就按图形外廓自动居中排图）
+# 10. 出图：A3@1:100 图框 + 标题栏（不给 --at 就按图形外廓自动居中排图；--size AUTO 自动选图幅）
 python tools/aa_cmd.py sheet out.dxf S001 --size A3 --scale 100 \
     --project "某工程" --drawing "一层平面图" --no "建-01" --date 2026-11-20 --design 严
+python tools/aa_cmd.py sheet out.dxf S002 --size AUTO --project "某工程"   # 放不下自动升一级
 
 # 11. 改标题栏内容（图幅/位置/比例不变，重画并同步属性）
 python tools/aa_cmd.py set-sheet out.dxf S001 --drawing "二层平面图" --no "建-02"
@@ -238,7 +245,8 @@ Agent 不必拼命令行：`tools/aa_mcp.py` 是一个标准 **stdio MCP 服务�
 
 | 工具 | 作用 |
 |---|---|
-| `aa_new` / `aa_show` | 新建公制图纸 / 回读全部构件 |
+| `aa_new` / `aa_show` | 新建公制图纸（可带 `scale` 开图即定比例）/ 回读全部构件 |
+| `aa_scale` | 查询/设定图档出图比例（`set` 省略则只查；改比例默认整批重画已有注记） |
 | `aa_axis` | 轴网（纵轴 + 横轴 + 轴号） |
 | `aa_axis_auto` | **轴网自动**：按现有墙段反推轴线位置并自动编号，同时回填墙的 AX1/AX2 |
 | `aa_axis_bind` | 按轴网回填墙的 AX1/AX2（横墙端点→1/2/3，竖墙端点→A/B/C） |
@@ -253,7 +261,10 @@ Agent 不必拼命令行：`tools/aa_mcp.py` 是一个标准 **stdio MCP 服务�
 | `aa_set_wall` / `aa_set_opening` | 改参数后整体重建（失败回滚、幂等） |
 | `aa_set_room` / `aa_rooms` | 房间改名（重画名称文字）/ 汇总出 CSV 与图上表格 |
 | `aa_openings` | 门窗表：同编号合并计数，CSV 或图上 6 列表格 |
-| `aa_dim` | 尺寸标注：外墙墙段 + 洞口宽，两道尺寸线，幂等 |
+| `aa_dim` | 尺寸标注：外墙墙段 + 洞口宽，两道尺寸线，自动排在轴号圈外，幂等 |
+| `aa_sheet` | 图框 + 标题栏（`size` 可传 `AUTO` 自动选图幅） |
+| `aa_set_sheet` | 改标题栏内容（图幅/位置/比例保持不变，重画后属性同步） |
+| `aa_export` | 出图 png/svg/pdf（给 `sheet` 按图幅取窗口，PNG 自动补线宽） |
 
 客户端配置直接抄 `mcp.example.json`。启动方式：
 

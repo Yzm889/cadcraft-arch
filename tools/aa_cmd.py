@@ -41,6 +41,8 @@ from aa_lib import (  # noqa: E402
     create_title_mark,
     create_north_arrow,
     rescale_annotations,
+    set_drawing_scale,
+    drawing_scale,
     export,
     layer_table,
     merge_walls,
@@ -94,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_new = sub.add_parser("new", help="新建公制图纸")
     p_new.add_argument("path")
+    p_new.add_argument("--scale", type=float, default=None,
+                       help="出图比例分母（如 100 = 1:100）；给了就从开图起按该比例画注记")
+
+    p_scale = sub.add_parser("scale", help="查看/设定图档出图比例（先定比例再画）")
+    p_scale.add_argument("path")
+    p_scale.add_argument("--set", type=float, default=None, help="设为新比例（已有注记默认整批重画）")
+    p_scale.add_argument("--no-rescale", action="store_true", help="只改标记，不重画已有注记")
 
     p_axis = sub.add_parser("axis", help="生成轴网")
     p_axis.add_argument("path")
@@ -126,7 +135,8 @@ def main(argv: list[str] | None = None) -> int:
     p_title.add_argument("id")
     p_title.add_argument("--at", required=True, help="图名文字插入点 x,y")
     p_title.add_argument("--name", required=True, help="图名文字，如 一层平面图")
-    p_title.add_argument("--scale", default="100", help="比例分母，如 100 表示 1:100；留空则不注比例")
+    p_title.add_argument("--scale", default=None,
+                         help="比例分母，如 100 表示 1:100；省略则取图档比例；留空字符串则不注比例")
 
     p_north = sub.add_parser("north", help="指北针（圆 + 指针）")
     p_north.add_argument("path")
@@ -241,8 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     p_sheet = sub.add_parser("sheet", help="图框 + 标题栏（GB/T 14689 幅面），默认自动居中排图")
     p_sheet.add_argument("path")
     p_sheet.add_argument("id", nargs="?", default="S001")
-    p_sheet.add_argument("--size", default="A3", choices=list("A0 A1 A2 A3 A4".split()))
-    p_sheet.add_argument("--scale", type=float, default=100.0, help="比例分母（1:100 填 100）")
+    p_sheet.add_argument("--size", default="A3", choices=list("AUTO A0 A1 A2 A3 A4".split()))
+    p_sheet.add_argument("--scale", type=float, default=None,
+                         help="比例分母（1:100 填 100）；省略则读图档比例标记")
     p_sheet.add_argument("--at", default=None, help="图幅左下角 x,y；省略则按图形外廓自动排图")
     p_sheet.add_argument("--margin", type=float, default=1500.0, help="自动排图时图形到内框的留白")
     p_sheet.add_argument("--project", default="")
@@ -278,7 +289,17 @@ def main(argv: list[str] | None = None) -> int:
         session = Session(args.path)
         if args.cmd == "new":
             session.new_metric()
-            emit({"ok": True, "path": str(session.path)})
+            out = {"ok": True, "path": str(session.path)}
+            if args.scale:
+                out.update(set_drawing_scale(session, args.scale, rescale=False))
+            emit(out)
+            return 0
+        if args.cmd == "scale":
+            if args.set is None:
+                emit({"ok": True, "scale": drawing_scale(session)})
+            else:
+                emit({"ok": True, **set_drawing_scale(
+                    session, args.set, rescale=not args.no_rescale)})
             return 0
 
         if not session.path.exists():

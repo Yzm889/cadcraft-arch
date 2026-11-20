@@ -145,14 +145,17 @@ def annot_size(mm: float, scale: float) -> float:
 
 
 def drawing_scale(session, fallback: float = 100.0) -> float:
-    """当前图档的出图比例分母：优先取图上 `AA_SHEET` 的 AA_SCALE，没有图幅按 100。
+    """当前图档的出图比例分母：优先 `AA_CFG_SCALE` 标记，其次图上 `AA_SHEET` 的 AA_SCALE，都没有按 100。
 
-    `session.annot_scale` 可显式覆盖（CLI/MCP 的 --scale 参数走这里），
-    这样"先画标注、后套图框"和"先套图框、后画标注"两种顺序都成立。
+    `session.annot_scale` 可显式覆盖（rescale 等临时场景走这里），
+    这样"先定比例再画"和"先画后套图框"两种顺序都成立。
     """
     forced = getattr(session, "annot_scale", None)
     if forced:
         return float(forced)
+    cfg = cfg_scale(session)
+    if cfg:
+        return cfg
     for e in session.components("AA_SHEET_"):
         g = e["geometry"]
         attrs = {a["tag"]: a.get("text", {}).get("value", "")
@@ -163,6 +166,57 @@ def drawing_scale(session, fallback: float = 100.0) -> float:
             except ValueError:
                 break
     return float(fallback)
+
+
+CFG_BLOCK = "AA_CFG_SCALE"
+
+
+def cfg_scale(session) -> float | None:
+    """读图档级比例标记（`AA_CFG_SCALE`），没有返回 None。"""
+    ref = session.reference(CFG_BLOCK)
+    if not ref:
+        return None
+    attrs = {a["tag"]: a.get("text", {}).get("value", "")
+             for a in ref["geometry"].get("attribs", [])}
+    try:
+        return float(attrs.get("AA_SCALE") or 0) or None
+    except ValueError:
+        return None
+
+
+def _write_cfg_scale(session, scale: float) -> str:
+    """写/改图档级比例标记：只有一条不可见属性，不画几何。"""
+    sc = "%.6g" % scale
+    ref = session.reference(CFG_BLOCK)
+    if ref:
+        session.run([("attedit", {"handle": ref["handle"], "values": {"AA_SCALE": sc}})],
+                    save=True)
+        return ref["handle"]
+    att = session.define_attributes([("AA_SCALE", "drawing scale 1:n", sc)])[0]
+    session.make_block(CFG_BLOCK, (0.0, 0.0), [att])
+    return session.insert(CFG_BLOCK, (0.0, 0.0), {"AA_SCALE": sc})
+
+
+def set_drawing_scale(session, scale: float, rescale: bool = True) -> dict[str, Any]:
+    """定/改出图比例（天正式"先定比例再画"）。
+
+    - 比例写进 `AA_CFG_SCALE` 标记，**之后画的墙/门窗/房间/轴号/尺寸/图名/表格全部按它取 mm 规格**；
+    - 图里已有注记时，默认按新比例整批重画（`rescale=False` 可只改标记）；
+    - 图幅比例小于标记时提示（由 create_sheet 校验）。
+    """
+    sc = float(scale)
+    if sc <= 0:
+        raise CadError("比例必须为正数：%r" % (scale,))
+    old = cfg_scale(session)
+    if old is not None and abs(old - sc) < 1e-9:
+        return {"scale": sc, "changed": 0, "rescaled": None}
+    has_annot = bool(session.components("AA_AXGRID_") or session.components("AA_ROOM_")
+                     or session.components("AA_OPENING_") or session.components("AA_SYM_")
+                     or session.components("AA_TABLE_")
+                     or session.components("AA_SHEET_"))
+    res = rescale_annotations(session, sc) if (rescale and has_annot) else None
+    handle = _write_cfg_scale(session, sc)
+    return {"scale": sc, "changed": 1, "handle": handle, "rescaled": res}
 
 
 load_layer_config()
@@ -863,9 +917,14 @@ def create_title_mark(
         raise CadError("符号 %s 已存在，请换编号" % sym_id)
     denom = scale_denom
     label = ""
-    if scale not in (None, ""):
+    if isinstance(scale, str) and not scale.strip():
+        denom = None                       # 显式留空：不注比例
+    elif scale not in (None, ""):
         text = str(scale)
         denom = float(text.split(":")[-1]) if ":" in text else float(text)
+        label = "1:%g" % denom
+    else:
+        denom = drawing_scale(session)      # 未给：跟图档比例走
         label = "1:%g" % denom
     sc = float(denom) if denom else drawing_scale(session)
     session.ensure_layers([LAYERS["name"], LAYERS["sheet"]])
@@ -1463,21 +1522,30 @@ def create_room(
         segs.append({"id": wid, "p1": p1, "p2": p2, "u": u})
         thick[wid] = info["thick"]
 
-    # 串成闭合环（允许墙反向，自动纠正）
+    # 串成闭合环（允许墙反向、允许窗口顺序与画向不一致：每次在剩余墙里找接得上的那堵）
     ring_pts = [segs[0]["p1"], segs[0]["p2"]]
     oriented = [segs[0]]
-    for seg in segs[1:]:
+    rest = segs[1:]
+    while rest:
         last = ring_pts[-1]
-        if math.dist(last, seg["p1"]) <= 1.0:
-            ring_pts.append(seg["p2"])
-            oriented.append(seg)
-        elif math.dist(last, seg["p2"]) <= 1.0:
-            ring_pts.append(seg["p1"])
-            oriented.append({**seg, "u": (-seg["u"][0], -seg["u"][1])})
-        else:
+        hit = None
+        for i, seg in enumerate(rest):
+            if math.dist(last, seg["p1"]) <= 1.0:
+                hit = (i, seg, seg["p2"], seg["u"])
+                break
+            if math.dist(last, seg["p2"]) <= 1.0:
+                hit = (i, {**seg, "u": (-seg["u"][0], -seg["u"][1])},
+                       seg["p1"], (-seg["u"][0], -seg["u"][1]))
+                break
+        if hit is None:
             raise CadError(
-                "拒绝写入：墙环断裂，墙 %s 的端点与上一个终点不重合" % seg["id"]
+                "拒绝写入：墙环断裂，墙 %s 的端点与上一个终点不重合"
+                % rest[0]["id"]
             )
+        i, seg, nxt, u = hit
+        rest.pop(i)
+        ring_pts.append(nxt)
+        oriented.append({**seg, "u": u})
     if math.dist(ring_pts[-1], ring_pts[0]) > 1.0:
         raise CadError("拒绝写入：墙环未闭合（末墙终点的偏差 %.4f）"
                        % math.dist(ring_pts[-1], ring_pts[0]))
@@ -1825,6 +1893,48 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
     return (dx / ln, dy / ln) if ln else (1.0, 0.0)
 
 
+def _geom_bbox(blocks: list[list[dict[str, Any]]]) -> tuple[float, float, float, float] | None:
+    xs: list[float] = []
+    ys: list[float] = []
+    for geom in blocks:
+        for g in geom:
+            pts = g.get("pts") or []
+            r = float(g.get("r") or 0)
+            for pt in pts:
+                x, y = float(pt[0]), float(pt[1])
+                xs += [x - r, x + r]
+                ys += [y - r, y + r]
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def axis_keepout(session, scale: float) -> dict[str, float]:
+    """轴网（轴线 + 轴号圈）比墙体外廓多占出去的距离，四向各一个值（>0）。
+
+    尺寸线要排在轴号圈外侧，这里按真实几何量出来，不再靠固定偏移猜。
+    """
+    walls = wall_data(session)
+    if not walls:
+        return {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
+    wx = [v for w in walls for v in (w["p1"][0], w["p2"][0])]
+    wy = [v for w in walls for v in (w["p1"][1], w["p2"][1])]
+    half = max(w["thick"] for w in walls) / 2.0
+    wall_box = (min(wx) - half, min(wy) - half, max(wx) + half, max(wy) + half)
+    grids = [block_geometry(session.path, e["geometry"]["block"])
+             for e in session.components("AA_AXGRID_")]
+    abox = _geom_bbox(grids)
+    if not abox:
+        return {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
+    gap = annot_size(2.0, scale)
+    return {
+        "top": max(0.0, abox[3] - wall_box[3]) + gap,
+        "bottom": max(0.0, wall_box[1] - abox[1]) + gap,
+        "left": max(0.0, wall_box[0] - abox[0]) + gap,
+        "right": max(0.0, abox[2] - wall_box[2]) + gap,
+    }
+
+
 def annotate(session: Session, opening_off: float | None = None,
              wall_off: float | None = None, clear: bool = True,
              exterior_only: bool = True, scale: float | None = None) -> dict[str, Any]:
@@ -1868,6 +1978,7 @@ def annotate(session: Session, opening_off: float | None = None,
             for w in walls]
     cx = sum(m[0] for m in mids) / len(mids)
     cy = sum(m[1] for m in mids) / len(mids)
+    keep = axis_keepout(session, sc)
 
     made: list[dict[str, Any]] = []
     openings = opening_data(session)
@@ -1883,10 +1994,16 @@ def annotate(session: Session, opening_off: float | None = None,
         side = 1.0 if math.dist(far, (cx, cy)) > math.dist(near, (cx, cy)) else -1.0
         half = w["thick"] / 2.0
         ang = math.degrees(math.atan2(d[1], d[0]))
+        vx, vy = n[0] * side, n[1] * side
+        key = ("top" if vy > 0 else "bottom") if abs(vy) >= abs(vx) else \
+              ("right" if vx > 0 else "left")
+        k = keep.get(key, 0.0)
+        o_off = max(opening_off, k + annot_size(3.0, sc))   # 内层，紧贴轴号圈外
+        w_off = max(wall_off, k + annot_size(15.0, sc))     # 外层，再让 12mm
 
         # 墙总长（外层）
-        at = (mid[0] + n[0] * side * (half + wall_off),
-              mid[1] + n[1] * side * (half + wall_off))
+        at = (mid[0] + n[0] * side * (half + w_off),
+              mid[1] + n[1] * side * (half + w_off))
         cmds.append(("dimlinear", {"p1": list(p1), "p2": list(p2),
                                    "at": [round(at[0], 4), round(at[1], 4)],
                                    "rotation": round(ang, 6)}))
@@ -1901,8 +2018,8 @@ def annotate(session: Session, opening_off: float | None = None,
             o2 = (p1[0] + d[0] * (o["pos"] + o["width"] / 2.0),
                   p1[1] + d[1] * (o["pos"] + o["width"] / 2.0))
             omid = ((o1[0] + o2[0]) / 2.0, (o1[1] + o2[1]) / 2.0)
-            oat = (omid[0] + n[0] * side * (half + opening_off),
-                   omid[1] + n[1] * side * (half + opening_off))
+            oat = (omid[0] + n[0] * side * (half + o_off),
+                   omid[1] + n[1] * side * (half + o_off))
             cmds.append(("dimlinear", {"p1": [round(v, 4) for v in o1],
                                        "p2": [round(v, 4) for v in o2],
                                        "at": [round(oat[0], 4), round(oat[1], 4)],
@@ -2980,7 +3097,7 @@ def create_sheet(
     session: Session,
     sheet_id: str = "S001",
     size: str = "A3",
-    scale: float = 100.0,
+    scale: float | None = None,
     at: tuple[float, float] | None = None,
     project: str = "",
     drawing: str = "",
@@ -2994,10 +3111,43 @@ def create_sheet(
 ) -> dict[str, Any]:
     """图框 + 标题栏：按 GB/T 14689 幅面绘制，标题栏按 GB/T 10609.1 简化为 9 格。
 
-    at = 内框左下角（模型坐标）。不给则按"墙+房间"外廓自动居中排图；
+    size 传 "ATUO"/"AUTO" 时按图形外廓自动挑"能放下的最小图幅"（A4→A0）。
+    scale 省略时读图档比例标记 / 已有图幅；都没有按 1:100。
+    at = 内框左下角（模型坐标）。不给则按图形外廓自动居中排图；
     图形超出内框时报错，提示换大图幅或调小比例。
     """
-    lay = sheet_layout(size, scale)
+    if scale is None:
+        scale = drawing_scale(session)
+    size_text = str(size).strip().upper()
+    auto = size_text in ("AUTO", "ATUO")
+    promoted: list[str] = []
+    if auto:
+        size_text = "A3"
+    lay = sheet_layout(size_text, float(scale))
+    ext = drawing_extent(session, pad=0.0)
+    order = ("A4", "A3", "A2", "A1", "A0")
+    if size_text not in order:
+        raise CadError("未知图幅 %s（可选 A0–A4 / AUTO）" % size_text)
+    if ext and at is None:
+        need_w = (ext[2] - ext[0]) + 2 * pad
+        need_h = (ext[3] - ext[1]) + 2 * pad
+        start = 0 if auto else order.index(size_text)
+        chosen = None
+        for i in range(start, len(order)):
+            l = sheet_layout(order[i], float(scale))
+            if need_w <= l["inner_w"] and need_h <= l["inner_h"]:
+                chosen = (order[i], i, l)
+                break
+        if not chosen:
+            raise CadError(
+                "图形放不进 A0@1:%g（需 %.0f×%.0f，可用 %.0f×%.0f）：请调小比例或拆图"
+                % (scale, need_w, need_h,
+                   sheet_layout("A0", float(scale))["inner_w"],
+                   sheet_layout("A0", float(scale))["inner_h"]))
+        if chosen[0] != size_text:
+            promoted.append("%s→%s" % (size_text, chosen[0]))
+            size_text = chosen[0]
+            lay = chosen[2]
     session.ensure_layers([LAYERS["border"], LAYERS["sheet"], LAYERS["title"]])
     block = "AA_SHEET_" + sheet_id
     if session.block_exists(block):
@@ -3014,7 +3164,7 @@ def create_sheet(
             if need_w > lay["inner_w"] or need_h > lay["inner_h"]:
                 raise CadError(
                     "图形放不进 %s@1:%g 内框（需 %.0f×%.0f，可用 %.0f×%.0f）："
-                    "请换大图幅或调小比例" % (size, scale, need_w, need_h,
+                    "请换大图幅或调小比例" % (lay["size"], scale, need_w, need_h,
                                           lay["inner_w"], lay["inner_h"])
                 )
             w_mm = SHEETS[lay["size"]][0]
@@ -3132,6 +3282,8 @@ def create_sheet(
         "lines": n_lines,
         "texts": sum(1 for g in geom if g["type"] == "TEXT"),
         "extent": ext,
+        "drawing_scale": drawing_scale(session),
+        "promoted": promoted[0] if promoted else None,
     }
 
 

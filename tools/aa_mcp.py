@@ -55,7 +55,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.4"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.6"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -89,7 +89,24 @@ TOOLS: list[dict[str, Any]] = [
         "description": "新建公制建筑图纸（单位 mm）。已存在则报错，不覆盖。",
         "inputSchema": {
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "图纸绝对路径（.dxf）"}},
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径（.dxf）"},
+                "scale": {"type": "number",
+                           "description": "出图比例分母（1:100 填 100），给了就从开图起按该比例画注记"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_scale",
+        "description": "查看/设定图档出图比例：先定比例，后续轴号/房间名/门窗编号/尺寸/图名/表格都按它取 mm 规格；已有注记默认整批重画。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "set": {"type": "number", "description": "设为新比例分母（1:50 填 50）；省略则只查询"},
+                "rescale": {"type": "boolean", "description": "已有注记是否按新比例重画", "default": True},
+            },
             "required": ["path"],
         },
     },
@@ -411,8 +428,8 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "path": {"type": "string", "description": "图纸绝对路径"},
                 "id": {"type": "string", "description": "图幅编号", "default": "S001"},
-                "size": {"type": "string", "enum": ["A0", "A1", "A2", "A3", "A4"],
-                         "description": "图幅", "default": "A3"},
+                "size": {"type": "string", "enum": ["AUTO", "A0", "A1", "A2", "A3", "A4"],
+                         "description": "图幅；AUTO = 按图形外廓自动选最小可容图幅", "default": "A3"},
                 "scale": {"type": "number", "description": "比例分母（1:100 填 100）", "default": 100},
                 "at": {"type": "array", "items": {"type": "number"},
                        "description": "图幅左下角 [x, y]；省略则自动排图"},
@@ -483,9 +500,19 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         if s.path.exists():
             raise CadError("拒绝新建：图纸已存在，不覆盖（%s）" % s.path)
         s.new_metric()
-        return {"ok": True, "path": str(s.path), "units": "mm"}
+        out = {"ok": True, "path": str(s.path), "units": "mm"}
+        if a.get("scale"):
+            out.update(set_drawing_scale(s, _num(a["scale"], "scale"), rescale=False))
+        return out
 
     s = _session(path)
+
+    if name == "aa_scale":
+        if a.get("set") is None:
+            return {"ok": True, "scale": drawing_scale(s)}
+        return {"ok": True, **set_drawing_scale(
+            s, _num(a["set"], "set"),
+            rescale=bool(a.get("rescale", True)))}
 
     if name == "aa_layers":
         if a.get("fix"):
@@ -596,7 +623,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         s = _session(path)
         return {"ok": True, **create_sheet(
             s, a.get("id", "S001") or "S001", a.get("size", "A3"),
-            _num(a.get("scale", 100), "scale"),
+            _num(a["scale"], "scale") if a.get("scale") else None,
             _pt(a["at"], "at") if a.get("at") else None,
             a.get("project", "") or "", a.get("drawing", "") or "",
             a.get("number", "") or "", a.get("date", "") or "",

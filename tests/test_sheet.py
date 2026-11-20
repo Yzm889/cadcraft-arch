@@ -99,13 +99,10 @@ def main() -> int:
     ext = auto["extent"]
     assert ext is not None and ext[1] <= tab_y, (ext, tab_y)
 
-    # 6) 图幅过小：A4 留白 20m 时 6000×4800 装不下
-    try:
-        create_sheet(s, "S002", "A4", 100, pad=20000.0)
-    except CadError as e:
-        assert "放不进" in str(e), e
-    else:
-        raise AssertionError("A4 应装不下")
+    # 6) 图幅过小：A4 留白 20m 时装不下 -> 自动升一级并明确回传 promoted
+    promo = create_sheet(s, "S002", "A4", 100, pad=20000.0)
+    assert promo["size"] != "A4" and promo["promoted"] == "A4→%s" % promo["size"], promo
+    assert promo["inner"][0] >= 6000.0 + 40000.0, promo
 
     # 7) 出图：PNG / PDF 都要有实体产物
     win = sheet_window(s, "S001")
