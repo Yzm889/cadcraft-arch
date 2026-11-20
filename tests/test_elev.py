@@ -61,6 +61,18 @@ def main() -> int:
     layers = layer_of_block(path, "AA_ELEVATION_E1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
 
+    # 左侧三道竖向尺寸（v1.0.30）：内道特征高度 9 段（<500 杂段已并）\+ 中道 4 段 \+ 外道 1 段 = 14
+    dims = [e for e in s.entities()["entities"] if e["type"] == "Dimension"]
+    assert len(dims) == 14, len(dims)
+    vals = sorted(round(float(e["geometry"]["measurement"]), 1) for e in dims)
+    assert vals.count(3600.0) == 2 and vals.count(3300.0) == 1, vals
+    assert 11700.0 in vals and 1500.0 in vals, vals
+    for e in dims:
+        g = e["geometry"]
+        assert e["layer"] == LAYERS["dim"], e["layer"]
+        assert g["defpt"]["x"] < 0, g["defpt"]        # 尺寸线一律在立面左侧
+        assert abs(abs(g["p14"]["y"] - g["p13"]["y"]) - g["measurement"]) < 1e-6, g
+
     attrs = s.attributes("AA_ELEVATION_E1")
     assert attrs["AA_TYPE"] == "ELEVATION" and attrs["AA_ROOF"] == "FLAT", attrs
     assert attrs["AA_ROWS"].split("~")[2] == "3600.0000", attrs["AA_ROWS"]
@@ -152,6 +164,12 @@ def main() -> int:
         assert "已存在" in str(e), e
     else:
         raise AssertionError("重复编号应被拒绝")
+
+    # E6：dims=False 一条尺寸都不该新增（老图重生成不能凭空多三道线）
+    before = len([e for e in s.entities()["entities"] if e["type"] == "Dimension"])
+    create_elevation(s, "E6", (0.0, -8000.0), 6000.0, floors, dims=False)
+    after = len([e for e in s.entities()["entities"] if e["type"] == "Dimension"])
+    assert after == before, f"dims=False 多出 {after - before} 条尺寸"
 
     print("立面: 3 层顶 10500 / 女儿墙 1200 / 总高 11700 / 7 洞 / 3 标高")
     print("PASS test_elev")

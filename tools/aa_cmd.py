@@ -235,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                              help="檐口板厚（mm，0=不画），FLAT 挑檐/双坡/GABLE 用")
     p_elevation.add_argument("--axis", action="append", default=[],
                              help="立面轴号 \"x,轴号\"（可重复，如 --axis \"0,1\"）")
+    p_elevation.add_argument("--no-dims", action="store_true",
+                             help="不注左侧三道竖向尺寸（默认注）")
 
     p_profile = sub.add_parser("profile",
                                help="建筑剖面：地坪 + 楼板 + 屋面板 + 外墙/女儿墙（落 AA-ELEV）")
@@ -549,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
                 session, args.id, _pt(args.at), args.w, floors, ops,
                 args.roof, args.parapet, args.rise, args.oh,
                 not args.no_marks, args.angle, args.wall, args.flip,
-                args.eave, axes)})
+                args.eave, axes, not args.no_dims)})
         elif args.cmd == "profile":
             floors = []
             for spec in args.floor:

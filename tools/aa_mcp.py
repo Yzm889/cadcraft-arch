@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.29"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.30"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -717,6 +717,7 @@ TOOLS: list[dict[str, Any]] = [
                                        "label": {"type": "string"},
                                    },
                                    "required": ["x", "label"]}},
+                "dims": {"type": "boolean", "description": "左侧注三道竖向尺寸（窗台/洞高、层高含女儿墙或脊高、总高），落 AA-DIM", "default": True},
             },
             "required": ["path", "id", "at", "width", "floors"],
         },
@@ -994,7 +995,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("overhang", 600), "overhang"),
             bool(a.get("marks", True)), _num(a.get("angle", 0.0), "angle"),
             a.get("wall") or None, bool(a.get("flip", False)),
-            _num(a.get("eave", 0), "eave"), a.get("axes", []) or [])}
+            _num(a.get("eave", 0), "eave"), a.get("axes", []) or [],
+            bool(a.get("dims", True)))}
 
     if name == "aa_profile":
         return {"ok": True, **create_section(

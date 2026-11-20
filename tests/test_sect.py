@@ -48,6 +48,23 @@ def main() -> int:
     nl, nt = counts(g)
     assert (nl, nt) == (35, 4), (nl, nt, [x["type"] for x in g])
 
+    # 位置断言（不只数线）：楼板顶面在 y=层高、两端收在净宽内、女儿墙压顶在总高
+    lines = [((round(l["pts"][0][0], 1), round(l["pts"][0][1], 1)),
+              (round(l["pts"][1][0], 1), round(l["pts"][1][1], 1)))
+             for l in g if l["type"] == "LINE"]
+
+    def has_h(y, x1, x2):
+        return any(abs(a[1] - y) < 0.5 and abs(b[1] - y) < 0.5
+                   and abs(min(a[0], b[0]) - x1) < 0.5 and abs(max(a[0], b[0]) - x2) < 0.5
+                   for a, b in lines)
+
+    assert has_h(3600.0, 240.0, 5760.0), "二层楼板顶面应在 y=3600、净宽 240..5760"
+    assert has_h(7200.0, 240.0, 5760.0), "三层楼板顶面应在 y=7200（楼板底 7100）"
+    assert has_h(10600.0, 0.0, 6000.0), "屋面板顶面应在 y=10600（10500+板 100）、通宽"
+    # 女儿墙在剖面里是两端各一条 240 厚的窄带，压顶只压在这两条带上，不通长
+    assert has_h(11800.0, 0.0, 240.0), "左端女儿墙压顶应在 y=11800、0..240"
+    assert has_h(11800.0, 5760.0, 6000.0), "右端女儿墙压顶应在 y=11800、5760..6000"
+
     layers = layer_of_block(path, "AA_SECTION_P1")
     assert LAYERS["elev"] in layers and LAYERS["elevdetail"] in layers, layers
     attrs = s.attributes("AA_SECTION_P1")

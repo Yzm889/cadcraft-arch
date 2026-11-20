@@ -2207,6 +2207,7 @@ def create_elevation(
     flip: bool = False,
     eave: float = 0.0,
     axes: Sequence[Any] = (),
+    dims: bool = True,
 ) -> dict[str, Any]:
     """建筑立面（GB/T 50104 立面图做法，按楼层表数据生成）。
 
@@ -2225,6 +2226,9 @@ def create_elevation(
     `axes` = 立面轴号 `[{x, label}]`（x 为轴号在立面宽度上的位置，label 如 "1"/"A"）：
     按 GB/T 50001 在立面顶部外画 8mm 细实线圆 + 圈内 3mm 轴号，圆下方用一条细线
     引到立面轮廓顶（立面不画通长轴线，免得和门窗线打架）。
+    `dims=True` 在**左侧**注三道竖向尺寸（GB/T 50104 立面必须注高度尺寸）：
+    内道 = 窗台高 / 洞口高 / 洞顶到楼面（全楼特征高度排成一条链），
+    中道 = 各层层高，外道 = 从 ±0.000 到含女儿墙/脊高的总高。尺寸落 `AA-DIM`。
 
     图元：地坪线粗、外轮廓粗落 `AA-ELEV`；楼层线、门窗、女儿墙压顶、檐口板厚落
     `AA-ELEV-DETAIL`；轴号落 `AA-AXISTEXT`。暂不做阳台、雨篷、材料图例。
@@ -2483,10 +2487,70 @@ def create_elevation(
     session.expect_attributes(block, {"AA_TYPE": "ELEVATION", "AA_ID": elev_id,
                                       "AA_ROOF": roof_u,
                                       "AA_FLOORS": str(len(rows))})
+
+    # 左侧三道竖向尺寸（GB/T 50104：立面必须注高度尺寸）
+    dim_n = 0
+    if dims:
+        ca, sa = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+
+        def W(x, y):
+            return (float(at[0]) + x * ca - y * sa, float(at[1]) + x * sa + y * ca)
+
+        def chain(ys, off, tag):
+            nonlocal dim_n
+            uniq: list[float] = []
+            for y in sorted(ys):
+                if not uniq or abs(y - uniq[-1]) > 1e-6:
+                    uniq.append(y)
+            # 小于 5mm（=500）的分界点直接并到下一段：不同洞口的窗台/洞顶错开时会
+            # 造出 300 这种没有意义的杂段，注上去文字必然骑在相邻尺寸上
+            min_seg = annot_size(5.0, sc)
+            segs: list[tuple[float, float]] = []
+            acc = uniq[0]
+            for y in uniq[1:]:
+                if y - acc < min_seg and y != uniq[-1]:
+                    continue
+                segs.append((acc, y))
+                acc = y
+            cmds = []
+            for y1, y2 in segs:
+                if y2 - y1 <= 1.0:
+                    continue
+                # 尺寸界线从墙内皮（x=0）起，尺寸线退到 x=-off
+                p1, p2 = W(0.0, y1), W(0.0, y2)
+                mid = W(-off, (y1 + y2) / 2.0)
+                cmds.append(("dimlinear", {
+                    "p1": [round(v, 4) for v in p1],
+                    "p2": [round(v, 4) for v in p2],
+                    "at": [round(mid[0], 4), round(mid[1], 4)],
+                    "rotation": round(angle + 90.0, 6)}))
+                dim_n += 1
+            if cmds:
+                res = session.run(cmds, save=True)
+                hs = [r.get("handle") for r in res.data if r.get("handle")]
+                if hs:
+                    # dimlinear 默认落在 0 层，必须显式改到 AA-DIM
+                    session.run([("properties.set",
+                                  {"handles": hs, "layer": LAYERS["dim"]})], save=True)
+
+        session.ensure_layers([LAYERS["dim"]])
+        session.ensure_dim_style(text_height=annot_size(2.5, sc),
+                                 arrow_size=annot_size(1.5, sc),
+                                 ext_offset=annot_size(1.0, sc))
+        ys_a = [0.0] + [r["elev"] for r in rows] + [top]
+        for op in ops:
+            b = rows[op["floor"] - 1]["elev"]
+            ys_a += [b + op["sill"], b + op["sill"] + op["h"]]
+        chain(ys_a, annot_size(9.0, sc), "detail")
+        # 中道把女儿墙/脊高也带上，否则 1200 的女儿墙或 1800 的脊高在立面上一段都没注
+        chain([0.0] + [r["elev"] for r in rows] + [top, total_top],
+              annot_size(16.0, sc), "floor")
+        chain([0.0, total_top], annot_size(23.0, sc), "total")
+
     return {"block": block, "handle": handle, "width": width,
             "floors": len(rows), "top": top, "total": total_top,
             "roof": roof_u, "openings": len(ops), "angle": angle,
-            "eave": eave, "axes": [t["label"] for t in ax_tag],
+            "eave": eave, "axes": [t["label"] for t in ax_tag], "dims": dim_n,
             "rows": rows, "geom_handles": handles}
 
 

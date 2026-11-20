@@ -102,6 +102,17 @@ def main() -> int:
     attrs = s.attributes("AA_ROOF_RF6")
     assert attrs["AA_PARAPET"] == "240.0000" and attrs["AA_HATCH"] == "3000.0000,2000.0000,700.0000", attrs
 
+    # 位置断言：檐沟内边 = 轮廓内缩 外挑600+檐沟300；上人孔方框就在给的坐标上
+    bbox = set()
+    for p in g:
+        if p["type"] == "LWPOLYLINE":
+            xs = [round(v[0], 1) for v in p["pts"]]
+            ys = [round(v[1], 1) for v in p["pts"]]
+            bbox.add((min(xs), min(ys), max(xs), max(ys)))
+    # 有女儿墙时檐沟贴着内皮：轮廓 -600 + 女儿墙 240 + 檐沟 300 = -60；上人孔就在给的坐标上
+    assert (-60.0, -60.0, 6060.0, 4060.0) in bbox, sorted(bbox)
+    assert (2650.0, 1650.0, 3350.0, 2350.0) in bbox, sorted(bbox)
+
     # 拒绝
     for kw, msg in (({"parapet": 240.0}, "女儿墙"),
                     ({"hatch": {"x": 100.0, "y": 100.0, "size": 700.0}}, "屋面净区")):
