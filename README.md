@@ -61,7 +61,7 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 - `samples/test_modify.dxf/.png`（导出为 `demo_modify.png`）—— 同一堵墙从 240 改 360 厚、门从 900@2000 挪到 1200@3000 之后的样子。
 - `samples/demo_auto_room.dxf/.png` —— 6000×4000 外墙 + 240 隔墙，`room --auto` 自动搜出两间 2760×3760（各 10377600 mm²）并落 `R001` / `R002`。
 - `samples/mcp_demo.dxf/.png` —— 纯 MCP 客户端身份从零画的成品（轴网 A/B/C + 1/2、5 堵墙、2 门 1 窗、自动 2 间房），验证 Agent 直连链路。
-- `samples/demo_building.dxf/.png` —— 一栋小楼的全套图拼在一张 A2 上（平面 + 屋顶 + 楼层表 + 立面 + 剖面，1:100 同一比例），用来验图面自洽：轴网对得上、楼层表标高与立/剖面标高一致、图名与比例对得上。由 `tools/demo_building.py` 生成。`samples/demo_building_roof.png` / `_plan.png` / `_elev.png` / `_sect.png` / `_sectwin.png` 是局部放大。
+- `samples/demo_building.dxf/.png` —— 一栋小楼的全套图拼在一张 A2 上（平面 + 屋顶 + 楼层表 + 立面 + 剖面，1:100 同一比例），用来验图面自洽：轴网对得上、楼层表标高与立/剖面标高一致、图名与比例对得上。由 `tools/demo_building.py` 生成。`samples/demo_building_roof.png` / `_plan.png` / `_elev_top.png`（轴号 + 檐口板厚）/ `_elev_low.png`（首层门窗）/ `_sect.png` / `_sectwin.png` 是局部放大。
 - `samples/zoom_layers.png` —— 图层配色实测：轴号/轴线红（轴线点划线）、墙白、门窗青、尺寸绿、房间名白；局部放大看得到点划线的"点"。`samples/demo_sheet.png` 是同一套颜色出在 A3 图框里。
 
 ## 它和天正侧插件的区别
