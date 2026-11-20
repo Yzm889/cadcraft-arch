@@ -1475,12 +1475,15 @@ def create_opening(
     if height is None:
         height = {"DOOR": 2100.0, "WINDOW": 1500.0, "DOORWIN": 2100.0}.get(kind, 2100.0)
     no = no or opening_no(kind, width, height)
-    if label_side not in ("in", "out", "auto"):
-        raise CadError("拒绝写入：label_side 只能是 in / out / auto（收到 %s）" % label_side)
+    if label_side not in ("in", "out", "auto", "leader"):
+        raise CadError("拒绝写入：label_side 只能是 in / out / auto / leader（收到 %s）" % label_side)
     # 墙块若转了 180°（墙从右往左画），块内编号会倒着看；给文字补 180° 抵消。
     rot_deg = (math.degrees(wall["rotation_rad"]) + 360.0) % 360.0
     label_rot = math.pi if 135.0 <= rot_deg <= 225.0 else 0.0
-    side = _label_side_sign(session, wall, pos, label_side)
+    # leader 用"室内侧"定方向（没有房间时退回 -Y），再靠引线把编号引出去
+    side = _label_side_sign(session, wall, pos,
+                            "in" if label_side == "leader" else label_side)
+    leader_flag = 1 if label_side == "leader" else 0
 
     block = "AA_OPENING_" + opening_id
     session.ensure_layers([LAYERS["opening"]])
@@ -1488,8 +1491,9 @@ def create_opening(
     before = session.snapshot()
     sc = drawing_scale(session)
     value = session.lisp(
-        '(progn (setq aa:*label-h* %.4f) (aa:opening %s %s %s "%s" %s "%s" %s %s))'
-        % (annot_size(1.8, sc), pos, width, thick, kind, frame, no, label_rot, side),
+        '(progn (setq aa:*label-h* %.4f) (aa:opening %s %s %s "%s" %s "%s" %s %s %d))'
+        % (annot_size(1.8, sc), pos, width, thick, kind, frame, no, label_rot, side,
+           leader_flag),
         libraries=("aa_core.lisp", "aa_opening.lisp"),
     )
     handles = session.new_handles(before)

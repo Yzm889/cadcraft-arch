@@ -13,7 +13,7 @@
         f (float frame))
   (if (> f (- half 10.0)) (- half 10.0) f))
 
-;; (aa:opening pos width thick kind frame label lrot side)
+;; (aa:opening pos width thick kind frame label lrot side leader)
 ;;   pos   = 洞口中心到墙起点的距离
 ;;   width = 洞口宽度
 ;;   thick = 所属墙厚
@@ -22,9 +22,10 @@
 ;;   label = 门窗编号文字（空串则不写）
 ;;   lrot  = 编号文字的附加旋转（弧度，墙块转 180° 时传 3.14159 抵消倒字）
 ;;   side  = 编号所在侧：-1 = 本地 -Y 侧，+1 = 本地 +Y 侧（由驱动层按室内/室外换算）
+;;   leader= 1 时编号外移 8mm 并加一条 45° 引线指向洞口右侧墙中点（天正"引线编号"）
 ;; 返回 "pos#width"
-(defun aa:opening (pos width thick kind frame label lrot side
-                   / x1 x2 half inner lw lh ly)
+(defun aa:opening (pos width thick kind frame label lrot side leader
+                   / x1 x2 half inner lw lh ly lx)
   (aa:begin)
   (setq pos (float pos)
         width (float width)
@@ -55,16 +56,35 @@
   ;; （side = -1 / +1 决定落在本地 -Y / +Y 侧，室内外由驱动层换算）。
   ;; 放在洞内会压住窗的四条线/门的门扇线，所以走墙外。
   ;; 文字转了 180° 时，插入点要沿侧向反向偏一个字高，可见框才仍贴墙居中。
+  ;; leader=1：编号再外移 8mm，并从洞口右端墙中点拉一条 45° 引线到编号端部。
   (if (= label "")
       nil
       (progn
         (setq lw (* 0.62 aa:*label-h* (float (strlen label)))
-              lh aa:*label-h*
-              ly (* (float side) (+ half 250.0)))
-        (if (> (abs lrot) 1.0)
-            (aa:mktext-r (aa:pt (+ pos (/ lw 2.0)) (- ly (* (float side) lh)))
-                         label aa:*lay-opening* lh lrot)
-            (aa:mktext-r (aa:pt (- pos (/ lw 2.0)) ly)
-                         label aa:*lay-opening* lh lrot))))
+              lh aa:*label-h*)
+        (if (= leader 1)
+            (progn
+              (setq lx (+ x2 700.0)
+                    ly (* (float side) (+ half 700.0)))
+              (aa:mkline (aa:pt x2 (* (float side) half)) (aa:pt lx ly)
+                         aa:*lay-opening*)
+              (if (> (abs lrot) 1.0)
+                  (if (> side 0.0)
+                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (+ ly lh 80.0)) label
+                                   aa:*lay-opening* lh lrot)
+                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (- ly 80.0)) label
+                                   aa:*lay-opening* lh lrot))
+                  (if (> side 0.0)
+                      (aa:mktext-r (aa:pt (+ lx 180.0) (+ ly 80.0)) label
+                                   aa:*lay-opening* lh lrot)
+                      (aa:mktext-r (aa:pt (+ lx 180.0) (- ly (+ lh 80.0))) label
+                                   aa:*lay-opening* lh lrot))))
+            (progn
+              (setq ly (* (float side) (+ half 250.0)))
+              (if (> (abs lrot) 1.0)
+                  (aa:mktext-r (aa:pt (+ pos (/ lw 2.0)) (- ly (* (float side) lh)))
+                               label aa:*lay-opening* lh lrot)
+                  (aa:mktext-r (aa:pt (- pos (/ lw 2.0)) ly)
+                               label aa:*lay-opening* lh lrot))))))
 
   (strcat (rtos pos 2 4) "#" (rtos width 2 4)))

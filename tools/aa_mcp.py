@@ -57,7 +57,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.8"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.9"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -217,7 +217,7 @@ TOOLS: list[dict[str, Any]] = [
                           "default": 60},
                 "no": {"type": "string", "description": "门窗编号，缺省按尺寸生成（M0921 / C1215）",
                        "default": ""},
-                "label_side": {"type": "string", "enum": ["in", "out", "auto"],
+                "label_side": {"type": "string", "enum": ["in", "out", "auto", "leader"],
                                "description": "编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为",
                                "default": "in"},
             },
@@ -309,7 +309,7 @@ TOOLS: list[dict[str, Any]] = [
                 "kind": {"type": "string", "enum": ["DOOR", "WINDOW", "DOORWIN"]},
                 "frame": {"type": "number", "description": "窗框厚 mm"},
                 "no": {"type": "string", "description": "门窗编号（空串表示按尺寸重算）"},
-                "label_side": {"type": "string", "enum": ["in", "out", "auto"],
+                "label_side": {"type": "string", "enum": ["in", "out", "auto", "leader"],
                                "description": "编号所在侧：in / out / auto"},
             },
             "required": ["path", "id"],

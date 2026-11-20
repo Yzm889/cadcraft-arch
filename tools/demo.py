@@ -69,7 +69,7 @@ def main() -> int:
     create_opening(s, "D001", "W001", "DOOR", width=1000.0, pos=1000.0)
     create_opening(s, "D002", "W004", "DOOR", width=900.0, pos=2400.0)
     create_opening(s, "C001", "W002", "WINDOW", width=1800.0, pos=2400.0)
-    create_opening(s, "C002", "W005", "WINDOW", width=1800.0, pos=3000.0)
+    create_opening(s, "C002", "W005", "WINDOW", width=1800.0, pos=3000.0, label_side="leader")
 
     # 房间（墙环闭合校验 + 内偏移面积）
     r1 = create_room(s, "R001", ["W001", "W007", "W005", "W006"], name="客厅")

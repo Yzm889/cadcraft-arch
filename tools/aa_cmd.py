@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     p_op.add_argument("--sill", type=float, default=0.0)
     p_op.add_argument("--frame", type=float, default=60.0, help="窗框厚，默认 60")
     p_op.add_argument("--no", default="", help="门窗编号，缺省按尺寸自动生成（M0921 / C1215）")
-    p_op.add_argument("--label-side", default="in", choices=["in", "out", "auto"],
+    p_op.add_argument("--label-side", default="in", choices=["in", "out", "auto", "leader"],
                       help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
 
     p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
@@ -247,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     p_seto.add_argument("--kind", default=None, choices=["DOOR", "WINDOW", "DOORWIN"])
     p_seto.add_argument("--frame", type=float, default=None)
     p_seto.add_argument("--no", default=None)
-    p_seto.add_argument("--label-side", default=None, choices=["in", "out", "auto"],
+    p_seto.add_argument("--label-side", default=None, choices=["in", "out", "auto", "leader"],
                         help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
 
     p_openings = sub.add_parser("openings", help="门窗表：按编号汇总尺寸与数量，可导出 CSV / 图上表格")

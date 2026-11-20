@@ -60,6 +60,19 @@ def main() -> int:
     assert label_y(path, "AA_OPENING_C001") == 370.0
     assert opening_data(s)[0]["labelside"] == "in"
 
+    # leader：引线端到 820（240/2 + 700），文字基线 900，并多一条 45° 引线（窗原本 6 条线 -> 7 条）
+    set_opening(s, "C001", label_side="leader")
+    y_leader = label_y(path, "AA_OPENING_C001")
+    assert y_leader == 900.0, y_leader   # 引线端点 820，文字基线再抬 80
+    assert opening_data(s)[0]["labelside"] == "leader"
+    kinds = [g["type"] for g in block_geometry(path, "AA_OPENING_C001")]
+    assert kinds.count("LINE") == 7, kinds
+
+    # 切回 in，引线要消失、线数回到 6
+    set_opening(s, "C001", label_side="in")
+    kinds = [g["type"] for g in block_geometry(path, "AA_OPENING_C001")]
+    assert kinds.count("LINE") == 6, kinds
+
     # 非法值拒绝，且文件不被动过（重画会先备份再回滚）
     before = path.stat().st_size
     try:
