@@ -29,6 +29,22 @@
   (aa:mkline (aa:pt (+ xa (* 0.10 dx)) (+ ya h)) (aa:pt xb yb) lay)
   (aa:mkline (aa:pt xb yb) (aa:pt x2 y2) lay))
 
+;; 梯井（天正做法）：一条封闭的"跑道"形线，两端带小圆角，伸出梯段轮廓
+;; (aa:well xc ytop ybot hw lay)
+(defun aa:well (xc ytop ybot hw lay / c pts)
+  (setq c (* 0.55 hw))
+  (setq pts (list
+    (list (- xc hw) (+ ybot c) 0.0)
+    (list (+ (- xc hw) c) ybot 0.0)
+    (list (- (+ xc hw) c) ybot 0.0)
+    (list (+ xc hw) (+ ybot c) 0.0)
+    (list (+ xc hw) (- ytop c) 0.0)
+    (list (- (+ xc hw) c) ytop 0.0)
+    (list (+ (- xc hw) c) ytop 0.0)
+    (list (- xc hw) (- ytop c) 0.0)
+    (list (- xc hw) (+ ybot c) 0.0)))
+  (aa:mkpline pts lay))
+
 ;; 直跑：(aa:stair-straight w steps tread lh trot)
 (defun aa:stair-straight (w steps tread lh trot / hw run k y mid)
   (aa:begin)
@@ -91,8 +107,8 @@
           (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xrR) 0.0) aa:*lay-stair*)
           (aa:mkline (aa:pt (* sgn xlL) dep) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
           (aa:mkline (aa:pt (* sgn xlL) run) (aa:pt (* sgn xrR) run) aa:*lay-stair*)
-          (aa:mkline (aa:pt (* sgn xlR) (* -0.08 run)) (aa:pt (* sgn xlR) run) aa:*lay-stair*)
-          (aa:mkline (aa:pt (* sgn xrL) (* -0.08 run)) (aa:pt (* sgn xrL) run) aa:*lay-stair*)
+          (aa:well 0.0 (+ run (* 0.3 well)) (* -0.08 run) (/ (float well) 2.0) aa:*lay-stair*)
+          
           (setq k 1)
           (while (<= k steps)
             (setq y (* k t1))
@@ -113,8 +129,8 @@
         (aa:mkline (aa:pt (* sgn xlL) 0.0) (aa:pt (* sgn xrR) 0.0) aa:*lay-stair*)
         (aa:mkline (aa:pt (* sgn xlL) dep) (aa:pt (* sgn xrR) dep) aa:*lay-stair*)
         (aa:mkline (aa:pt (* sgn xlL) run) (aa:pt (* sgn xrR) run) aa:*lay-stair*)
-        (aa:mkline (aa:pt (* sgn xlR) (* -0.08 run)) (aa:pt (* sgn xlR) run) aa:*lay-stair*)
-        (aa:mkline (aa:pt (* sgn xrL) (* -0.08 run)) (aa:pt (* sgn xrL) run) aa:*lay-stair*)
+        (aa:well 0.0 (+ run (* 0.3 well)) (* -0.08 run) (/ (float well) 2.0) aa:*lay-stair*)
+        
         (setq k 1)
         (while (<= k steps)
           (setq y (* k t1))
