@@ -3109,6 +3109,7 @@ def wall_data(session: Session) -> list[dict[str, Any]]:
                 "p1": p1,
                 "p2": p2,
                 "len": length,
+                "floor": int(float(attrs.get("AA_FLOOR") or 1)),
                 "rotation_rad": ang,
                 "thick": float(attrs.get("AA_THICK", "0") or 0),
                 "kind": attrs.get("AA_KIND", ""),
@@ -3122,7 +3123,16 @@ def wall_data(session: Session) -> list[dict[str, Any]]:
 
 
 def opening_data(session: Session) -> list[dict[str, Any]]:
-    """读取全部门窗洞口。"""
+    """读取全部门窗洞口（含所在墙的层号 AA_FLOOR，缺省按 1 层）。"""
+    wall_floor: dict[str, int] = {}
+    for e in session.components("AA_WALL_"):
+        g = e["geometry"]
+        attrs = {a["tag"]: a.get("text", {}).get("value", "") for a in g.get("attribs", [])}
+        wid = attrs.get("AA_ID") or g["block"][len("AA_WALL_"):]
+        try:
+            wall_floor[wid] = int(float(attrs.get("AA_FLOOR") or 1))
+        except ValueError:
+            wall_floor[wid] = 1
     out = []
     for e in session.components("AA_OPENING_"):
         g = e["geometry"]
@@ -3140,6 +3150,7 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "frame": float(attrs.get("AA_FRAME", "0") or 0),
                 "no": attrs.get("AA_NO", ""),
                 "labelside": attrs.get("AA_LABELSIDE", "in") or "in",
+                "floor": wall_floor.get(attrs.get("AA_WALLID", ""), 1),
             }
         )
     return out
@@ -3828,6 +3839,7 @@ def _apply_layout(session, walls, final, sides_by_id, openings_plan):
                 thick=seg["thick"], kind=seg["kind"] or "INTERNAL", mat=seg["mat"],
                 ax1=seg["ax1"], ax2=seg["ax2"], root=seg["root"],
                 sides=sides_by_id.get(seg["id"]),
+                floor=seg.get("floor", 1),
             )
         # 4) 门窗跟随新墙位回图
         for o in openings_plan:
@@ -4030,12 +4042,20 @@ def create_wall(
     sides: list[tuple[float, float, float, float]] | None = None,
     snap_axis: bool = False,
     snap_tol: float = 300.0,
+    floor: int = 1,
 ) -> dict[str, Any]:
     """墙体：LISP 生成本地几何 -> block -> insert（起点+旋转）-> 回读校验。
 
     snap_axis=True 时先把端点吸附到最近轴线（"先轴后墙"），吸附量在返回值里如实报告；
     画完若图上有轴网，会自动回填 ax1/ax2（原有的非空值不覆盖）。
+    `floor` 记在 `AA_FLOOR` 上：门窗表要按层统计樘数，平面自身不带层号（v1.0.32）。
     """
+    try:
+        floor = int(floor)
+    except (TypeError, ValueError):
+        raise CadError("墙体层号必须是整数（收到 %r）" % (floor,))
+    if floor < 1:
+        raise CadError("墙体层号必须 ≥ 1（收到 %s）" % floor)
     block = "AA_WALL_" + wall_id
     snapped = None
     if snap_axis:
@@ -4085,6 +4105,7 @@ def create_wall(
             ("AA_AX2", "end axis", ax2),
             ("AA_LEN", "length", "%.4f" % float(length)),
             ("AA_ROOT", "logical wall id", root or wall_id),
+            ("AA_FLOOR", "floor no", str(int(floor))),
         ]
     )
 
@@ -4102,6 +4123,7 @@ def create_wall(
             "AA_AX2": ax2,
             "AA_LEN": "%.4f" % float(length),
             "AA_ROOT": root or wall_id,
+            "AA_FLOOR": str(int(floor)),
         },
         rotation=float(angle) * 57.29577951308232,
         layer=LAYERS["wall"],
@@ -5498,6 +5520,120 @@ def create_floor_table(
             "count": len(norm), "floors": norm,
             "total_height": round(elev, 4),
             "top_elev": round(norm[-1]["elev"], 4)}
+
+
+OPENING_HEADER = ["序号", "门窗编号", "类别", "洞口尺寸(宽×高)", "窗台高", "樘数", "所在层"]
+
+
+def _levels_text(levels: Sequence[int]) -> str:
+    """把 {1,2,3} 压成 "1-3"，不连续写成 "1,3"。"""
+    ls = sorted(set(int(x) for x in levels))
+    if not ls:
+        return ""
+    if ls == list(range(ls[0], ls[-1] + 1)):
+        return str(ls[0]) if len(ls) == 1 else "%d-%d" % (ls[0], ls[-1])
+    return ",".join(str(x) for x in ls)
+
+
+def opening_summary(session: Session) -> list[dict[str, Any]]:
+    """按"编号 + 类别 + 宽高 + 窗台高"归并门窗洞口，给出樘数与所在层。"""
+    groups: dict[tuple, dict[str, Any]] = {}
+    for o in opening_data(session):
+        key = (str(o["no"] or "").strip(), str(o["kind"]).upper(),
+               round(o["width"], 1), round(o["height"], 1), round(o["sill"], 1))
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"no": key[0], "kind": key[1], "width": key[2],
+                               "height": key[3], "sill": key[4], "count": 0, "levels": []}
+        g["count"] += 1
+        g["levels"].append(o.get("floor", 1))
+    out = []
+    for g in groups.values():
+        if not g["no"]:
+            # 没注编号的洞口：按规范术语补一个 A- 前缀占位，别留空白
+            g["no"] = "--"
+        g["levels"] = sorted(set(int(x) for x in g["levels"]))
+        g["level_text"] = _levels_text(g["levels"])
+        out.append(g)
+    # 门在前、窗在后，同类别按编号排
+    out.sort(key=lambda x: (0 if x["kind"] == "DOOR" else 1, x["no"], x["sill"]))
+    return out
+
+
+def create_opening_table(
+    session: Session,
+    table_id: str,
+    at: tuple[float, float],
+    title: str = "门窗表",
+    scale: float | None = None,
+    widths: list[float] | None = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """门窗表：从平面上的 `AA_OPENING` 自动统计，按编号归并成表（v1.0.32）。
+
+    统计口径：编号 + 类别 + 洞口宽高 + 窗台高 完全相同的归一行；
+    樘数是图上实际数量，所在层取洞口所在墙的 `AA_FLOOR`（同一编号跨层则写 "1-3"）。
+    没有洞口时不画空表，直接报错——空表在图纸上比没表更容易被误读。
+    """
+    sc = float(scale) if scale else drawing_scale(session)
+    items = opening_summary(session)
+    if not items:
+        raise CadError("图上一个门窗洞口都没有（AA_OPENING），不生成空的门窗表")
+    rows = []
+    for i, it in enumerate(items, 1):
+        rows.append([
+            str(i), it["no"],
+            "门" if it["kind"] == "DOOR" else ("窗" if it["kind"] == "WINDOW" else "门连窗"),
+            "%d×%d" % (round(it["width"]), round(it["height"])),
+            "%d" % round(it["sill"]) if it["kind"] != "DOOR" else "-",
+            str(it["count"]), it["level_text"],
+        ])
+    if widths is None:
+        widths = [10.0, 22.0, 12.0, 30.0, 16.0, 12.0, 22.0]
+    res = draw_table(session, at, title, OPENING_HEADER, rows,
+                     [w * sc for w in widths], table_id=table_id, scale=sc)
+    session.run([("attedit", {"handle": res["handle"],
+                              "values": {"AA_TYPE": "OPENING_TABLE"}})], save=True)
+    attrs = session.attributes(res["block"])
+    if attrs.get("AA_TYPE") != "OPENING_TABLE":
+        raise CadError("门窗表 AA_TYPE 回写失败：%s" % attrs.get("AA_TYPE"))
+    if note:
+        hgt = 2.5 * sc
+        nx, ny = res["at"][0], res["at"][1] - res["height"] - 6.0 * sc
+        session.lisp(
+            '(progn (aa:mktext-r (list %.3f %.3f) "%s" "AA-TABLE" %.3f 0.0) (princ "ok"))'
+            % (nx, ny, note.replace('"', "'"), hgt),
+            libraries=("aa_core.lisp",),
+        )
+    return {"ok": True, "block": res["block"], "id": table_id, "handle": res["handle"],
+            "at": res["at"], "width": res["width"], "height": res["height"],
+            "count": len(rows), "total": sum(it["count"] for it in items),
+            "items": items, "note": note}
+
+
+def read_opening_table(session: Session, table_id: str) -> list[dict[str, Any]]:
+    """回读门窗表（表体数据），给出编号、类别、宽高、窗台高、樘数、所在层。"""
+    attrs = session.attributes("AA_TABLE_" + table_id)
+    if not attrs or attrs.get("AA_TYPE") != "OPENING_TABLE":
+        raise CadError("没找到门窗表 %s" % table_id)
+    out: list[dict[str, Any]] = []
+    for r in attrs.get("AA_ROWS", "").split("@@"):
+        if not r:
+            continue
+        c = r.split("~") + [""] * 7
+        size = c[3].split("×")
+        if len(size) != 2:
+            raise CadError("门窗表的洞口尺寸解析不了：%r" % c[3])
+        out.append({
+            "no": c[1], "kind": c[2],
+            "width": float(size[0]), "height": float(size[1]),
+            "sill": 0.0 if c[4] in ("-", "") else float(c[4]),
+            "count": int(float(c[5] or 0)),
+            "levels": [int(x) for x in
+                       (c[6].replace("-", ",").split(",") if c[6] else [])],
+            "level_text": c[6],
+        })
+    return out
 
 
 def read_floors(session: Session, table_id: str) -> list[dict[str, Any]]:

@@ -41,7 +41,9 @@ from aa_lib import (  # noqa: E402
     create_elevation,
     create_section,
     create_floor_table,
+    create_opening_table,
     read_floors,
+    read_opening_table,
     create_opening,
     create_room,
     create_wall,
@@ -68,7 +70,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.31"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.32"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -206,6 +208,7 @@ TOOLS: list[dict[str, Any]] = [
                 "snap_axis": {"type": "boolean", "description": "端点吸附到最近轴线（先轴后墙）",
                               "default": False},
                 "snap_tol": {"type": "number", "description": "吸附允许距离 mm", "default": 300},
+                "floor": {"type": "integer", "description": "所在层号（写 AA_FLOOR，门窗表按它归\"所在层\"）", "default": 1},
             },
             "required": ["path", "id", "p1", "p2"],
         },
@@ -838,6 +841,24 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_opening_table",
+        "description": "门窗表：从图上洞口自动统计，按\"编号+类别+洞口宽高+窗台高\"归并，樘数取图上真实数量，所在层取洞口所在墙的 AA_FLOOR（连续写 1-3、不连续写 1,2）；画成表并落成 OPENING_TABLE 构件。只给 at 不建表时用 show 回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "表编号，如图纸内唯一 MC1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "表格左上角 [x, y]"},
+                "title": {"type": "string", "description": "表名", "default": "门窗表"},
+                "note": {"type": "string", "description": "表下附注（如\"门窗详见xx图集\"）"},
+                "scale": {"type": "boolean", "description": "标题是否带出图比例", "default": True},
+                "show": {"type": "string", "description": "只回读已有门窗表：给表编号，不回写"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_batch",
         "description": "批量事务：按顺序执行多个工具调用，任一失败自动回滚到调用前的图纸状态（零残留），返回逐步结果。",
         "inputSchema": {
@@ -1014,6 +1035,17 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return create_floor_table(s, a["id"], _pt(a["at"], "at"), a["floors"],
                                   a.get("title", "楼层表"))
 
+    if name == "aa_opening_table":
+        s = _session(a["path"])
+        if a.get("show"):
+            return {"ok": True, "rows": read_opening_table(s, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("门窗表需要 id 与 at（或用 show 回读已有表）")
+        return create_opening_table(s, a["id"], _pt(a["at"], "at"),
+                                    title=a.get("title", "门窗表"),
+                                    scale=None if bool(a.get("scale", True)) else 0,
+                                    note=a.get("note", ""))
+
     if name == "aa_batch":
         return aa_batch(path, a["ops"], bool(a.get("rollback", True)))
 
@@ -1094,7 +1126,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("thick", 240), "thick"), a.get("kind", "INTERNAL"),
             a.get("mat", ""), a.get("ax1", ""), a.get("ax2", ""),
             snap_axis=bool(a.get("snap_axis")),
-            snap_tol=_num(a.get("snap_tol", 300), "snap_tol"))
+            snap_tol=_num(a.get("snap_tol", 300), "snap_tol"),
+            floor=int(a.get("floor", 1)))
         res["normalized"] = normalize_around(s, a["id"])
         return {"ok": True, **res}
 

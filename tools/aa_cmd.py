@@ -45,10 +45,12 @@ from aa_lib import (  # noqa: E402
     create_apron,
     create_stair,
     create_floor_table,
-create_roof,
-create_elevation,
-create_section,
+    create_opening_table,
+    create_roof,
+    create_elevation,
+    create_section,
     read_floors,
+    read_opening_table,
     rescale_annotations,
     set_drawing_scale,
     audit,
@@ -333,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     p_wall.add_argument("--ax2", default="")
     p_wall.add_argument("--snap-axis", action="store_true", help="把端点吸附到最近轴线（先轴后墙）")
     p_wall.add_argument("--snap-tol", type=float, default=300.0, help="吸附允许距离 mm")
+    p_wall.add_argument("--floor", type=int, default=1,
+                        help="所在层号（写 AA_FLOOR，门窗表按它归所在层；默认 1）")
 
     p_op = sub.add_parser("opening", help="门窗开洞")
     p_op.add_argument("path")
@@ -398,6 +402,16 @@ def main(argv: list[str] | None = None) -> int:
     p_floors.add_argument("--floor", action="append", required=True,
                           help='每层一行："层号,层高,平面图号,层名[,标高mm]"；可重复')
     p_floors.add_argument("--show", default=None, help="只回读已有楼层表（给表编号）")
+
+    p_otable = sub.add_parser("opening-table",
+                              help="门窗表：从图上洞口自动统计（编号+类别+洞口尺寸+窗台高归并，带樘数与所在层）")
+    p_otable.add_argument("path")
+    p_otable.add_argument("id")
+    p_otable.add_argument("--at", default=None, help="表格左上角 x,y（建表必给；--show 可省）")
+    p_otable.add_argument("--title", default="门窗表")
+    p_otable.add_argument("--note", default="", help="表下附注文字")
+    p_otable.add_argument("--no-scale", action="store_true", help="标题不带比例")
+    p_otable.add_argument("--show", default=None, help="只回读已有门窗表（给表编号）")
 
     p_dim = sub.add_parser("dim", help="尺寸标注：外墙墙段长度 + 洞口宽，标在建筑外侧")
     p_dim.add_argument("path")
@@ -636,7 +650,8 @@ def main(argv: list[str] | None = None) -> int:
             res = create_wall(
                 session, args.id, _pt(args.p1), _pt(args.p2),
                 args.thick, args.kind, args.mat, args.ax1, args.ax2,
-                snap_axis=args.snap_axis, snap_tol=args.snap_tol)
+                snap_axis=args.snap_axis, snap_tol=args.snap_tol,
+                floor=args.floor)
             # 画完墙立刻规整它自己与相邻墙的裁剪/合角
             res["normalized"] = normalize_around(session, args.id)
             emit({"ok": True, **res})
@@ -656,6 +671,15 @@ def main(argv: list[str] | None = None) -> int:
                     items.append(row)
                 emit(create_floor_table(session, args.id, _pt(args.at), items,
                                         args.title))
+        elif args.cmd == "opening-table":
+            if args.show:
+                emit({"ok": True, "rows": read_opening_table(session, args.show)})
+            else:
+                if args.at is None:
+                    raise SystemExit("建表需要 --at（或只用 --show 回读）")
+                emit(create_opening_table(
+                    session, args.id, _pt(args.at), title=args.title,
+                    scale=0 if args.no_scale else None, note=args.note))
         elif args.cmd == "opening":
             emit({"ok": True, **create_opening(
                 session, args.id, args.wall, args.kind,

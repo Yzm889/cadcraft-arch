@@ -17,6 +17,7 @@ from aa_lib import (
     create_floor_table,
     create_north_arrow,
     create_opening,
+    create_opening_table,
     create_roof,
     create_room,
     create_section,
@@ -64,11 +65,11 @@ def main() -> int:
                     kind="EXTERNAL" if wid in ("W001", "W002", "W003", "W004") else "PARTITION")
     create_opening(s, "M001", "W001", "DOOR", width=900.0, pos=1500.0, no="M0921")
     create_opening(s, "C001", "W001", "WINDOW", width=1500.0, pos=5000.0,
-                    height=1500.0, sill=900.0, no="C1215")
+                    height=1500.0, sill=900.0, no="C1515")
     create_opening(s, "C002", "W003", "WINDOW", width=1200.0, pos=5600.0,
-                    height=1500.0, sill=900.0, no="C0915")
+                    height=1500.0, sill=900.0, no="C1215")
     create_room(s, "R001", ["W001", "W002", "W003", "W004"], name="客厅")
-    # 1-1 剖切符号：切在 X=1500（正好穿过首层门中心，也切到北墙的 C0915），往左看
+    # 1-1 剖切符号：切在 X=1500（正好穿过首层门中心，也切到北墙的 C1215），往左看
     create_section_mark(s, "SM1", (1500.0, -1200.0), (1500.0, 5700.0),
                         direction="left", no="1", scale=SCALE)
 
@@ -78,8 +79,10 @@ def main() -> int:
     create_axis_grid(s, "AX002", 3, 3600.0, 2, 4500.0,
                      xstart=0.0, ystart=9500.0, ext=annot_size(14.0, SCALE))
 
-    # 楼层表放平面右侧
+    # 楼层表放平面右侧；门窗表从平面洞口自动统计，放在楼层表右侧同一标高
     create_floor_table(s, "FT1", (8500.0, 1500.0), FLOORS, scale=SCALE)
+    otab = create_opening_table(s, "MC1", (22000.0, 1500.0),
+                                note="注：门窗详见建施-04 门窗表", scale=SCALE)
 
     # 立面 / 剖面 放下方
     # 一层门窗不再手填坐标：直接读平面 W001 上的 AA_OPENING（左边距 = 中心 - 半宽）
@@ -102,7 +105,7 @@ def main() -> int:
         axes=[{"x": 0.0, "label": "1"}, {"x": 3600.0, "label": "2"},
               {"x": 7200.0, "label": "3"}])
     # 剖面门窗不再手填：沿 1-1 剖切线（X=1500）反取被切到的洞口——
-    # 南墙首层门中心正好在 X=1500 → LEFT；北墙 C0915 跨 1000..2200，也切到 → RIGHT。
+    # 南墙首层门中心正好在 X=1500 → LEFT；北墙 C1215 跨 1000..2200，也切到 → RIGHT。
     cut_ops = read_cut_openings(s, (1500.0, -1200.0), (1500.0, 5700.0))
     assert [(o["side"], o["kind"], o["h"], o["sill"]) for o in cut_ops] == \
         [("LEFT", "DOOR", 2100.0, 0.0),
@@ -138,6 +141,7 @@ def main() -> int:
     png = OUT / "demo_building.png"
     export(s, png, sheet_window(s, "S001"))
     print("floors:", read_floors(s, "FT1"))
+    print("opening table:", otab["count"], "行 /", otab["total"], "樘")
     print("extent:", e)
     print("sheet:", sheet["size"], sheet["at"], sheet["inner"])
     return 0
