@@ -51,7 +51,7 @@ def main() -> int:
     cfg.write_text(json.dumps(CUSTOM, ensure_ascii=False), encoding="utf-8")
     try:
         got = aa_lib.load_layer_config(cfg)
-        assert got["wall"] == "WALL" and got["axis"] == "AXIS", got
+        assert got["layers"]["wall"] == "WALL" and got["layers"]["axis"] == "AXIS", got
         print("图层配置:", got)
 
         path = OUT / "test_layers.dxf"

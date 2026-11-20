@@ -24,6 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from aa_lib import (  # noqa: E402
+    LAYER_STYLES,
+    LAYERS,
     CadError,
     Session,
     annotate,
@@ -35,6 +37,7 @@ from aa_lib import (  # noqa: E402
     create_wall,
     create_sheet,
     export,
+    layer_table,
     merge_walls,
     normalize_around,
     openings_report,
@@ -105,6 +108,12 @@ def main(argv: list[str] | None = None) -> int:
                             help="同一根轴上的墙段位置聚类容差（mm）")
     p_axis_auto.add_argument("--ext", type=float, default=2400.0, help="轴线端伸出最外轴的距离")
     p_axis_auto.add_argument("--min-len", type=float, default=0.0, help="忽略短于该长度的墙")
+
+    p_layers = sub.add_parser("layers", help="查看/校正标准图层（颜色、线型、线宽）")
+    p_layers.add_argument("path", nargs="?", default=None,
+                          help="图纸路径；省略则只列出标准规格，不读图")
+    p_layers.add_argument("--fix", action="store_true",
+                          help="按标准建层/纠偏（缺层新建，颜色线型线宽不符就改），并回读校验")
 
     p_wall = sub.add_parser("wall", help="绘制墙体")
     p_wall.add_argument("path")
@@ -229,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
+        if args.cmd == "layers" and not args.path:
+            emit({"ok": True,
+                  "layers": {k: {"name": LAYERS[k], **LAYER_STYLES[k]} for k in LAYERS}})
+            return 0
+
         session = Session(args.path)
         if args.cmd == "new":
             session.new_metric()
@@ -242,6 +256,13 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_axis_grid(
                 session, args.id, args.xcount, args.xspace,
                 args.ycount, args.yspace, args.xstart, args.ystart, args.ext)})
+        elif args.cmd == "layers":
+            if args.fix:
+                got = session.ensure_layers()
+            else:
+                got = layer_table(session.path)
+            emit({"ok": True, "layers": got,
+                  "spec": {k: {"name": LAYERS[k], **LAYER_STYLES[k]} for k in LAYERS}})
         elif args.cmd == "axis-auto":
             emit({"ok": True, **auto_axis(
                 session, args.id, args.tol, args.ext, args.min_len)})

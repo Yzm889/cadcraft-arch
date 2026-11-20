@@ -1,8 +1,12 @@
 {
-  "_说明": "把本文件改名为 aa_layers.json 放在项目根，或设环境变量 AA_LAYERS_FILE 指向它，即可用自己图档的图层标准替换默认层名。键不可增删。",
-  "axis": "AA-AXIS",
-  "axistext": "AA-AXISTEXT",
-  "wall": "AA-WALL",
-  "opening": "AA-OPENING",
-  "room": "AA-ROOM"
+  "_说明": "把本文件改名为 aa_layers.json 放在项目根，或设环境变量 AA_LAYERS_FILE 指向它，即可用自己图档的图层标准替换默认层名与样式。值可以是层名字符串（只换名字，样式沿用默认），也可以是对象覆盖 color（ACI 数字或 Red/红/青/绿…）、linetype（Continuous/CENTER/DASHDOT…）、lineweight（mm）。",
+  "axis": {"name": "AA-AXIS", "color": "红", "linetype": "CENTER", "lineweight": 0.15},
+  "axistext": {"name": "AA-AXISTEXT", "color": "红", "linetype": "Continuous", "lineweight": 0.15},
+  "wall": {"name": "AA-WALL", "color": "白", "linetype": "Continuous", "lineweight": 0.35},
+  "opening": {"name": "AA-OPENING", "color": "青", "linetype": "Continuous", "lineweight": 0.18},
+  "room": {"name": "AA-ROOM", "color": "白", "linetype": "Continuous", "lineweight": 0.18},
+  "dim": {"name": "AA-DIM", "color": "绿", "linetype": "Continuous", "lineweight": 0.15},
+  "sheet": {"name": "AA-SHEET", "color": "白", "linetype": "Continuous", "lineweight": 0.70},
+  "title": {"name": "AA-TITLE", "color": "白", "linetype": "Continuous", "lineweight": 0.25},
+  "table": {"name": "AA-TABLE", "color": "白", "linetype": "Continuous", "lineweight": 0.18}
 }

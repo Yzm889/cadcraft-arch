@@ -24,6 +24,8 @@ from aa_lib import (  # noqa: E402
     CadError,
     Session,
     annotate,
+    LAYERS,
+    LAYER_STYLES,
     auto_axis,
     auto_rooms,
     create_axis_grid,
@@ -32,6 +34,7 @@ from aa_lib import (  # noqa: E402
     create_wall,
     create_sheet,
     export,
+    layer_table,
     merge_walls,
     normalize_around,
     opening_data,
@@ -47,7 +50,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.8.0"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -116,6 +119,19 @@ TOOLS: list[dict[str, Any]] = [
                 "tol": {"type": "number", "description": "同一根轴上的墙段位置聚类容差 mm", "default": 50},
                 "ext": {"type": "number", "description": "轴线端伸出最外轴的距离 mm", "default": 2400},
                 "min_len": {"type": "number", "description": "忽略短于该长度的墙 mm", "default": 0},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_layers",
+        "description": "查看/校正标准图层：轴线红点划线、墙体白粗线、门窗青细线、标注绿细线等；"
+                       "fix=true 时缺层新建、颜色/线型/线宽不符就改，并回读校验。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "fix": {"type": "boolean", "description": "是否按标准校正并回读校验", "default": False},
             },
             "required": ["path"],
         },
@@ -403,6 +419,14 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "path": str(s.path), "units": "mm"}
 
     s = _session(path)
+
+    if name == "aa_layers":
+        if a.get("fix"):
+            got = s.ensure_layers()
+        else:
+            got = layer_table(s.path)
+        return {"ok": True, "layers": got,
+                "spec": {k: {"name": LAYERS[k], **LAYER_STYLES[k]} for k in LAYERS}}
 
     if name == "aa_axis_auto":
         return {"ok": True, **auto_axis(

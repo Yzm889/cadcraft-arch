@@ -43,15 +43,62 @@ DEFAULT_LAYERS = {
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
+# 各图层的标准线型 / 颜色（ACI）/ 线宽（mm），按 GB/T 50001 线宽组 + 天正默认配色：
+# 轴线：红点划线；墙体：白（黑）实线、粗线 b=0.35；门窗：青细线；房间名：白细线；
+# 尺寸：绿细线；图框：白粗线 0.70（图框线用最粗的 b 级）；标题栏内格：0.25；表格：0.18。
+# 用户可在 aa_layers.json 里写成 {"axis": {"name": "AXIS", "color": 1,
+# "linetype": "CENTER", "lineweight": 0.15}} 覆盖任意一项；只写字符串则沿用默认样式。
+DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
+    "axis":     {"color": 1, "linetype": "CENTER", "lineweight": 0.15},
+    "axistext": {"color": 1, "linetype": "Continuous", "lineweight": 0.15},
+    "wall":     {"color": 7, "linetype": "Continuous", "lineweight": 0.35},
+    "opening":  {"color": 4, "linetype": "Continuous", "lineweight": 0.18},
+    "room":     {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "dim":      {"color": 3, "linetype": "Continuous", "lineweight": 0.15},
+    "sheet":    {"color": 7, "linetype": "Continuous", "lineweight": 0.70},
+    "title":    {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
+    "table":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+}
+LAYER_STYLES: dict[str, dict[str, Any]] = {
+    k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
+}
+
+# 颜色名 -> ACI（配置里可以写 "red"/"红"，也可以直接写 1）
+COLOR_NAMES = {
+    "red": 1, "yellow": 2, "green": 3, "cyan": 4, "blue": 5, "magenta": 6,
+    "white": 7, "black": 7, "gray": 8, "grey": 8,
+    "红": 1, "黄": 2, "绿": 3, "青": 4, "蓝": 5, "洋红": 6, "白": 7, "黑": 7, "灰": 8,
+}
+
+
+def parse_color(value: Any) -> int:
+    """颜色写法归一：1..255 的 ACI 整数，或 "Red"/"red"/"红" 这类名字。"""
+    if isinstance(value, bool):
+        raise CadError("图层颜色不合法：%r" % (value,))
+    if isinstance(value, int):
+        if 1 <= value <= 255:
+            return value
+        raise CadError("图层颜色 ACI 应在 1..255：%r" % (value,))
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s.isdigit():
+            return parse_color(int(s))
+        if s in COLOR_NAMES:
+            return COLOR_NAMES[s]
+    raise CadError("图层颜色不合法：%r" % (value,))
+
 
 def load_layer_config(path: str | Path | None = None) -> dict:
-    """读取图层配置（JSON，键同 DEFAULT_LAYERS），并更新模块级 LAYERS。
+    """读取图层配置（JSON，键同 DEFAULT_LAYERS），并更新模块级 LAYERS / LAYER_STYLES。
 
+    值可以是字符串（只改层名，样式用默认），也可以是对象
+    {"name": ..., "color": ..., "linetype": ..., "lineweight": ...}（任意字段可省）。
     查找顺序：显式 path > 环境变量 AA_LAYERS_FILE > 项目根 aa_layers.json。
     文件不存在则保持默认，不报错（图层标准是可选项）。
     """
-    global LAYERS
+    global LAYERS, LAYER_STYLES
     LAYERS = dict(DEFAULT_LAYERS)
+    LAYER_STYLES = {k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()}
     cand = None
     if path:
         cand = Path(path)
@@ -59,12 +106,33 @@ def load_layer_config(path: str | Path | None = None) -> dict:
         cand = Path(os.environ["AA_LAYERS_FILE"])
     else:
         cand = Path(__file__).resolve().parent.parent / "aa_layers.json"
-    if cand and cand.exists():
-        data = json.loads(cand.read_text(encoding="utf-8-sig"))
+    if cand and Path(cand).exists():
+        data = json.loads(Path(cand).read_text(encoding="utf-8-sig"))
         for k, v in data.items():
-            if k in DEFAULT_LAYERS and isinstance(v, str) and v.strip():
+            if k not in DEFAULT_LAYERS:
+                continue
+            if isinstance(v, str) and v.strip():
                 LAYERS[k] = v.strip()
-    return dict(LAYERS)
+            elif isinstance(v, dict):
+                name = v.get("name")
+                if isinstance(name, str) and name.strip():
+                    LAYERS[k] = name.strip()
+                style = LAYER_STYLES[k]
+                if "color" in v:
+                    style["color"] = parse_color(v["color"])
+                if "linetype" in v and str(v["linetype"]).strip():
+                    style["linetype"] = str(v["linetype"]).strip()
+                if "lineweight" in v:
+                    style["lineweight"] = float(v["lineweight"])
+    return {"layers": dict(LAYERS),
+            "styles": {k: dict(v) for k, v in LAYER_STYLES.items()}}
+
+
+def layer_key_by_name(name: str) -> str | None:
+    for k, v in LAYERS.items():
+        if v == name:
+            return k
+    return None
 
 
 load_layer_config()
@@ -150,6 +218,8 @@ class Session:
         self._exec(["run", "--metric", "--save", str(self.path)])
         if not self.path.exists():
             raise CadError("新建图纸失败：%s" % self.path)
+        # 一开图就把 9 个标准层按 GB/天正规格建好（颜色、线型、线宽一次到位）
+        self.ensure_layers()
 
     # ---------- LISP ----------
 
@@ -174,11 +244,60 @@ class Session:
 
     # ---------- 图层 / 块 / 插入 ----------
 
-    def ensure_layers(self, names: Sequence[str]) -> None:
-        existing = {l["name"] for l in self.info()["layers"]}
-        cmds = [("layer.new", {"name": n}) for n in names if n not in existing]
+    def ensure_layers(self, names: Sequence[str] | None = None,
+                      strict: bool = True) -> dict[str, dict[str, Any]]:
+        """按标准自动建层：缺层就建，已存在但颜色/线型/线宽不对就改，最后回读校验。
+
+        names 传层名（与 LAYERS 里的值对应）；不传则把整套 9 个标准层全部备齐。
+        这样"画的时候层就是对的"，用户拿到图不用再手调层色。
+        """
+        names = list(names) if names is not None else [LAYERS[k] for k in LAYERS]
+        spec: list[tuple[str, dict[str, Any]]] = []
+        for n in names:
+            key = layer_key_by_name(n)
+            if key is None:
+                # 用户自定义层名不在标准表里：只给个中性规格（白细实线），不猜标准
+                spec.append((n, {"color": 7, "linetype": "Continuous",
+                                 "lineweight": 0.18}))
+            else:
+                spec.append((LAYERS[key], dict(LAYER_STYLES[key])))
+        if any(s["linetype"] != "Continuous" for _, s in spec):
+            self.ensure_linetypes()          # 轴线要用 CENTER，新图档只带 Continuous
+
+        table = layer_table(self.path) if self.path.exists() else {}
+        cmds: list[tuple[str, dict[str, Any]]] = []
+        for name, style in spec:
+            color = parse_color(style["color"])
+            lt = str(style["linetype"])
+            lw = float(style["lineweight"])
+            have = table.get(name)
+            if have is None:
+                cmds.append(("layer.new", {"name": name, "color": color,
+                                           "linetype": lt, "lineweight": lw}))
+            elif (have["color"] != color
+                  or str(have["linetype"]).lower() != lt.lower()
+                  or abs(float(have["lineweight"]) - lw) > 0.011):
+                cmds.append(("layer.set", {"name": name, "color": color,
+                                            "linetype": lt, "lineweight": lw}))
         if cmds:
             self.run(cmds, save=True)
+
+        table = layer_table(self.path)
+        bad = []
+        for name, style in spec:
+            have = table.get(name)
+            if have is None:
+                bad.append("%s 缺层" % name)
+                continue
+            if have["color"] != parse_color(style["color"]):
+                bad.append("%s 颜色 %s≠%s" % (name, have["color"], style["color"]))
+            if str(have["linetype"]).lower() != str(style["linetype"]).lower():
+                bad.append("%s 线型 %s≠%s" % (name, have["linetype"], style["linetype"]))
+            if abs(float(have["lineweight"]) - float(style["lineweight"])) > 0.011:
+                bad.append("%s 线宽 %s≠%s" % (name, have["lineweight"], style["lineweight"]))
+        if bad and strict:
+            raise CadError("图层规格校验失败：" + "；".join(bad))
+        return {name: table.get(name, {}) for name, _ in spec}
 
     def ensure_linetypes(self) -> None:
         """把 CADCraft 内置线型库加载进当前图档（幂等，只跑一次）。
@@ -1909,6 +2028,51 @@ def create_wall(
         "angle_deg": float(angle) * 57.29577951308232,
         "geom_handles": handles,
     }
+
+
+def layer_table(path) -> dict[str, dict[str, Any]]:
+    """读 DXF 的 LAYER 表：{层名: {color: ACI, linetype: str, lineweight: mm}}。"""
+    lines_in = [ln.strip() for ln in Path(path).read_text(encoding="utf-8",
+                                                          errors="replace").splitlines()]
+    out: dict[str, dict[str, Any]] = {}
+    section = None
+    rec: dict[str, Any] | None = None
+    i = 0
+    n = len(lines_in)
+    while i < n - 1:
+        code, val = lines_in[i], lines_in[i + 1]
+        i += 2
+        if code == "0":
+            if rec is not None and rec.get("name"):
+                out[rec["name"]] = {"color": rec["color"],
+                                    "linetype": rec["linetype"],
+                                    "lineweight": rec["lineweight"]}
+            rec = None
+            if val == "SECTION":
+                section = None
+            elif val == "ENDSEC":
+                section = None
+            elif section == "TABLES" and val == "LAYER":
+                rec = {"name": None, "color": 7, "linetype": "Continuous",
+                       "lineweight": -3.0}
+            continue
+        if code == "2" and section is None:
+            section = val
+            continue
+        if rec is None:
+            continue
+        if code == "2" and rec["name"] is None:
+            rec["name"] = val
+        elif code == "62":
+            rec["color"] = abs(int(val))
+        elif code == "6":
+            rec["linetype"] = val
+        elif code == "370":
+            rec["lineweight"] = int(val) / 100.0
+    if rec is not None and rec.get("name"):
+        out[rec["name"]] = {"color": rec["color"], "linetype": rec["linetype"],
+                            "lineweight": rec["lineweight"]}
+    return out
 
 
 def layer_of_block(path, block_name: str) -> set[str]:

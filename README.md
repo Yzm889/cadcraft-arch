@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v0.8，已实测跑通）
+## 现状（v0.9，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -25,12 +25,13 @@
 | 尺寸标注 | `dim` | 完成 | 外墙墙段长度标外层、洞口宽标内层，落在 `AA-DIM` 层；内墙自动跳过，重跑幂等、回读测量值 |
 | 图框 + 标题栏 | `sheet` / `set-sheet` | 完成 | GB/T 14689 图幅（A0–A4）、装订边 25、其余边 A0/A1=10 其余 5；标题栏 180×56 九格（GB/T 10609.1）；不给位置按全图外廓（墙/房间/轴号/尺寸/表格）自动居中排图，装不下直接报错；重复编号拒绝、改标题栏后块唯一且属性同步 |
 | 出图 | `export` | 完成 | 按扩展名导出 png/svg/pdf；`--sheet` 自动按图幅取窗口，PNG/PDF 均实测有产物（含 5% 余量、不裁切） |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，19 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
+| 图层标准 | `layers` | 完成 | 9 个标准层开图即建：轴线红 CENTER 0.15、墙白 0.35、门窗青 0.18、标注绿 0.15、图框 0.70；层被改坏后下次绘制自动纠回，回读 DXF 层表（62/6/370）校验，不符即报错；`--fix` 可批量矫正老图 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，20 个工具与 CLI 一一对应；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (17 tests)
+python tests/run_all.py     # ALL PASS (18 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
 ```
@@ -43,6 +44,7 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 - `samples/test_modify.dxf/.png`（导出为 `demo_modify.png`）—— 同一堵墙从 240 改 360 厚、门从 900@2000 挪到 1200@3000 之后的样子。
 - `samples/demo_auto_room.dxf/.png` —— 6000×4000 外墙 + 240 隔墙，`room --auto` 自动搜出两间 2760×3760（各 10377600 mm²）并落 `R001` / `R002`。
 - `samples/mcp_demo.dxf/.png` —— 纯 MCP 客户端身份从零画的成品（轴网 A/B/C + 1/2、5 堵墙、2 门 1 窗、自动 2 间房），验证 Agent 直连链路。
+- `samples/zoom_layers.png` —— 图层配色实测：轴号/轴线红（轴线点划线）、墙白、门窗青、尺寸绿、房间名白；局部放大看得到点划线的"点"。`samples/demo_sheet.png` 是同一套颜色出在 A3 图框里。
 
 ## 它和天正侧插件的区别
 
@@ -115,15 +117,30 @@ python tools/aa_cmd.py show out.dxf
 
 每个构件按用途分图层落图，互不混线：
 
-| 用途 | 默认层名 | 内容 |
-|---|---|---|
-| 轴线 | `AA-AXIS` | 轴线直线（**单独一层，与墙体完全分离**） |
-| 轴号 | `AA-AXISTEXT` | A/B/C、1/2/3 |
-| 墙体 | `AA-WALL` | 两侧墙面线 |
-| 门窗 | `AA-OPENING` | 洞口边线、门扇线、弧、窗平行线 |
-| 房间 | `AA-ROOM` | 房间名称文字 |
+| 用途 | 默认层名 | 颜色 | 线型 | 线宽 | 内容 |
+|---|---|---|---|---|---|
+| 轴线 | `AA-AXIS` | 红 1 | `CENTER` 点划线 | 0.15 | 轴线直线（**单独一层，与墙体完全分离**） |
+| 轴号 | `AA-AXISTEXT` | 红 1 | 实线 | 0.15 | A/B/C、1/2/3 |
+| 墙体 | `AA-WALL` | 白 7 | 实线 | **0.35（粗线 b）** | 两侧墙面线 |
+| 门窗 | `AA-OPENING` | 青 4 | 实线 | 0.18 | 洞口边线、门扇线、弧、窗平行线 |
+| 房间 | `AA-ROOM` | 白 7 | 实线 | 0.18 | 房间名称文字 |
+| 尺寸 | `AA-DIM` | 绿 3 | 实线 | 0.15 | 两道尺寸线、箭头、数字 |
+| 图框 | `AA-SHEET` | 白 7 | 实线 | **0.70（图框粗线）** | 图幅外框、内框 |
+| 标题栏 | `AA-TITLE` | 白 7 | 实线 | 0.25 | 标题栏九格与文字 |
+| 表格 | `AA-TABLE` | 白 7 | 实线 | 0.18 | 房间表、门窗表 |
 
-**图层名由你定**：把 `aa_layers.example.json` 复制成项目根的 `aa_layers.json`，改成你图档自己的层名即可；也可用环境变量 `AA_LAYERS_FILE` 指向别处的配置。键固定为 `axis / axistext / wall / opening / room`，值是你自己的层名。改完 `tools/aa_cmd.py` 会自动 `layer.new` 建层，块内几何也落在你指定的层上（`tests/test_layers.py` 断言了这一点）。
+**层是自动建的，不用你手调**：`new` 一开图就把上表 9 层按颜色/线型/线宽建好；任何后续命令画之前都会再校验一遍，缺层补建、颜色线型线宽被改坏就**自动改回来**，改不回来直接报错（不静默放过）。`layers out.dxf --fix` 可对老图纸一次性补规格。取色截至 GB/T 50001 线宽组 b=0.35/0.5/0.7 与天正默认配色（轴线红、标注绿、门窗青）。
+
+**图层名由你定**：把 `aa_layers.example.json` 复制成项目根的 `aa_layers.json`，值可以是层名字符串，也可以是对象覆盖颜色/线型/线宽：
+
+```json
+{
+  "axis":  {"name": "AXIS", "color": "红", "linetype": "CENTER", "lineweight": 0.25},
+  "wall":  "WALL"
+}
+```
+
+也可用环境变量 `AA_LAYERS_FILE` 指向别处的配置。键固定为 `axis / axistext / wall / opening / room / dim / sheet / title / table`。块内几何也落在你指定的层上（`tests/test_layers.py`、`tests/test_layer_style.py` 断言了这一点）。
 
 ## 图面规则（避免"看起来像没做完"）
 
@@ -207,6 +224,7 @@ Agent 不必拼命令行：`tools/aa_mcp.py` 是一个标准 **stdio MCP 服务�
 | `aa_new` / `aa_show` | 新建公制图纸 / 回读全部构件 |
 | `aa_axis` | 轴网（纵轴 + 横轴 + 轴号） |
 | `aa_axis_auto` | **轴网自动**：按现有墙段反推轴线位置并自动编号 |
+| `aa_layers` | 查看/校正标准图层的颜色、线型、线宽（`fix=true` 自动纠正） |
 | `aa_wall` | 画墙，画完自动规整邻墙裁剪与合角 |
 | `aa_opening` | 墙体真实开洞 + 门窗符号 + 自动编号（`frame` 窗框厚、`no` 编号可覆盖）|
 | `aa_room` / `aa_room_auto` | 显式墙环建房间 / 自动搜环建房间 |

@@ -455,7 +455,7 @@ $DIMJOGANG
   9
 $HANDSEED
   5
-1295
+129B
   0
 ENDSEC
   0
@@ -1347,7 +1347,7 @@ Fenceline circle ----0-----0----
  75
 0
 340
-1220
+1226
  46
 2.54
  50
@@ -1417,7 +1417,7 @@ LAYER
 100
 AcDbSymbolTable
  70
-5
+11
   0
 LAYER
   5
@@ -1475,15 +1475,15 @@ AcDbSymbolTableRecord
 100
 AcDbLayerTableRecord
   2
-AA-WALL
+AA-AXIS
  70
 0
  62
-7
+1
   6
-Continuous
+CENTER
 370
--3
+15
 390
 11FC
   0
@@ -1497,15 +1497,15 @@ AcDbSymbolTableRecord
 100
 AcDbLayerTableRecord
   2
-AA-AXIS
+AA-AXISTEXT
  70
 0
  62
-7
+1
   6
 Continuous
 370
--3
+15
 390
 11FC
   0
@@ -1519,7 +1519,7 @@ AcDbSymbolTableRecord
 100
 AcDbLayerTableRecord
   2
-AA-AXISTEXT
+AA-WALL
  70
 0
  62
@@ -1527,7 +1527,139 @@ AA-AXISTEXT
   6
 Continuous
 370
--3
+35
+390
+11FC
+  0
+LAYER
+  5
+121F
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-OPENING
+ 70
+0
+ 62
+4
+  6
+Continuous
+370
+18
+390
+11FC
+  0
+LAYER
+  5
+1220
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-ROOM
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+18
+390
+11FC
+  0
+LAYER
+  5
+1221
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-DIM
+ 70
+0
+ 62
+3
+  6
+Continuous
+370
+15
+390
+11FC
+  0
+LAYER
+  5
+1222
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-SHEET
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+70
+390
+11FC
+  0
+LAYER
+  5
+1223
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-TITLE
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+25
+390
+11FC
+  0
+LAYER
+  5
+1224
+330
+1219
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+AA-TABLE
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+18
 390
 11FC
   0
@@ -1537,7 +1669,7 @@ TABLE
   2
 STYLE
   5
-121F
+1225
 330
 0
 100
@@ -1547,9 +1679,9 @@ AcDbSymbolTable
   0
 STYLE
   5
-1220
+1226
 330
-121F
+1225
 100
 AcDbSymbolTableRecord
 100
@@ -1585,7 +1717,7 @@ TABLE
   2
 VIEW
   5
-1221
+1227
 330
 0
 100
@@ -1599,7 +1731,7 @@ TABLE
   2
 UCS
   5
-1222
+1228
 330
 0
 100
@@ -1613,7 +1745,7 @@ TABLE
   2
 APPID
   5
-1223
+1229
 330
 0
 100
@@ -1623,9 +1755,9 @@ AcDbSymbolTable
   0
 APPID
   5
-1224
+122A
 330
-1223
+1229
 100
 AcDbSymbolTableRecord
 100
@@ -1637,9 +1769,9 @@ ACAD
   0
 APPID
   5
-1225
+122B
 330
-1223
+1229
 100
 AcDbSymbolTableRecord
 100
@@ -1651,9 +1783,9 @@ CADCRAFT
   0
 APPID
   5
-1226
+122C
 330
-1223
+1229
 100
 AcDbSymbolTableRecord
 100
@@ -1665,9 +1797,9 @@ AcadAnnotative
   0
 APPID
   5
-1227
+122D
 330
-1223
+1229
 100
 AcDbSymbolTableRecord
 100
@@ -1679,9 +1811,9 @@ AcCmTransparency
   0
 APPID
   5
-1228
+122E
 330
-1223
+1229
 100
 AcDbSymbolTableRecord
 100
@@ -1697,7 +1829,7 @@ TABLE
   2
 DIMSTYLE
   5
-1229
+122F
 330
 0
 100
@@ -1711,9 +1843,9 @@ AcDbDimStyleTable
   0
 DIMSTYLE
 105
-122A
+1230
 330
-1229
+122F
 100
 AcDbSymbolTableRecord
 100
@@ -1807,7 +1939,7 @@ Standard
 285
 0
 340
-1220
+1226
  49
 1.0
  50
@@ -1843,9 +1975,9 @@ Standard
   0
 DIMSTYLE
 105
-122B
+1231
 330
-1229
+122F
 100
 AcDbSymbolTableRecord
 100
@@ -1939,7 +2071,7 @@ ISO-25
 285
 0
 340
-1220
+1226
  49
 1.0
  50
@@ -1979,7 +2111,7 @@ TABLE
   2
 BLOCK_RECORD
   5
-122C
+1232
 330
 0
 100
@@ -1991,7 +2123,7 @@ BLOCK_RECORD
   5
 11D4
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2005,7 +2137,7 @@ BLOCK_RECORD
   5
 11D5
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2019,7 +2151,7 @@ BLOCK_RECORD
   5
 11D6
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2033,7 +2165,7 @@ BLOCK_RECORD
   5
 11D7
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2051,7 +2183,7 @@ BLOCK_RECORD
   5
 11D8
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2069,7 +2201,7 @@ BLOCK_RECORD
   5
 11D9
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2087,7 +2219,7 @@ BLOCK_RECORD
   5
 11DA
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2105,7 +2237,7 @@ BLOCK_RECORD
   5
 11DB
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2123,7 +2255,7 @@ BLOCK_RECORD
   5
 11DC
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2141,7 +2273,7 @@ BLOCK_RECORD
   5
 11DD
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2159,7 +2291,7 @@ BLOCK_RECORD
   5
 11DE
 330
-122C
+1232
 100
 AcDbSymbolTableRecord
 100
@@ -2183,129 +2315,129 @@ BLOCKS
   0
 BLOCK
   5
-122D
-330
-11D4
-100
-AcDbEntity
-  8
-0
-100
-AcDbBlockBegin
-  2
-*Model_Space
- 70
-0
- 10
-0.0
- 20
-0.0
- 30
-0.0
-  3
-*Model_Space
-  1
-
-  0
-ENDBLK
-  5
-122E
-330
-11D4
-100
-AcDbEntity
-  8
-0
-100
-AcDbBlockEnd
-  0
-BLOCK
-  5
-122F
-330
-11D5
-100
-AcDbEntity
- 67
-1
-  8
-0
-100
-AcDbBlockBegin
-  2
-*Paper_Space
- 70
-0
- 10
-0.0
- 20
-0.0
- 30
-0.0
-  3
-*Paper_Space
-  1
-
-  0
-ENDBLK
-  5
-1230
-330
-11D5
-100
-AcDbEntity
- 67
-1
-  8
-0
-100
-AcDbBlockEnd
-  0
-BLOCK
-  5
-1231
-330
-11D6
-100
-AcDbEntity
- 67
-1
-  8
-0
-100
-AcDbBlockBegin
-  2
-*Paper_Space0
- 70
-0
- 10
-0.0
- 20
-0.0
- 30
-0.0
-  3
-*Paper_Space0
-  1
-
-  0
-ENDBLK
-  5
-1232
-330
-11D6
-100
-AcDbEntity
- 67
-1
-  8
-0
-100
-AcDbBlockEnd
-  0
-BLOCK
-  5
 1233
+330
+11D4
+100
+AcDbEntity
+  8
+0
+100
+AcDbBlockBegin
+  2
+*Model_Space
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Model_Space
+  1
+
+  0
+ENDBLK
+  5
+1234
+330
+11D4
+100
+AcDbEntity
+  8
+0
+100
+AcDbBlockEnd
+  0
+BLOCK
+  5
+1235
+330
+11D5
+100
+AcDbEntity
+ 67
+1
+  8
+0
+100
+AcDbBlockBegin
+  2
+*Paper_Space
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Paper_Space
+  1
+
+  0
+ENDBLK
+  5
+1236
+330
+11D5
+100
+AcDbEntity
+ 67
+1
+  8
+0
+100
+AcDbBlockEnd
+  0
+BLOCK
+  5
+1237
+330
+11D6
+100
+AcDbEntity
+ 67
+1
+  8
+0
+100
+AcDbBlockBegin
+  2
+*Paper_Space0
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+*Paper_Space0
+  1
+
+  0
+ENDBLK
+  5
+1238
+330
+11D6
+100
+AcDbEntity
+ 67
+1
+  8
+0
+100
+AcDbBlockEnd
+  0
+BLOCK
+  5
+1239
 330
 11D7
 100
@@ -3051,7 +3183,7 @@ AA_SKIP
   0
 ENDBLK
   5
-1234
+123A
 330
 11D7
 100
@@ -3063,7 +3195,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-1235
+123B
 330
 11D8
 100
@@ -3461,7 +3593,7 @@ AA_ROOT
   0
 ENDBLK
   5
-1236
+123C
 330
 11D8
 100
@@ -3473,7 +3605,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-1237
+123D
 330
 11D9
 100
@@ -3871,7 +4003,7 @@ AA_ROOT
   0
 ENDBLK
   5
-1238
+123E
 330
 11D9
 100
@@ -3883,7 +4015,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-1239
+123F
 330
 11DA
 100
@@ -4281,7 +4413,7 @@ AA_ROOT
   0
 ENDBLK
   5
-123A
+1240
 330
 11DA
 100
@@ -4293,7 +4425,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-123B
+1241
 330
 11DB
 100
@@ -4691,7 +4823,7 @@ AA_ROOT
   0
 ENDBLK
   5
-123C
+1242
 330
 11DB
 100
@@ -4703,7 +4835,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-123D
+1243
 330
 11DC
 100
@@ -5101,7 +5233,7 @@ AA_ROOT
   0
 ENDBLK
   5
-123E
+1244
 330
 11DC
 100
@@ -5113,7 +5245,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-123F
+1245
 330
 11DD
 100
@@ -5511,7 +5643,7 @@ AA_ROOT
   0
 ENDBLK
   5
-1240
+1246
 330
 11DD
 100
@@ -5523,7 +5655,7 @@ AcDbBlockEnd
   0
 BLOCK
   5
-1241
+1247
 330
 11DE
 100
@@ -5921,7 +6053,7 @@ AA_ROOT
   0
 ENDBLK
   5
-1242
+1248
 330
 11DE
 100
@@ -5969,7 +6101,7 @@ AA_WALL_W001
   0
 ATTRIB
   5
-1243
+1249
 330
 116
 100
@@ -6003,7 +6135,7 @@ AA_TYPE
   0
 ATTRIB
   5
-1244
+124A
 330
 116
 100
@@ -6037,7 +6169,7 @@ AA_ID
   0
 ATTRIB
   5
-1245
+124B
 330
 116
 100
@@ -6071,7 +6203,7 @@ AA_THICK
   0
 ATTRIB
   5
-1246
+124C
 330
 116
 100
@@ -6105,7 +6237,7 @@ AA_KIND
   0
 ATTRIB
   5
-1247
+124D
 330
 116
 100
@@ -6139,7 +6271,7 @@ AA_MAT
   0
 ATTRIB
   5
-1248
+124E
 330
 116
 100
@@ -6173,7 +6305,7 @@ AA_AX1
   0
 ATTRIB
   5
-1249
+124F
 330
 116
 100
@@ -6207,7 +6339,7 @@ AA_AX2
   0
 ATTRIB
   5
-124A
+1250
 330
 116
 100
@@ -6241,7 +6373,7 @@ AA_LEN
   0
 ATTRIB
   5
-124B
+1251
 330
 116
 100
@@ -6275,7 +6407,7 @@ AA_ROOT
   0
 SEQEND
   5
-124C
+1252
 330
 116
 100
@@ -6315,7 +6447,7 @@ AA_WALL_W002
   0
 ATTRIB
   5
-124D
+1253
 330
 12D
 100
@@ -6349,7 +6481,7 @@ AA_TYPE
   0
 ATTRIB
   5
-124E
+1254
 330
 12D
 100
@@ -6383,7 +6515,7 @@ AA_ID
   0
 ATTRIB
   5
-124F
+1255
 330
 12D
 100
@@ -6417,7 +6549,7 @@ AA_THICK
   0
 ATTRIB
   5
-1250
+1256
 330
 12D
 100
@@ -6451,7 +6583,7 @@ AA_KIND
   0
 ATTRIB
   5
-1251
+1257
 330
 12D
 100
@@ -6485,7 +6617,7 @@ AA_MAT
   0
 ATTRIB
   5
-1252
+1258
 330
 12D
 100
@@ -6519,7 +6651,7 @@ AA_AX1
   0
 ATTRIB
   5
-1253
+1259
 330
 12D
 100
@@ -6553,7 +6685,7 @@ AA_AX2
   0
 ATTRIB
   5
-1254
+125A
 330
 12D
 100
@@ -6587,7 +6719,7 @@ AA_LEN
   0
 ATTRIB
   5
-1255
+125B
 330
 12D
 100
@@ -6621,7 +6753,7 @@ AA_ROOT
   0
 SEQEND
   5
-1256
+125C
 330
 12D
 100
@@ -6661,7 +6793,7 @@ AA_WALL_W003
   0
 ATTRIB
   5
-1257
+125D
 330
 144
 100
@@ -6697,7 +6829,7 @@ AA_TYPE
   0
 ATTRIB
   5
-1258
+125E
 330
 144
 100
@@ -6733,7 +6865,7 @@ AA_ID
   0
 ATTRIB
   5
-1259
+125F
 330
 144
 100
@@ -6769,7 +6901,7 @@ AA_THICK
   0
 ATTRIB
   5
-125A
+1260
 330
 144
 100
@@ -6805,7 +6937,7 @@ AA_KIND
   0
 ATTRIB
   5
-125B
+1261
 330
 144
 100
@@ -6841,7 +6973,7 @@ AA_MAT
   0
 ATTRIB
   5
-125C
+1262
 330
 144
 100
@@ -6877,7 +7009,7 @@ AA_AX1
   0
 ATTRIB
   5
-125D
+1263
 330
 144
 100
@@ -6913,7 +7045,7 @@ AA_AX2
   0
 ATTRIB
   5
-125E
+1264
 330
 144
 100
@@ -6949,7 +7081,7 @@ AA_LEN
   0
 ATTRIB
   5
-125F
+1265
 330
 144
 100
@@ -6985,7 +7117,7 @@ AA_ROOT
   0
 SEQEND
   5
-1260
+1266
 330
 144
 100
@@ -7025,7 +7157,7 @@ AA_WALL_W004
   0
 ATTRIB
   5
-1261
+1267
 330
 15B
 100
@@ -7061,7 +7193,7 @@ AA_TYPE
   0
 ATTRIB
   5
-1262
+1268
 330
 15B
 100
@@ -7097,7 +7229,7 @@ AA_ID
   0
 ATTRIB
   5
-1263
+1269
 330
 15B
 100
@@ -7133,7 +7265,7 @@ AA_THICK
   0
 ATTRIB
   5
-1264
+126A
 330
 15B
 100
@@ -7169,7 +7301,7 @@ AA_KIND
   0
 ATTRIB
   5
-1265
+126B
 330
 15B
 100
@@ -7205,7 +7337,7 @@ AA_MAT
   0
 ATTRIB
   5
-1266
+126C
 330
 15B
 100
@@ -7241,7 +7373,7 @@ AA_AX1
   0
 ATTRIB
   5
-1267
+126D
 330
 15B
 100
@@ -7277,7 +7409,7 @@ AA_AX2
   0
 ATTRIB
   5
-1268
+126E
 330
 15B
 100
@@ -7313,7 +7445,7 @@ AA_LEN
   0
 ATTRIB
   5
-1269
+126F
 330
 15B
 100
@@ -7349,7 +7481,7 @@ AA_ROOT
   0
 SEQEND
   5
-126A
+1270
 330
 15B
 100
@@ -7389,7 +7521,7 @@ AA_WALL_W005
   0
 ATTRIB
   5
-126B
+1271
 330
 172
 100
@@ -7425,7 +7557,7 @@ AA_TYPE
   0
 ATTRIB
   5
-126C
+1272
 330
 172
 100
@@ -7461,7 +7593,7 @@ AA_ID
   0
 ATTRIB
   5
-126D
+1273
 330
 172
 100
@@ -7497,7 +7629,7 @@ AA_THICK
   0
 ATTRIB
   5
-126E
+1274
 330
 172
 100
@@ -7533,7 +7665,7 @@ AA_KIND
   0
 ATTRIB
   5
-126F
+1275
 330
 172
 100
@@ -7569,7 +7701,7 @@ AA_MAT
   0
 ATTRIB
   5
-1270
+1276
 330
 172
 100
@@ -7605,7 +7737,7 @@ AA_AX1
   0
 ATTRIB
   5
-1271
+1277
 330
 172
 100
@@ -7641,7 +7773,7 @@ AA_AX2
   0
 ATTRIB
   5
-1272
+1278
 330
 172
 100
@@ -7677,7 +7809,7 @@ AA_LEN
   0
 ATTRIB
   5
-1273
+1279
 330
 172
 100
@@ -7713,7 +7845,7 @@ AA_ROOT
   0
 SEQEND
   5
-1274
+127A
 330
 172
 100
@@ -7753,7 +7885,7 @@ AA_WALL_W006
   0
 ATTRIB
   5
-1275
+127B
 330
 189
 100
@@ -7789,7 +7921,7 @@ AA_TYPE
   0
 ATTRIB
   5
-1276
+127C
 330
 189
 100
@@ -7825,7 +7957,7 @@ AA_ID
   0
 ATTRIB
   5
-1277
+127D
 330
 189
 100
@@ -7861,7 +7993,7 @@ AA_THICK
   0
 ATTRIB
   5
-1278
+127E
 330
 189
 100
@@ -7897,7 +8029,7 @@ AA_KIND
   0
 ATTRIB
   5
-1279
+127F
 330
 189
 100
@@ -7933,7 +8065,7 @@ AA_MAT
   0
 ATTRIB
   5
-127A
+1280
 330
 189
 100
@@ -7969,7 +8101,7 @@ AA_AX1
   0
 ATTRIB
   5
-127B
+1281
 330
 189
 100
@@ -8005,7 +8137,7 @@ AA_AX2
   0
 ATTRIB
   5
-127C
+1282
 330
 189
 100
@@ -8041,7 +8173,7 @@ AA_LEN
   0
 ATTRIB
   5
-127D
+1283
 330
 189
 100
@@ -8077,7 +8209,7 @@ AA_ROOT
   0
 SEQEND
   5
-127E
+1284
 330
 189
 100
@@ -8117,7 +8249,7 @@ AA_WALL_W007
   0
 ATTRIB
   5
-127F
+1285
 330
 1A0
 100
@@ -8153,7 +8285,7 @@ AA_TYPE
   0
 ATTRIB
   5
-1280
+1286
 330
 1A0
 100
@@ -8189,7 +8321,7 @@ AA_ID
   0
 ATTRIB
   5
-1281
+1287
 330
 1A0
 100
@@ -8225,7 +8357,7 @@ AA_THICK
   0
 ATTRIB
   5
-1282
+1288
 330
 1A0
 100
@@ -8261,7 +8393,7 @@ AA_KIND
   0
 ATTRIB
   5
-1283
+1289
 330
 1A0
 100
@@ -8297,7 +8429,7 @@ AA_MAT
   0
 ATTRIB
   5
-1284
+128A
 330
 1A0
 100
@@ -8333,7 +8465,7 @@ AA_AX1
   0
 ATTRIB
   5
-1285
+128B
 330
 1A0
 100
@@ -8369,7 +8501,7 @@ AA_AX2
   0
 ATTRIB
   5
-1286
+128C
 330
 1A0
 100
@@ -8405,7 +8537,7 @@ AA_LEN
   0
 ATTRIB
   5
-1287
+128D
 330
 1A0
 100
@@ -8441,7 +8573,7 @@ AA_ROOT
   0
 SEQEND
   5
-1288
+128E
 330
 1A0
 100
@@ -8481,7 +8613,7 @@ AA_AXGRID_AX001
   0
 ATTRIB
   5
-1289
+128F
 330
 1D3
 100
@@ -8515,7 +8647,7 @@ AA_TYPE
   0
 ATTRIB
   5
-128A
+1290
 330
 1D3
 100
@@ -8549,7 +8681,7 @@ AA_ID
   0
 ATTRIB
   5
-128B
+1291
 330
 1D3
 100
@@ -8583,7 +8715,7 @@ AA_MODE
   0
 ATTRIB
   5
-128C
+1292
 330
 1D3
 100
@@ -8617,7 +8749,7 @@ AA_XCOUNT
   0
 ATTRIB
   5
-128D
+1293
 330
 1D3
 100
@@ -8651,7 +8783,7 @@ AA_YCOUNT
   0
 ATTRIB
   5
-128E
+1294
 330
 1D3
 100
@@ -8685,7 +8817,7 @@ AA_XPOS
   0
 ATTRIB
   5
-128F
+1295
 330
 1D3
 100
@@ -8719,7 +8851,7 @@ AA_YPOS
   0
 ATTRIB
   5
-1290
+1296
 330
 1D3
 100
@@ -8753,7 +8885,7 @@ AA_VER
   0
 ATTRIB
   5
-1291
+1297
 330
 1D3
 100
@@ -8787,7 +8919,7 @@ AA_HOR
   0
 ATTRIB
   5
-1292
+1298
 330
 1D3
 100
@@ -8821,7 +8953,7 @@ AA_SKIP
   0
 SEQEND
   5
-1293
+1299
 330
 1D3
 100
@@ -8855,7 +8987,7 @@ ACAD_LAYOUT
   3
 ACAD_MLEADERSTYLE
 350
-1294
+129A
   3
 ACAD_MLINESTYLE
 350
@@ -8893,7 +9025,7 @@ AcDbDictionary
   0
 DICTIONARY
   5
-1294
+129A
 330
 11E3
 100
@@ -8911,11 +9043,11 @@ MLEADERSTYLE
 102
 {ACAD_REACTORS
 330
-1294
+129A
 102
 }
 330
-1294
+129A
 100
 AcDbMLeaderStyle
 179
@@ -8955,7 +9087,7 @@ AcDbMLeaderStyle
 300
 
 342
-1220
+1226
 174
 1
 178
