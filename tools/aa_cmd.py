@@ -188,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     p_room.add_argument("id", nargs="?", default=None)
     p_room.add_argument("--walls", default="", help="按环形顺序的墙编号，逗号分隔（--auto 时忽略）")
     p_room.add_argument("--name", default="")
+    p_room.add_argument("--no-area", action="store_true", help="房间只注名称，不注面积（天正默认为注面积）")
     p_room.add_argument("--auto", action="store_true", help="自动枚举闭合墙环并逐个建房间")
     p_room.add_argument("--prefix", default="R", help="自动编号前缀，默认 R")
     p_room.add_argument("--min-area", type=float, default=1.0, help="自动搜环时忽略的最小面积 mm²")
@@ -288,11 +289,9 @@ def main(argv: list[str] | None = None) -> int:
 
         session = Session(args.path)
         if args.cmd == "new":
-            session.new_metric()
-            out = {"ok": True, "path": str(session.path)}
-            if args.scale:
-                out.update(set_drawing_scale(session, args.scale, rescale=False))
-            emit(out)
+            session.new_metric(args.scale)
+            emit({"ok": True, "path": str(session.path),
+                  "scale": drawing_scale(session)})
             return 0
         if args.cmd == "scale":
             if args.set is None:
@@ -349,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.id or not args.walls:
                     raise CadError("room 需要给出房间编号与 --walls，或用 --auto 自动搜环")
                 emit({"ok": True, **create_room(
-                    session, args.id, _csv(args.walls), args.name)})
+                    session, args.id, _csv(args.walls), args.name,
+                    show_area=not args.no_area)})
         elif args.cmd == "split":
             emit({"ok": True, **split_at_intersections(session)})
         elif args.cmd == "set-wall":

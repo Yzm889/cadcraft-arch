@@ -52,6 +52,8 @@ from aa_lib import (  # noqa: E402
     set_wall,
     sheet_window,
     split_at_intersections,
+    set_drawing_scale,
+    drawing_scale,
     wall_data,
 )
 
@@ -233,6 +235,8 @@ TOOLS: list[dict[str, Any]] = [
                 "walls": {"type": "array", "items": {"type": "string"},
                           "description": "按环形顺序的墙编号"},
                 "name": {"type": "string", "description": "房间名称（可空）", "default": ""},
+                "show_area": {"type": "boolean",
+                              "description": "名称下方是否注面积（天正默认注）", "default": True},
             },
             "required": ["path", "id", "walls"],
         },
@@ -499,11 +503,9 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         s = _session(path, must_exist=False)
         if s.path.exists():
             raise CadError("拒绝新建：图纸已存在，不覆盖（%s）" % s.path)
-        s.new_metric()
-        out = {"ok": True, "path": str(s.path), "units": "mm"}
-        if a.get("scale"):
-            out.update(set_drawing_scale(s, _num(a["scale"], "scale"), rescale=False))
-        return out
+        s.new_metric(_num(a["scale"], "scale") if a.get("scale") else None)
+        return {"ok": True, "path": str(s.path), "units": "mm",
+                "scale": drawing_scale(s)}
 
     s = _session(path)
 
@@ -590,7 +592,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         walls = a["walls"]
         if isinstance(walls, str):
             walls = [x for x in walls.split(",") if x]
-        return {"ok": True, **create_room(s, a["id"], list(walls), a.get("name", ""))}
+        return {"ok": True, **create_room(s, a["id"], list(walls), a.get("name", ""),
+                                          show_area=bool(a.get("show_area", True)))}
 
     if name == "aa_room_auto":
         return {"ok": True, **auto_rooms(

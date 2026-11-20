@@ -297,13 +297,16 @@ class Session:
             argv += ["--save", str(self.path), "--in-place"]
         return self._exec(argv)
 
-    def new_metric(self) -> None:
+    def new_metric(self, scale: float | None = None) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._exec(["run", "--metric", "--save", str(self.path)])
         if not self.path.exists():
             raise CadError("新建图纸失败：%s" % self.path)
-        # 一开图就把 9 个标准层按 GB/天正规格建好（颜色、线型、线宽一次到位）
+        # 一开图就把标准层按 GB/天正规格建好（颜色、线型、线宽一次到位）
         self.ensure_layers()
+        # 不给比例就走天正默认 1:100（缺省值在 drawing_scale 里），不必往图里塞标记块
+        if scale:
+            _write_cfg_scale(self, float(scale))
 
     # ---------- LISP ----------
 
@@ -712,6 +715,12 @@ def auto_axis(
     if ext is None:
         ext = annot_size(24.0, sc)
     gap = annot_size(4.0, sc)          # 轴号圈与轴线端点的间隙 = 半径，保持相切
+    # 天正常规：轴号圈与轴线端相切，圆占 ext→ext+8mm，所以尺寸外道（20mm）必须落在 ext 之内。
+    ext_min = annot_size(20.0, sc) + annot_size(2.0, sc)
+    ext_adjusted = None
+    if ext < ext_min:
+        ext_adjusted = round(ext_min, 3)
+        ext = ext_min
 
     xs_raw: list[float] = []
     ys_raw: list[float] = []
@@ -800,6 +809,8 @@ def auto_axis(
         "ver": ";".join(ver),
         "hor": ";".join(hor),
         "lines": n_line,
+        "ext": round(ext, 3),
+        "ext_adjusted": ext_adjusted,
         "skipped": skipped,
         "geom_handles": handles,
         "ax_bound": bound["bound"],
@@ -1077,7 +1088,8 @@ def rescale_annotations(session: Session, scale: float,
         rooms = room_data(session)
         for r in rooms:
             delete_component(session, r["block"])
-            create_room(session, r["id"], r["walls"], r["name"])
+            create_room(session, r["id"], r["walls"], r["name"],
+                        show_area=r.get("show_area", True))
 
         symbols = []
         for e in session.components("AA_SYM_"):
@@ -1414,8 +1426,8 @@ def _room_inner(edges: list[tuple[tuple[float, float], tuple[float, float], str]
 
 def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]],
                 area: float, wall_ids: Sequence[str], name: str,
-                scale: float | None = None) -> dict[str, Any]:
-    """把算好的房间轮廓落图：LISP 画名称 -> block -> insert -> 回读校验。"""
+                scale: float | None = None, show_area: bool = True) -> dict[str, Any]:
+    """把算好的房间轮廓落图：LISP 画名称/面积 -> block -> insert -> 回读校验。"""
     block = "AA_ROOM_" + room_id
     session.ensure_layers([LAYERS["room"]])
     sc = float(scale) if scale else drawing_scale(session)
@@ -1423,8 +1435,10 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
     pts_lisp = " ".join("(list %.4f %.4f 0.0)" % (p[0], p[1]) for p in inner)
     before = session.snapshot()
     value = session.lisp(
-        '(progn (setq aa:*room-h* %.4f) (aa:room (list %s) "%s"))'
-        % (annot_size(2.5, sc), pts_lisp, name),
+        '(progn (setq aa:*room-h* %.4f) (setq aa:*room-area-h* %.4f)'
+        " (setq aa:*room-show-area* %d) (aa:room (list %s) \"%s\"))"
+        % (annot_size(2.5, sc), annot_size(2.0, sc), 1 if show_area else 0,
+           pts_lisp, name),
         libraries=("aa_core.lisp", "aa_room.lisp"),
     )
     handles = session.new_handles(before)
@@ -1440,6 +1454,7 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
             ("AA_PERIMETER", "perimeter", "%.2f" % float(got_per)),
             ("AA_WALLS", "enclosing walls", ";".join(wall_ids)),
             ("AA_PTS", "inner outline", pts_str),
+            ("AA_AREA_SHOW", "show area text", "1" if show_area else "0"),
         ]
     )
 
@@ -1455,6 +1470,7 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
             "AA_PERIMETER": "%.2f" % float(got_per),
             "AA_WALLS": ";".join(wall_ids),
             "AA_PTS": pts_str,
+            "AA_AREA_SHOW": "1" if show_area else "0",
         },
         layer=LAYERS["room"],
     )
@@ -1502,6 +1518,7 @@ def create_room(
     wall_ids: Sequence[str],
     name: str = "",
     tol: float = 1e-6,
+    show_area: bool = True,
 ) -> dict[str, Any]:
     """房间：闭合墙环校验 -> 内偏移轮廓 -> block -> insert -> 回读校验。
 
@@ -1554,7 +1571,8 @@ def create_room(
              for i in range(len(ring_pts))]
 
     inner, area = _room_inner(edges, thick, tol)
-    return _store_room(session, room_id, inner, area, wall_ids, name)
+    return _store_room(session, room_id, inner, area, wall_ids, name,
+                       show_area=show_area)
 
 
 def create_room_edges(session: Session, room_id: str,
@@ -1893,48 +1911,6 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
     return (dx / ln, dy / ln) if ln else (1.0, 0.0)
 
 
-def _geom_bbox(blocks: list[list[dict[str, Any]]]) -> tuple[float, float, float, float] | None:
-    xs: list[float] = []
-    ys: list[float] = []
-    for geom in blocks:
-        for g in geom:
-            pts = g.get("pts") or []
-            r = float(g.get("r") or 0)
-            for pt in pts:
-                x, y = float(pt[0]), float(pt[1])
-                xs += [x - r, x + r]
-                ys += [y - r, y + r]
-    if not xs:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def axis_keepout(session, scale: float) -> dict[str, float]:
-    """轴网（轴线 + 轴号圈）比墙体外廓多占出去的距离，四向各一个值（>0）。
-
-    尺寸线要排在轴号圈外侧，这里按真实几何量出来，不再靠固定偏移猜。
-    """
-    walls = wall_data(session)
-    if not walls:
-        return {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
-    wx = [v for w in walls for v in (w["p1"][0], w["p2"][0])]
-    wy = [v for w in walls for v in (w["p1"][1], w["p2"][1])]
-    half = max(w["thick"] for w in walls) / 2.0
-    wall_box = (min(wx) - half, min(wy) - half, max(wx) + half, max(wy) + half)
-    grids = [block_geometry(session.path, e["geometry"]["block"])
-             for e in session.components("AA_AXGRID_")]
-    abox = _geom_bbox(grids)
-    if not abox:
-        return {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
-    gap = annot_size(2.0, scale)
-    return {
-        "top": max(0.0, abox[3] - wall_box[3]) + gap,
-        "bottom": max(0.0, wall_box[1] - abox[1]) + gap,
-        "left": max(0.0, wall_box[0] - abox[0]) + gap,
-        "right": max(0.0, abox[2] - wall_box[2]) + gap,
-    }
-
-
 def annotate(session: Session, opening_off: float | None = None,
              wall_off: float | None = None, clear: bool = True,
              exterior_only: bool = True, scale: float | None = None) -> dict[str, Any]:
@@ -1978,7 +1954,6 @@ def annotate(session: Session, opening_off: float | None = None,
             for w in walls]
     cx = sum(m[0] for m in mids) / len(mids)
     cy = sum(m[1] for m in mids) / len(mids)
-    keep = axis_keepout(session, sc)
 
     made: list[dict[str, Any]] = []
     openings = opening_data(session)
@@ -1994,16 +1969,13 @@ def annotate(session: Session, opening_off: float | None = None,
         side = 1.0 if math.dist(far, (cx, cy)) > math.dist(near, (cx, cy)) else -1.0
         half = w["thick"] / 2.0
         ang = math.degrees(math.atan2(d[1], d[0]))
-        vx, vy = n[0] * side, n[1] * side
-        key = ("top" if vy > 0 else "bottom") if abs(vy) >= abs(vx) else \
-              ("right" if vx > 0 else "left")
-        k = keep.get(key, 0.0)
-        o_off = max(opening_off, k + annot_size(3.0, sc))   # 内层，紧贴轴号圈外
-        w_off = max(wall_off, k + annot_size(15.0, sc))     # 外层，再让 12mm
+        o_off = opening_off      # 内层洞口尺寸线：离墙 9mm，贴着第二道内侧
+        w_off = wall_off         # 外层墙段尺寸线：离墙 20mm，轴号圈由轴网放到它外侧
 
-        # 墙总长（外层）
-        at = (mid[0] + n[0] * side * (half + w_off),
-              mid[1] + n[1] * side * (half + w_off))
+        # 墙总长（外层）：偏移从墙中心线起算，这样 20mm 是"到轴线"的固定纸面距离，
+        # 墙厚不会因为比例变化把尺寸文字顶进轴号圈
+        at = (mid[0] + n[0] * side * w_off,
+              mid[1] + n[1] * side * w_off)
         cmds.append(("dimlinear", {"p1": list(p1), "p2": list(p2),
                                    "at": [round(at[0], 4), round(at[1], 4)],
                                    "rotation": round(ang, 6)}))
@@ -2018,8 +1990,8 @@ def annotate(session: Session, opening_off: float | None = None,
             o2 = (p1[0] + d[0] * (o["pos"] + o["width"] / 2.0),
                   p1[1] + d[1] * (o["pos"] + o["width"] / 2.0))
             omid = ((o1[0] + o2[0]) / 2.0, (o1[1] + o2[1]) / 2.0)
-            oat = (omid[0] + n[0] * side * (half + o_off),
-                   omid[1] + n[1] * side * (half + o_off))
+            oat = (omid[0] + n[0] * side * o_off,
+                   omid[1] + n[1] * side * o_off)
             cmds.append(("dimlinear", {"p1": [round(v, 4) for v in o1],
                                        "p2": [round(v, 4) for v in o2],
                                        "at": [round(oat[0], 4), round(oat[1], 4)],
@@ -2905,6 +2877,7 @@ def room_data(session: Session) -> list[dict[str, Any]]:
                 "area": float(attrs.get("AA_AREA", "0") or 0),
                 "perimeter": float(attrs.get("AA_PERIMETER", "0") or 0),
                 "walls": [x for x in (attrs.get("AA_WALLS", "") or "").split(";") if x],
+                "show_area": attrs.get("AA_AREA_SHOW", "1") != "0",
                 "pts": [
                     (float(p.split(",")[0]), float(p.split(",")[1]))
                     for p in (attrs.get("AA_PTS", "") or "").split(";")
@@ -3590,7 +3563,8 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
     shutil.copy2(session.path, backup)
     try:
         delete_component(session, r["block"])
-        res = _store_room(session, room_id, list(r["pts"]), r["area"], r["walls"], new_name)
+        res = _store_room(session, room_id, list(r["pts"]), r["area"], r["walls"], new_name,
+                          show_area=r.get("show_area", True))
     except Exception:
         shutil.copy2(backup, session.path)
         raise

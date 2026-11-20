@@ -63,11 +63,11 @@ def main() -> int:
     r1 = {r["id"]: r for r in room_data(s)}["R001"]
     assert r1["name"] == "客厅A", r1
     assert r1["pts"] == old_pts, (r1["pts"], old_pts)
-    # 图面上的名称文字必须真的变了（房间块里只有一个 TEXT）
+    # 图面上的名称文字必须真的变了（房间块里名称 + 面积两行，名称在前）
     geom = block_geometry(path, "AA_ROOM_R001")
     texts = [g["text"] for g in geom if g["type"] in ("TEXT", "MTEXT")]
     print("room block texts:", texts)
-    assert texts == ["客厅A"], texts
+    assert texts[0] == "客厅A" and texts[1].endswith("㎡"), texts
 
     # 2) 幂等：同名再改一次不写盘
     digest = sha(path)

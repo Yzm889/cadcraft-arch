@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from aa_lib import CadError, Session, create_room, create_wall  # noqa: E402
+from aa_lib import CadError, Session, block_geometry, create_room, create_wall  # noqa: E402
 
 OUT = ROOT / "samples"
 
@@ -48,8 +48,12 @@ def main() -> int:
     assert abs(float(attrs["AA_AREA"]) - expected) < 1.0, attrs
     assert attrs["AA_WALLS"] == "W001;W002;W003;W004", attrs
     assert attrs["AA_NAME"] == "客厅", attrs
-    # 房间不再画轮廓线（避免与墙面重合/穿门洞），只剩名称文字
-    assert len(r1["geom_handles"]) == 1, r1["geom_handles"]
+    # 房间不画轮廓线（避免与墙面重合/穿门洞），只落两行字：名称 + 面积（天正默认）
+    assert len(r1["geom_handles"]) == 2, r1["geom_handles"]
+    geom = block_geometry(path, "AA_ROOM_R001") if path.exists() else []
+    texts = [g["text"] for g in geom if g["type"] in ("TEXT", "MTEXT")]
+    assert texts and texts[0] == "客厅", texts
+    assert texts[1] in ("15.32㎡", "15.32 m²", "15.32"), texts
 
     # 2) 墙环断裂必须拒绝（把 W003 换成不存在的方向）
     expect_error(
