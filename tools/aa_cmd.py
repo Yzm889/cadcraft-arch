@@ -40,6 +40,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    create_column,
     rescale_annotations,
     set_drawing_scale,
     audit,
@@ -133,6 +134,17 @@ def main(argv: list[str] | None = None) -> int:
     p_axis_bind.add_argument("--grid", default=None, help="指定轴网编号，默认用图上的")
     p_axis_bind.add_argument("--tol", type=float, default=50.0, help="端点与轴的允许偏差 mm")
     p_axis_bind.add_argument("--only-empty", action="store_true", help="只填空的，不覆盖已有轴号")
+
+    p_column = sub.add_parser("column", help="柱：矩形实心柱 / 圆柱（落在 AA-COLUMN）")
+    p_column.add_argument("path")
+    p_column.add_argument("id")
+    p_column.add_argument("--at", required=True, help="柱中心 x,y")
+    p_column.add_argument("--w", type=float, required=True, help="柱宽（圆柱时是直径）")
+    p_column.add_argument("--h", type=float, default=None, help="柱高（默认同宽）")
+    p_column.add_argument("--kind", default="rect", choices=["rect", "circle"],
+                          help="柱类型：rect 矩形 / circle 圆柱")
+    p_column.add_argument("--angle", type=float, default=0.0, help="矩形柱转角（度，逆时针）")
+    p_column.add_argument("--material", default="", help="材料，如 C30")
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -349,6 +361,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "axis-auto":
             emit({"ok": True, **auto_axis(
                 session, args.id, args.tol, args.ext, args.min_len)})
+        elif args.cmd == "column":
+            emit({"ok": True, **create_column(
+                session, args.id, _pt(args.at), args.w, args.h,
+                args.kind, args.angle, args.material)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

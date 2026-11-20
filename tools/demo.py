@@ -20,6 +20,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    create_column,
     create_elevation_mark,
     create_index_mark,
     create_section_mark,
@@ -61,6 +62,11 @@ def main() -> int:
     # 墙画完先规整一遍：转角合角 + 相交处墙线裁剪
     for wid in ("W001", "W002", "W003", "W004", "W005", "W006", "W007"):
         normalize_around(s, wid)
+
+    # 构造柱（240×240，落在四个外墙转角，天正常见做法）
+    for cid, at in (("GZ1", (0.0, 0.0)), ("GZ2", (10800.0, 0.0)),
+                    ("GZ3", (10800.0, 4800.0)), ("GZ4", (0.0, 4800.0))):
+        create_column(s, cid, at, 240.0, 240.0)
 
     # 轴网：按墙自动推断（竖墙 0/6000/10800 -> 1/2/3，横墙 0/4800 -> A/B）
     grid = auto_axis(s, "AX001", tol=50.0, ext=2400.0)

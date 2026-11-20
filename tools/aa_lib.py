@@ -42,6 +42,7 @@ DEFAULT_LAYERS = {
     "title": "AA-TITLE",
     "table": "AA-TABLE",
     "name": "AA-NAME",
+    "column": "AA-COLUMN",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -62,6 +63,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "title":    {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
     "table":    {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
     "name":     {"color": 7, "linetype": "Continuous", "lineweight": 0.25},
+    "column":   {"color": 8, "linetype": "Continuous", "lineweight": 0.35},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -316,7 +318,8 @@ class Session:
         # 用户图档自己的图层标准优先：覆盖 aa_core 里的默认层名
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
-            for k in ("axis", "axistext", "wall", "opening", "room", "sheet", "title", "table")
+            for k in ("axis", "axistext", "wall", "opening", "room", "column",
+                      "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
@@ -1712,6 +1715,79 @@ def refresh_opening_labels(session: Session, wall_ids: Sequence[str] | None = No
     return {"openings": len(ids), "ids": ids}
 
 
+COLUMN_KINDS = ("RECT", "CIRCLE")
+
+
+def create_column(
+    session: Session,
+    column_id: str,
+    at: tuple[float, float],
+    w: float,
+    h: float | None = None,
+    kind: str = "RECT",
+    angle: float = 0.0,
+    material: str = "",
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """柱（天正平面图做法）：矩形柱 = 实心 SOLID + 外框；圆柱 = 圆 + 扇形填充。
+
+    全部落在 `AA-COLUMN` 层（颜色 8、线宽 0.35，与墙同粗）。`at` 是柱中心，
+    `w/h` 是柱截面（圆柱时 `w` 即直径、`h` 忽略）；`angle` 是矩形柱绕中心的转角（度）。
+    几何是真实尺寸，不随出图比例缩放——柱不会因为换比例变大变小。
+    """
+    block = "AA_COLUMN_" + column_id
+    if session.block_exists(block):
+        raise CadError("柱 %s 已存在，请换编号" % column_id)
+    kind_u = str(kind).upper()
+    if kind_u not in COLUMN_KINDS:
+        raise CadError("柱类型只能是 RECT / CIRCLE（收到 %r）" % kind)
+    w = float(w)
+    if w <= 0:
+        raise CadError("拒绝写入：柱截面必须为正实数（收到 %s）" % w)
+    if kind_u == "RECT":
+        hh = float(h) if h is not None else w
+        if hh <= 0:
+            raise CadError("拒绝写入：柱高必须为正实数（收到 %s）" % hh)
+    else:
+        hh = w
+
+    session.ensure_layers([LAYERS["column"]])
+    before = session.snapshot()
+    if kind_u == "RECT":
+        session.lisp(
+            '(aa:column-rect %.4f %.4f %.6f)' % (w, hh, math.radians(float(angle))),
+            libraries=("aa_core.lisp", "aa_column.lisp"))
+    else:
+        session.lisp('(aa:column-circle %.4f)' % w,
+                     libraries=("aa_core.lisp", "aa_column.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("柱没有生成任何图元")
+
+    area = (w * hh) if kind_u == "RECT" else math.pi * (w / 2.0) ** 2
+    att_defs = [
+        ("AA_TYPE", "component type", "COLUMN"),
+        ("AA_ID", "component id", column_id),
+        ("AA_KIND", "column kind", kind_u),
+        ("AA_W", "column width/diameter", "%.4f" % w),
+        ("AA_H", "column height", "%.4f" % hh),
+        ("AA_ANGLE", "rotation deg", "%.4f" % float(angle)),
+        ("AA_MATERIAL", "material", material),
+        ("AA_AREA", "section area", "%.4f" % area),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
+                            layer=LAYERS["column"])
+    session.expect_attributes(block, {"AA_TYPE": "COLUMN", "AA_ID": column_id,
+                                      "AA_KIND": kind_u, "AA_W": "%.4f" % w})
+    return {"block": block, "handle": handle, "kind": kind_u, "w": w, "h": hh,
+            "angle": float(angle), "area": area, "geom_handles": handles}
+
+
 def create_room(
     session: Session,
     room_id: str,
@@ -2862,7 +2938,7 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                     cur_name, cur_ents, ent = None, None, None
                 elif cur_ents is not None:
                     ent = {"type": val, "pts": [], "lt": None, "layer": None, "txt": None, "r": None,
-                           "sx": None, "sy": None, "ex": None, "ey": None}
+                           "sx": None, "sy": None, "ex": None, "ey": None, "sol": {}}
                     cur_ents.append(ent)
             continue
         if code_n == 2:
@@ -2872,6 +2948,15 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                 cur_name = val
             continue
         if section != "BLOCKS" or ent is None:
+            continue
+        if ent["type"] == "SOLID":
+            # SOLID 的四个角点走 10/11/12/13 + 20/21/22/23（不是常规的 10/20 单点）
+            if code_n in (10, 11, 12, 13):
+                ent["sol"].setdefault(code_n, {})["x"] = float(val)
+            elif code_n in (20, 21, 22, 23):
+                ent["sol"].setdefault(code_n - 10, {})["y"] = float(val)
+            elif code_n == 8:
+                ent["layer"] = val
             continue
         if code_n == 10:
             if ent["type"] == "LWPOLYLINE":
@@ -2910,6 +2995,15 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                         "pts": [at] if at else [], "h": e["r"]})
         elif e["type"] == "CIRCLE" and None not in (e["sx"], e["sy"], e["r"]):
             out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"], "pts": [(e["sx"], e["sy"])]})
+        elif e["type"] == "SOLID":
+            sol = e["sol"]
+            pts = []
+            for k in (10, 11, 12, 13):
+                p = sol.get(k) or {}
+                if "x" in p and "y" in p:
+                    pts.append((p["x"], p["y"]))
+            if pts:
+                out.append({"type": "SOLID", "layer": e["layer"], "pts": pts})
     return out
 
 

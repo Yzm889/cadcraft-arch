@@ -57,7 +57,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "0.9.9"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -197,6 +197,25 @@ TOOLS: list[dict[str, Any]] = [
                 "snap_tol": {"type": "number", "description": "吸附允许距离 mm", "default": 300},
             },
             "required": ["path", "id", "p1", "p2"],
+        },
+    },
+    {
+        "name": "aa_column",
+        "description": "柱：矩形柱实心填充 + 外框 / 圆柱圆 + 扇形填充，落在 AA-COLUMN 层，尺寸为真实尺寸（不随比例变）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "柱编号，如图纸内唯一 C1"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "柱中心 [x, y]"},
+                "w": {"type": "number", "description": "柱宽（圆柱时为直径）mm"},
+                "h": {"type": "number", "description": "柱高 mm（默认同宽；圆柱忽略）"},
+                "kind": {"type": "string", "enum": ["RECT", "CIRCLE"],
+                         "description": "柱类型", "default": "RECT"},
+                "angle": {"type": "number", "description": "矩形柱转角（度）", "default": 0},
+                "material": {"type": "string", "description": "材料，如 C30", "default": ""},
+            },
+            "required": ["path", "id", "at", "w"],
         },
     },
     {
@@ -640,6 +659,12 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             snap_tol=_num(a.get("snap_tol", 300), "snap_tol"))
         res["normalized"] = normalize_around(s, a["id"])
         return {"ok": True, **res}
+
+    if name == "aa_column":
+        return {"ok": True, **create_column(
+            s, a["id"], _pt(a["at"], "at"), _num(a["w"], "w"),
+            _opt(a.get("h")), a.get("kind", "RECT"),
+            _num(a.get("angle", 0.0), "angle"), a.get("material", ""))}
 
     if name == "aa_opening":
         return {"ok": True, **create_opening(

@@ -33,6 +33,7 @@
 (setq aa:*lay-wall* "AA-WALL")
 (setq aa:*lay-opening* "AA-OPENING")
 (setq aa:*lay-room* "AA-ROOM")
+(setq aa:*lay-column* "AA-COLUMN")
 
 ;; ---------- 点与向量 ----------
 

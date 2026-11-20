@@ -31,7 +31,7 @@ MCP 29 工具、23 项回归测试、标高/索引/剖切符号、图面自检 a
 
 | # | 功能 | 说明 | 风险 / 注意 |
 |---|---|---|---|
-| 5 | **柱子** `column` | 矩形/圆形柱，落在 `AA-COLUMN` 层；与墙相交要参与合角裁剪 | 需要新的"柱"属性族 `AA_TYPE=COLUMN AA_W AA_H`；裁剪算法要接进 `normalize_around` |
+| 5 | **柱子** `column` | ✅ **已完成（v1.0.0）**：矩形柱（SOLID 实心 + 外框，可转角）+ 圆柱（圆 + 24 扇形 SOLID 填充），落 `AA-COLUMN`（灰 8 / 0.35）；`AA_TYPE=COLUMN AA_ID AA_KIND AA_W AA_H AA_ANGLE AA_MATERIAL AA_AREA`；CLI `column` + MCP `aa_column`；`test_column` 通过；demo 四角 GZ1–GZ4 | 柱心为定位点；柱尺寸为真实尺寸、不随比例缩放；`normalize_around` 暂不裁剪柱（构造柱压墙属正常图面，后续做结构柱时再补） |
 | 6 | **台阶 / 散水** `step` / `apron` | 台阶按踏步数+踏步宽自动画；散水按墙外挑宽度沿外墙生成 | 沿墙偏移与门洞避让是难点，先做"单段直线台阶"，散水后置 |
 | 7 | **阳台 / 雨棚** `balcony` | 简单矩形挑出 + 栏板线 | 依赖墙，先只支持依附直墙 |
 | 8 | **房间填充** | 天正可给房间填图案（斜线/网格/纯色） | 用 LISP `hatch`？需先实测 CADCraft 是否支持；不支持就退回"斜线族"自绘 |
