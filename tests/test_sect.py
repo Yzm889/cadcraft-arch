@@ -86,6 +86,37 @@ def main() -> int:
     nl, nt = counts(g)
     assert (nl, nt) == (47, 4), (nl, nt)
 
+    # 被剖到的室内隔墙 + 梁：隔墙 2 条竖线，梁 2 侧 + 1 底 = 3 条
+    inner = create_section(s, "P5", (0.0, 45000.0), 6000.0, floors, (),
+                          "BOTH", 100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0,
+                          [{"x": 2400.0, "thick": 120.0}],
+                          [{"floor": 2, "x0": 240.0, "x1": 5760.0, "h": 500.0}])
+    assert inner["inner_walls"] == 1 and inner["beams"] == 1, inner
+    g = block_geometry(path, "AA_SECTION_P5")
+    nl, nt = counts(g)
+    assert (nl, nt) == (40, 4), (nl, nt)
+    a5 = s.attributes("AA_SECTION_P5")
+    assert a5["AA_INWALLS"] == "1" and a5["AA_BEAMS"] == "1", a5
+
+    # 隔墙压到外墙 / 梁方向反了 -> 拒绝
+    try:
+        create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",
+                       100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0,
+                       [{"x": 100.0, "thick": 120.0}])
+    except CadError as e:
+        assert "压在外墙" in str(e), e
+    else:
+        raise AssertionError("隔墙压外墙应被拒绝")
+
+    try:
+        create_section(s, "PX", (0.0, 0.0), 6000.0, floors, (), "BOTH",
+                       100.0, "FLAT", 1200.0, 0.0, 240.0, True, 0.0, (),
+                       [{"floor": 2, "x0": 3000.0, "x1": 2000.0}])
+    except CadError as e:
+        assert "大于 x0" in str(e), e
+    else:
+        raise AssertionError("梁 x1<=x0 应被拒绝")
+
     # 同一道墙上两个洞口竖向叠着 -> 拒绝
     try:
         create_section(s, "PX", (0.0, 0.0), 6000.0, floors,

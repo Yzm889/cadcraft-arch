@@ -249,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
     p_profile.add_argument("--side", dest="side", default="BOTH",
                            choices=["BOTH", "LEFT", "RIGHT"],
                            help="BOTH 两端外墙都剖（默认）；LEFT/RIGHT 半剖，只在那一端画墙带")
+    p_profile.add_argument("--inwall", action="append", default=[],
+                           help='被剖到的室内隔墙："x,厚"（x 从剖面左端室内面起算）')
+    p_profile.add_argument("--beam", action="append", default=[],
+                           help='梁："层号,x0,x1,梁高"（挂在那一层楼板底）')
 
     p_title = sub.add_parser("title", help="图名标注：图名 + 比例 + 下画线（GB/T 50001）")
     p_title.add_argument("path")
@@ -545,10 +549,21 @@ def main(argv: list[str] | None = None) -> int:
                 if len(parts) > 4 and parts[4]:
                     op["side"] = parts[4]
                 ops.append(op)
+            iwalls = []
+            for spec in args.inwall:
+                parts = [p.strip() for p in spec.split(",")]
+                iwalls.append({"x": float(parts[0]),
+                               "thick": float(parts[1]) if len(parts) > 1 and parts[1] else 120.0})
+            bms = []
+            for spec in args.beam:
+                parts = [p.strip() for p in spec.split(",")]
+                bms.append({"floor": int(parts[0]), "x0": float(parts[1]),
+                            "x1": float(parts[2]),
+                            "h": float(parts[3]) if len(parts) > 3 and parts[3] else 500.0})
             emit({"ok": True, **create_section(
                 session, args.id, _pt(args.at), args.w, floors, ops, args.side,
                 args.slab, args.roof, args.parapet, args.rise, args.wallth,
-                not args.no_marks, args.angle)})
+                not args.no_marks, args.angle, iwalls, bms)})
         elif args.cmd == "title":
             emit({"ok": True, **create_title_mark(
                 session, args.id, _pt(args.at), args.name, args.scale or None)})

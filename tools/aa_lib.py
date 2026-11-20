@@ -2409,6 +2409,8 @@ def create_section(
     wall: float = 240.0,
     marks: bool = True,
     angle: float = 0.0,
+    inner_walls: Sequence[dict[str, Any]] = (),
+    beams: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """建筑剖面（GB/T 50104 剖面图做法）：剖到的地坪、楼板、屋面板、外墙、女儿墙/坡屋面。
 
@@ -2419,7 +2421,10 @@ def create_section(
     `openings` = 剖到的门窗 `[{floor, h, sill, kind, side?}]`：在墙带上断开墙线，
     画窗框双线 + 玻璃（窗）或门上亮子（门）；`side` 默认 LEFT（另一端给 RIGHT）。
     `roof`：FLAT 平屋顶（屋面板 + 女儿墙）/ GABLE 双坡（斜屋面板 + 脊）/ NONE。
-    剖面暂不画梁、楼梯、基础、材料图例。
+    `inner_walls` = 被剖切面切到的室内隔墙 `[{x, thick}]`：x 是剖面局部坐标（从 at 起算），
+    画成同宽的墙带（贯穿到墙顶，不做洞口）。
+    `beams` = 梁 `[{floor, x0, x1, h}]`：从该层楼板底往下返 h，画梁侧两条竖线 + 梁底线。
+    剖面暂不画楼梯、基础、材料图例。
     """
     block = "AA_SECTION_" + section_id
     if session.block_exists(block):
@@ -2506,6 +2511,42 @@ def create_section(
                                % ("左" if ops_cut[a]["side"] == "LEFT" else "右",
                                   ops_cut[a]["elev0"], ops_cut[b]["elev0"]))
 
+    # 被剖到的室内隔墙：只给位置与厚度，贯穿墙顶
+    iwalls: list[dict[str, float]] = []
+    for i, wd in enumerate(inner_walls or ()):
+        if not isinstance(wd, dict):
+            raise CadError("剖面隔墙必须是对象（收到 %r）" % (wd,))
+        x = float(wd.get("x", 0.0))
+        t = float(wd.get("thick", 120.0))
+        if t <= 0:
+            raise CadError("第 %d 道剖面隔墙厚度必须为正（收到 %s）" % (i + 1, t))
+        if x < wall - 1e-6 or x + t > width - wall + 1e-6:
+            raise CadError("第 %d 道剖面隔墙 [%.4f, %.4f] 压在外墙上（净宽 %.4f..%.4f）"
+                           % (i + 1, x, x + t, wall, width - wall))
+        for other in iwalls:
+            if min(x + t, other["x"] + other["thick"]) - max(x, other["x"]) > 1e-6:
+                raise CadError("第 %d 道剖面隔墙与已有隔墙在剖面上重叠" % (i + 1))
+        iwalls.append({"x": x, "thick": t})
+
+    # 梁：挂在楼板底，从 x0 到 x1
+    bms: list[dict[str, Any]] = []
+    for i, bm in enumerate(beams or ()):
+        if not isinstance(bm, dict):
+            raise CadError("剖面梁必须是对象（收到 %r）" % (bm,))
+        fl = int(bm.get("floor", 1) or 1)
+        if not (2 <= fl <= len(rows)):
+            raise CadError("第 %d 根梁的层号 %s 越界：梁只能挂在不低于二层的楼板上（1..%d 不含首层）"
+                           % (i + 1, fl, len(rows)))
+        x0, x1 = float(bm.get("x0", 0.0)), float(bm.get("x1", 0.0))
+        hb = float(bm.get("h", 500.0))
+        if hb <= 0:
+            raise CadError("第 %d 根梁高必须为正（收到 %s）" % (i + 1, hb))
+        if x1 - x0 <= 1e-6:
+            raise CadError("第 %d 根梁的 x1 必须大于 x0（收到 %s / %s）" % (i + 1, x0, x1))
+        if x0 < -1e-6 or x1 > width + 1e-6:
+            raise CadError("第 %d 根梁超出剖面宽度（%s..%s / %.4f）" % (i + 1, x0, x1, width))
+        bms.append({"floor": fl, "x0": x0, "x1": x1, "h": hb})
+
     def L(x1, y1, x2, y2, lay):
         return '(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) "%s")' % (x1, y1, x2, y2, lay)
 
@@ -2541,6 +2582,11 @@ def create_section(
     else:
         code.append(L(width - wall, 0.0, width - wall, top, det))
 
+    # 被剖到的室内隔墙：同宽窄带，从地坪贯到墙顶
+    for iw in iwalls:
+        code.append(L(iw["x"], 0.0, iw["x"], top, lev))
+        code.append(L(iw["x"] + iw["thick"], 0.0, iw["x"] + iw["thick"], top, lev))
+
     # 剖到的门窗：洞口上下封口 + 窗框双线 + 玻璃 / 门扇冒头线 + 窗台板向室内挑出
     boxes = {"LEFT": (0.0, wall, 1.0), "RIGHT": (width - wall, width, -1.0)}
     for op in ops_cut:
@@ -2566,6 +2612,13 @@ def create_section(
     for r in rows[1:]:
         code.append(L(x_lo, r["elev"], x_hi, r["elev"], lev))
         code.append(L(x_lo, r["elev"] - slab, x_hi, r["elev"] - slab, det))
+    # 梁：楼板底下返 h，画两条梁侧线 + 一条梁底线
+    for bm in bms:
+        e = rows[bm["floor"] - 1]["elev"]
+        bt = e - slab - bm["h"]
+        code.append(L(bm["x0"], e - slab, bm["x0"], bt, det))
+        code.append(L(bm["x1"], e - slab, bm["x1"], bt, det))
+        code.append(L(bm["x0"], bt, bm["x1"], bt, det))
     # 屋面
     if roof_u == "FLAT":
         code.append(L(0.0, roof_bottom, width, roof_bottom, det))       # 屋面板底
@@ -2622,6 +2675,8 @@ def create_section(
         ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
         ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u in ("GABLE", "EAVE") else 0.0)),
         ("AA_OPENINGS", "cut openings", str(len(ops_cut))),
+        ("AA_INWALLS", "cut inner walls", str(len(iwalls))),
+        ("AA_BEAMS", "cut beams", str(len(bms))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
@@ -2636,7 +2691,8 @@ def create_section(
                                       "AA_FLOORS": str(len(rows))})
     return {"block": block, "handle": handle, "width": width, "floors": len(rows),
             "top": top, "total": total_top, "roof": roof_u, "slab": slab,
-            "wall": wall, "angle": angle, "rows": rows,
+            "wall": wall, "angle": angle, "rows": rows, "inner_walls": len(iwalls),
+            "beams": len(bms),
             "openings": len(ops_cut), "geom_handles": handles}
 
 
