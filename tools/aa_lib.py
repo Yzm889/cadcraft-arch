@@ -2150,7 +2150,8 @@ def _norm_floors(floors: Sequence[Any]) -> list[dict[str, Any]]:
     return rows
 
 
-ELEV_ROOFS = ("FLAT", "GABLE", "NONE")
+ELEV_ROOFS = ("FLAT", "GABLE", "EAVE", "NONE")
+SECTION_ROOFS = ("FLAT", "GABLE", "NONE")
 
 
 def create_elevation(
@@ -2188,11 +2189,11 @@ def create_elevation(
     rows = _norm_floors(floors)
     roof_u = str(roof).upper()
     if roof_u not in ELEV_ROOFS:
-        raise CadError("屋顶形式只能是 FLAT / GABLE / NONE（收到 %r）" % roof)
+        raise CadError("屋顶形式只能是 FLAT / GABLE / EAVE / NONE（收到 %r）" % roof)
     parapet, rise, overhang = float(parapet), float(rise), float(overhang)
     if roof_u == "FLAT" and parapet < 0:
         raise CadError("拒绝写入：女儿墙高不能为负（收到 %s）" % parapet)
-    if roof_u == "GABLE":
+    if roof_u in ("GABLE", "EAVE"):
         if rise <= 0:
             raise CadError("拒绝写入：双坡屋顶的脊高必须为正（收到 %s）" % rise)
         if overhang < 0:
@@ -2242,7 +2243,7 @@ def create_elevation(
     top = rows[-1]["elev"] + rows[-1]["height"]
     if roof_u == "FLAT":
         total_top = top + parapet
-    elif roof_u == "GABLE":
+    elif roof_u in ("GABLE", "EAVE"):
         total_top = top + rise
     else:
         total_top = top
@@ -2283,6 +2284,13 @@ def create_elevation(
         code.append(L(-oh, top, width + oh, top, lev))               # 檐口
         code.append(L(-oh, top, width / 2.0, top + rise, lev))       # 左坡
         code.append(L(width / 2.0, top + rise, width + oh, top, lev))  # 右坡
+    elif roof_u == "EAVE":
+        # 正对檐口看（脊与图面平行）：只见檐口线 + 后方屋脊线，不出现山墙三角
+        oh = max(overhang, 0.0)
+        code.append(L(-oh, top, width + oh, top, lev))               # 檐口（含外挑）
+        code.append(L(0.0, top + rise, width, top + rise, lev))      # 屋脊（被檐口挡住下半，投影为水平线）
+        code.append(L(0.0, top, 0.0, top + rise, det))               # 两端山墙边（竖直）
+        code.append(L(width, top, width, top + rise, det))
     # 门窗（天正立面做法：洞口 + 窗框双线 + 中梃分扇 + 上部亮子 + 窗台线）
     frame = 60.0           # 窗框在立面上的可见宽度（构造值，不随比例变）
     for k, op in enumerate(ops):
@@ -2328,6 +2336,13 @@ def create_elevation(
         for r in rows:
             code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
                         % (mx, r["elev"], format_elevation(r["elev"] / 1000.0), lh, th))
+        if roof_u in ("GABLE", "EAVE"):
+            # 檐口 + 屋脊两个标高，和楼层标高排在同一条竖列
+            code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                        % (mx, top, format_elevation(top / 1000.0), lh, th))
+            code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                        % (mx, top + rise,
+                           format_elevation((top + rise) / 1000.0), lh, th))
 
     session.ensure_layers([LAYERS["sheet"], LAYERS["name"]])
     before = session.snapshot()
@@ -2349,7 +2364,7 @@ def create_elevation(
         ("AA_TOTAL", "total height incl roof", "%.4f" % total_top),
         ("AA_ROOF", "roof kind", roof_u),
         ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
-        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u == "GABLE" else 0.0)),
+        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u in ("GABLE", "EAVE") else 0.0)),
         ("AA_OVERHANG", "eave overhang", "%.4f" % overhang),
         ("AA_OPENINGS", "opening count", str(len(ops))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
@@ -2404,8 +2419,8 @@ def create_section(
         raise CadError("拒绝写入：剖面宽度必须为正实数（收到 %s）" % width)
     rows = _norm_floors(floors)
     roof_u = str(roof).upper()
-    if roof_u not in ELEV_ROOFS:
-        raise CadError("屋顶形式只能是 FLAT / GABLE / NONE（收到 %r）" % roof)
+    if roof_u not in SECTION_ROOFS:
+        raise CadError("剖面屋顶形式只能是 FLAT / GABLE / NONE（收到 %r）" % roof)
     slab, parapet, rise, wall = float(slab), float(parapet), float(rise), float(wall)
     if slab <= 0:
         raise CadError("拒绝写入：楼板厚必须为正（收到 %s）" % slab)
@@ -2550,8 +2565,14 @@ def create_section(
         for r in rows:
             code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
                         % (mx, r["elev"], format_elevation(r["elev"] / 1000.0), lh, th))
+        # 檐口标高取墙顶（建筑标高），与立面口径一致；屋面板厚只体现在几何上
         code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
-                    % (mx, roof_top, format_elevation(roof_top / 1000.0), lh, th))
+                    % (mx, top, format_elevation(top / 1000.0), lh, th))
+        if roof_u == "GABLE":
+            # 双坡：屋脊标高与檐口排在同一条竖列（不压在屋脊线上）
+            code.append('(aa:elev %.4f %.4f "%s" %.4f %.4f)'
+                        % (mx, top + rise,
+                           format_elevation((top + rise) / 1000.0), lh, th))
 
     session.ensure_layers([LAYERS["sheet"], LAYERS["name"]])
     before = session.snapshot()
@@ -2573,7 +2594,7 @@ def create_section(
         ("AA_SLAB", "slab thickness", "%.4f" % slab),
         ("AA_WALL", "wall thickness", "%.4f" % wall),
         ("AA_PARAPET", "parapet height", "%.4f" % (parapet if roof_u == "FLAT" else 0.0)),
-        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u == "GABLE" else 0.0)),
+        ("AA_RISE", "gable rise", "%.4f" % (rise if roof_u in ("GABLE", "EAVE") else 0.0)),
         ("AA_OPENINGS", "cut openings", str(len(ops_left) + len(ops_right))),
         ("AA_ANGLE", "rotation deg", "%.4f" % angle),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),

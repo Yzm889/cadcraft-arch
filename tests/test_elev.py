@@ -71,8 +71,8 @@ def main() -> int:
     assert abs(gable["total"] - 12300.0) < 1e-6, gable
     g = block_geometry(path, "AA_ELEVATION_E2")
     nl, nt = counts(g)
-    # 3（地坪+轮廓）+ 2（楼层线）+ 3（檐口+两坡）+ 10（1 门）+ 12（3 标高）
-    assert (nl, nt) == (30, 3), (nl, nt)
+    # 3（地坪+轮廓）+ 2（楼层线）+ 3（檐口+两坡）+ 10（1 门）+ 20（3 楼层 + 檐口 + 屋脊 5 个标高）
+    assert (nl, nt) == (38, 5), (nl, nt)
 
     # 无窗、无标高
     plain = create_elevation(s, "E3", (0.0, 8000.0), 4000.0,

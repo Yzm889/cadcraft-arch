@@ -68,7 +68,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.20"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.21"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -691,8 +691,8 @@ TOOLS: list[dict[str, Any]] = [
                                                     "default": "WINDOW"},
                                        },
                                        "required": ["x", "w", "h"]}},
-                "roof": {"type": "string", "enum": ["FLAT", "GABLE", "NONE"],
-                         "description": "平屋顶（女儿墙+压顶）/ 双坡（山墙三角）/ 不加", "default": "FLAT"},
+                "roof": {"type": "string", "enum": ["FLAT", "GABLE", "EAVE", "NONE"],
+                         "description": "平屋顶（女儿墙+压顶）/ 双坡山墙视向（三角）/ 双坡正对檐口（檐口+屋脊）/ 不加", "default": "FLAT"},
                 "parapet": {"type": "number", "description": "女儿墙高 mm", "default": 1200},
                 "rise": {"type": "number", "description": "双坡脊高 mm", "default": 0},
                 "overhang": {"type": "number", "description": "檐口外挑 mm", "default": 600},

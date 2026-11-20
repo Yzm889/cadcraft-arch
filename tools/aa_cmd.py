@@ -216,8 +216,8 @@ def main(argv: list[str] | None = None) -> int:
                              help='自下而上每层："层高[,标高mm[,层号[,层名]]]"')
     p_elevation.add_argument("--open", action="append", default=[],
                              help='门窗："层号,x,w,h,窗台高[,WINDOW|DOOR]"')
-    p_elevation.add_argument("--roof", default="flat", choices=["flat", "gable", "none"],
-                             help="屋顶：flat 平屋顶 / gable 双坡 / none 不加")
+    p_elevation.add_argument("--roof", default="flat", choices=["flat", "gable", "eave", "none"],
+                             help="屋顶：flat 平屋顶 / gable 双坡（山墙视向）/ eave 双坡正对檐口 / none 不加")
     p_elevation.add_argument("--parapet", type=float, default=1200.0, help="女儿墙高（mm）")
     p_elevation.add_argument("--rise", type=float, default=0.0, help="双坡脊高（mm）")
     p_elevation.add_argument("--oh", type=float, default=600.0, help="檐口外挑（mm）")

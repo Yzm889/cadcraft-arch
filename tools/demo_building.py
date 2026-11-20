@@ -21,6 +21,7 @@ from aa_lib import (
     create_room,
     create_section,
     create_sheet,
+    create_section_mark,
     create_title_mark,
     create_wall,
     drawing_extent,
@@ -63,10 +64,13 @@ def main() -> int:
     create_opening(s, "C001", "W001", "WINDOW", width=1500.0, pos=5000.0, no="C1215")
     create_opening(s, "C002", "W003", "WINDOW", width=1200.0, pos=5600.0, no="C0915")
     create_room(s, "R001", ["W001", "W002", "W003", "W004"], name="客厅")
+    # 1-1 剖切符号：切在 X=2000（正好穿过首层门的中间），往下（左）看
+    create_section_mark(s, "SM1", (2000.0, -1200.0), (2000.0, 5700.0),
+                        direction="left", no="1", scale=SCALE)
 
     # 屋顶平面（同建筑外轮廓 + 檐口外挑）
     create_roof(s, "RF1", (0.0, 9500.0), kind="GABLE", width=7200.0, depth=4500.0,
-                overhang=600.0, ridge="Y")
+                overhang=600.0, ridge="X")
 
     # 楼层表放平面右侧
     create_floor_table(s, "FT1", (8500.0, 1500.0), FLOORS, scale=SCALE)
@@ -82,9 +86,9 @@ def main() -> int:
             {"floor": 3, "x": 1500.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
             {"floor": 3, "x": 5000.0, "w": 1500.0, "h": 1500.0, "sill": 900.0},
         ],
-        roof="GABLE", parapet=0.0, rise=1800.0, overhang=600.0)
+        roof="EAVE", parapet=0.0, rise=1800.0, overhang=600.0)
     create_section(
-        s, "P1", (8600.0, -16000.0), 7200.0, FLOORS,
+        s, "P1", (9000.0, -16000.0), 4500.0, FLOORS,
         openings=[
             {"floor": 1, "h": 2100.0, "sill": 0.0, "kind": "DOOR"},
             {"floor": 2, "h": 1500.0, "sill": 900.0},
@@ -96,8 +100,8 @@ def main() -> int:
     for tid, (x, y), label in (
         ("T01", (3600.0, -1200.0), "一层平面图"),
         ("T02", (3600.0, 8300.0), "屋顶平面图"),
-        ("T03", (3600.0, -17800.0), "1-9 立面图"),
-        ("T04", (12200.0, -17800.0), "1-1 剖面图"),
+        ("T03", (3600.0, -17800.0), "1-3 立面图"),
+        ("T04", (11250.0, -17800.0), "1-1 剖面图"),
     ):
         create_title_mark(s, tid, (x, y), label, SCALE)
 

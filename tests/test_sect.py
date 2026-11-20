@@ -60,8 +60,8 @@ def main() -> int:
     assert abs(gable["total"] - 12400.0) < 1e-6, gable    # 10500 + 1800 + 100
     g = block_geometry(path, "AA_SECTION_P2")
     nl, nt = counts(g)
-    # 1 地坪 + 4 墙带 + 4 楼板 + 4 坡屋面 + 16 标高（4 个）
-    assert (nl, nt) == (29, 4), (nl, nt)
+    # 1 地坪 + 4 墙带 + 4 楼板 + 4 坡屋面 + 20 标高（4 楼层 + 檐口 + 屋脊）
+    assert (nl, nt) == (33, 5), (nl, nt)
 
     # 剖到的门窗：剖在哪道墙就在那道墙带上断墙 + 窗框 + 玻璃 / 门上亮子 + 窗台挑出
     ops = [{"floor": 1, "h": 2100.0, "sill": 0.0, "kind": "DOOR"},
