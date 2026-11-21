@@ -6957,28 +6957,37 @@ def create_wc_detail(
     rect(-TF, -TF, Wf + TF, Hf + TF, lay_wall)
     rect(0.0, 0.0, Wf, Hf, lay_wall)
 
-    # 坐便：靠上墙，水槽 + 椭圆坐圈（12 边形近似）
+    # 坐便：靠上墙，水槽 + 椭圆坐圈（32 边近似）+ 内圈（坐面）
     tw, td = 400.0 * f, 700.0 * f
     tank = 180.0 * f
     cx = Wf / 2.0
     rect(cx - tw / 2.0, Hf - tank, cx + tw / 2.0, Hf, lay_room)
     bcx, bcy = cx, Hf - tank - 240.0 * f
     rx, ry = 180.0 * f, 240.0 * f
-    import math
-    pts = []
-    for k in range(12):
-        a = 2.0 * math.pi * k / 12.0
-        pts.append((bcx + rx * math.cos(a), bcy + ry * math.sin(a)))
-    for k in range(12):
-        x1, y1 = pts[k]
-        x2, y2 = pts[(k + 1) % 12]
-        seg(x1, y1, x2, y2, lay_room)
 
-    # 台盆：靠左墙，450 深 × 600 宽
+    def ellipse(ex: float, ey: float, erx: float, ery: float, segs: int) -> None:
+        pts = []
+        for k in range(segs):
+            a = 2.0 * math.pi * k / segs
+            pts.append((ex + erx * math.cos(a), ey + ery * math.sin(a)))
+        for k in range(segs):
+            x1, y1 = pts[k]
+            x2, y2 = pts[(k + 1) % segs]
+            seg(x1, y1, x2, y2, lay_room)
+
+    ellipse(bcx, bcy, rx, ry, 32)
+    ellipse(bcx, bcy, rx - 45.0 * f, ry - 55.0 * f, 32)
+    # 坐圈与水箱之间的两条连接线（盖板铰点）
+    for sgn in (-1.0, 1.0):
+        seg(cx + sgn * 60.0 * f, Hf - tank, cx + sgn * 60.0 * f,
+            Hf - tank - 20.0 * f, lay_room)
+
+    # 台盆：靠左墙，450 深 × 600 宽；台面 + 椭圆盆 + 龙头
     by = (Hf - 600.0 * f) / 2.0
     rect(0.0, by, 450.0 * f, by + 600.0 * f, lay_room)
-    rect(60.0 * f, by + 60.0 * f, 390.0 * f, by + 540.0 * f, lay_room)
-    box(70.0 * f, by + 300.0 * f, 40.0 * f)
+    ellipse(240.0 * f, by + 300.0 * f, 150.0 * f, 210.0 * f, 32)
+    ellipse(240.0 * f, by + 300.0 * f, 130.0 * f, 185.0 * f, 32)
+    box(50.0 * f, by + 300.0 * f, 35.0 * f)
 
     # 地漏：100×100 + 对角
     hd = DF / 2.0
@@ -7026,15 +7035,13 @@ def create_wc_detail(
         txt(dx2 - ann(1.2) - th, Hf / 2.0 - _text_w(label, th) / 2.0, label, th, 1.5708)
         ndim += 1
 
-        # 坐便中心距左墙：上方
-        yc = Hf + TF + ann(10.0)
-        for xx in (0.0, cx):
-            seg(xx, Hf + TF, xx, yc + ann(2.0), lay_dim)
+        # 坐便中心距左墙：沿坐便中心线（室内），从内墙皮量到坐便中心
+        yc = bcy
         seg(0.0, yc, cx, yc, lay_dim)
         for xx in (0.0, cx):
             seg(xx - tick, yc + tick, xx + tick, yc - tick, lay_dim)
         label = "%g" % (w / 2.0)
-        txt(cx / 2.0 - _text_w(label, th) / 2.0, yc + ann(1.2), label, th)
+        txt(cx / 2.0 - _text_w(label, th) / 2.0, yc + ann(1.0), label, th)
         ndim += 1
 
     if not title:
