@@ -48,12 +48,16 @@ from aa_lib import (  # noqa: E402
     create_stair_detail,
     create_elev_balcony,
     create_foundation,
+    create_text,
+    create_leader,
     create_wc_detail,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
     read_elev_balcony,
     read_foundation,
+    read_text,
+    read_leader,
     read_wc_detail,
     read_wall_node,
     create_sheet_index,
@@ -90,7 +94,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.40"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.41"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -903,6 +907,44 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_text",
+        "description": "单行注字：给左下角锚点、内容、图面字高与旋转角，落 AA_TXT_<编号> 可回读；用于门窗编号、材料做法等零星注字。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "注字编号，如图纸内唯一 T1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "文字左下角（基线左端）[x, y]"},
+                "text": {"type": "string", "description": "注字内容"},
+                "height": {"type": "number", "description": "图面字高 mm", "default": 3.5},
+                "rotation": {"type": "number", "description": "旋转角（度，逆时针）", "default": 0},
+                "show": {"type": "string", "description": "只回读已有：给编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_leader",
+        "description": "引线注字：被注点引斜线（带箭头）到文字处，并画文字下水平横段；落 AA_LD_<编号> 可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "引注编号，如图纸内唯一 L1"},
+                "at": {"type": "array", "items": {"type": "number"},
+                       "description": "被注点 [x, y]"},
+                "text": {"type": "string", "description": "引注内容"},
+                "to": {"type": "array", "items": {"type": "number"},
+                       "description": "文字基线左端 [x, y]，缺省为被注点右上 10mm"},
+                "height": {"type": "number", "description": "图面字高 mm", "default": 3.0},
+                "shelf": {"type": "number", "description": "文字下横段长 mm", "default": 5.0},
+                "show": {"type": "string", "description": "只回读已有：给编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_elev_balcony",
         "description": "立面上的阳台/雨篷：阳台画挑板+栏板（两侧竖线+压顶线），雨篷画挑板+两端牛腿；注阳台宽与栏板高（雨篷只注宽），挑出宽记属性；落 AA_EB_<编号> 可回读。",
         "inputSchema": {
@@ -1298,6 +1340,27 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                     title=a.get("title", "门窗表"),
                                     scale=None if bool(a.get("scale", True)) else 0,
                                     note=a.get("note", ""))
+
+    if name == "aa_text":
+        sd = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_text(sd, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("注字需要 id 与 at（或用 show 回读）")
+        return create_text(sd, a["id"], _pt(a["at"], "at"), a.get("text", ""),
+                           _num(a.get("height", 3.5), "height"),
+                           _num(a.get("rotation", 0), "rotation"))
+
+    if name == "aa_leader":
+        sd = _session(path)
+        if a.get("show"):
+            return {"ok": True, **read_leader(sd, a["show"])}
+        if not a.get("id") or not a.get("at"):
+            return _err("引注需要 id 与 at（或用 show 回读）")
+        return create_leader(sd, a["id"], _pt(a["at"], "at"), a.get("text", ""),
+                             _pt(a["to"], "to") if a.get("to") else None,
+                             _num(a.get("height", 3.0), "height"),
+                             _num(a.get("shelf", 5.0), "shelf"))
 
     if name == "aa_foundation":
         sd = _session(path)

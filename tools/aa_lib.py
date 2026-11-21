@@ -3504,15 +3504,18 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
 
 
 def annotate(session: Session, opening_off: float | None = None,
-             wall_off: float | None = None, clear: bool = True,
+             wall_off: float | None = None, total_off: float | None = None,
+             total: bool = True, clear: bool = True,
              exterior_only: bool = True, scale: float | None = None) -> dict[str, Any]:
-    """给外墙标尺寸：墙段长度在外层、洞口宽在内层，都标在建筑外侧。
+    """给外墙标尺寸：洞口宽在内层、墙段（轴线）在中层、总尺寸在最外层。
 
     - 外侧判断：取所有墙中点均值作为"建筑内部参考点"，
       法向两侧各取一点，离参考点更远的那侧就是外侧。
     - 只标外墙（内墙两侧都是房间，标注会压在房间名和门扇上）；
       图纸里还没有房间时退化为全部墙都标。
-    - 两道尺寸线分别离墙面 500 / 1150，轴号圆在 1600 以外，互不压线。
+    - 三道尺寸线分别离墙中心线 9 / 16 / 22mm，轴号圈从 24mm 起，
+      所以最外道总尺寸与轴号不压线（GB/T 50001 三道尺寸顺序：洞口→轴线→总尺寸）。
+    - 总尺寸按"同一条外墙线"归组，每组只注一条全长（矩形平面即四边各一条）。
     - 标注统一落在 AA-DIM 层，样式 AA-DIM（字高 250 / 箭头 150）。
     - 默认先清掉 AA-DIM 层上已有的标注，重跑幂等，不会叠出一堆重影。
     """
@@ -3523,7 +3526,9 @@ def annotate(session: Session, opening_off: float | None = None,
     if opening_off is None:
         opening_off = annot_size(9.0, sc)      # 内层尺寸线离墙 9mm
     if wall_off is None:
-        wall_off = annot_size(20.0, sc)        # 外层尺寸线离墙 20mm
+        wall_off = annot_size(16.0, sc)        # 中层（轴线）尺寸线离墙 16mm
+    if total_off is None:
+        total_off = annot_size(22.0, sc)       # 外层总尺寸离墙 22mm
     if exterior_only:
         walls = [w for w in walls if _is_exterior(session, w)]
     if not walls:
@@ -3548,6 +3553,7 @@ def annotate(session: Session, opening_off: float | None = None,
     cy = sum(m[1] for m in mids) / len(mids)
 
     made: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
     openings = opening_data(session)
     cmds: list[tuple[str, dict]] = []
     for w in walls:
@@ -3572,6 +3578,7 @@ def annotate(session: Session, opening_off: float | None = None,
                                    "at": [round(at[0], 4), round(at[1], 4)],
                                    "rotation": round(ang, 6)}))
         made.append({"kind": "wall", "id": w["id"], "value": round(w["len"], 2)})
+        lines.append({"p1": p1, "p2": p2, "d": d, "n": n, "side": side})
 
         # 洞口宽（内层）
         for o in openings:
@@ -3590,11 +3597,49 @@ def annotate(session: Session, opening_off: float | None = None,
                                        "rotation": round(ang, 6)}))
             made.append({"kind": "opening", "id": o["id"], "value": round(o["width"], 2)})
 
+    # 外层总尺寸：把"同一条外墙线 + 同一侧"的墙归成一组，每组注一条全长。
+    # 先把方向规范化到 +x/+y 半球，避免同一立面被正向/反向拆成两组。
+    groups: dict[tuple, dict[str, Any]] = {}
+    for ln in lines:
+        d, n, side = ln["d"], ln["n"], ln["side"]
+        flip = d[0] < -1e-9 or (abs(d[0]) <= 1e-9 and d[1] < 0)
+        fd = (-d[0], -d[1]) if flip else d
+        fn = (-n[0], -n[1]) if flip else n
+        fside = -side if flip else side
+        c = fn[0] * ln["p1"][0] + fn[1] * ln["p1"][1]
+        ang = round(math.degrees(math.atan2(fd[1], fd[0])) % 180.0, 1)
+        key = (ang, round(c, 0), round(fside, 0))
+        t1 = fd[0] * ln["p1"][0] + fd[1] * ln["p1"][1]
+        t2 = fd[0] * ln["p2"][0] + fd[1] * ln["p2"][1]
+        g = groups.get(key)
+        if g is None:
+            groups[key] = {"d": fd, "n": fn, "side": fside, "c": c,
+                           "t0": min(t1, t2), "t1": max(t1, t2)}
+        else:
+            g["t0"] = min(g["t0"], t1, t2)
+            g["t1"] = max(g["t1"], t1, t2)
+
+    if total:
+        for g in groups.values():
+            d, n, c, side = g["d"], g["n"], g["c"], g["side"]
+            span = g["t1"] - g["t0"]
+            if span <= 1.0:
+                continue
+            p1 = (d[0] * g["t0"] + n[0] * c, d[1] * g["t0"] + n[1] * c)
+            p2 = (d[0] * g["t1"] + n[0] * c, d[1] * g["t1"] + n[1] * c)
+            mid = ((p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0)
+            at = (mid[0] + n[0] * side * total_off,
+                  mid[1] + n[1] * side * total_off)
+            cmds.append(("dimlinear", {"p1": [round(v, 4) for v in p1],
+                                       "p2": [round(v, 4) for v in p2],
+                                       "at": [round(at[0], 4), round(at[1], 4)],
+                                       "rotation": round(math.degrees(math.atan2(d[1], d[0])), 6)}))
+            made.append({"kind": "total", "id": "TOTAL", "value": round(span, 2)})
+
     res = session.run(cmds, save=True)
     handles = [r.get("handle") for r in res.data if r.get("handle")]
     if len(handles) != len(made):
         raise CadError("标注数量不符：期望 %d 条，实际生成 %d 条" % (len(made), len(handles)))
-
     # dimlinear 会把标注落在当前图层之外的 "0" 层，必须显式改层
     session.run([("properties.set", {"handles": handles, "layer": LAYERS["dim"]})], save=True)
 
@@ -3616,6 +3661,7 @@ def annotate(session: Session, opening_off: float | None = None,
         "dims": len(made),
         "walls": sum(1 for m in made if m["kind"] == "wall"),
         "openings": sum(1 for m in made if m["kind"] == "opening"),
+        "totals": sum(1 for m in made if m["kind"] == "total"),
         "layer": LAYERS["dim"],
         "style": "AA-DIM",
     }
@@ -7369,3 +7415,199 @@ def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
             "base_width": float(attrs.get("AA_BASEW") or 0),
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", "")}
+
+
+# ---------------- 注字：单行文字 / 引线（v1.0.41，B7 收尾） ----------------
+
+def _rot_pt(x: float, y: float, ang: float) -> tuple[float, float]:
+    ca, sa = math.cos(ang), math.sin(ang)
+    return (x * ca - y * sa, x * sa + y * ca)
+
+
+def create_text(
+    session: Session,
+    text_id: str,
+    at: tuple[float, float],
+    text: str,
+    height: float = 3.5,
+    rotation: float = 0.0,
+    factor: float | None = None,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """图上注一行字：`at` 为文字左下角（基线左端），`height` 为图面字高（mm）。
+
+    用于门窗编号、材料做法、房间名之外的零星注字；落块 `AA_TXT_<id>`，
+    `AA_TYPE=TEXT`，`read_text` 回读。rotation 单位为度（逆时针）。
+    """
+    if not str(text).strip():
+        raise CadError("注字内容不能为空")
+    if float(height) <= 0:
+        raise CadError("字高必须大于 0")
+    if float(rotation) <= -360 or float(rotation) >= 360:
+        raise CadError("旋转角必须在 -360 ~ 360 度之间")
+    block = "AA_TXT_" + text_id
+    if session.block_exists(block):
+        raise CadError("注字 %s 已存在，请换编号" % text_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else 1.0
+    if f <= 0:
+        raise CadError("放大倍数必须大于 0")
+    hgt = annot_size(float(height), sc) * f
+    ang = math.radians(float(rotation))
+
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_name])
+    before = session.snapshot()
+    # 块内按局部坐标 (0,0) 画，再 insert 到 at，避免插入点二次偏移
+    session.lisp('(progn (aa:mktext-r (list 0.0 0.0) "%s" "%s" %.3f %.4f) (princ "ok"))'
+                 % (str(text).replace('"', "'"), lay_name, hgt, ang),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("注字没有生成任何图元")
+
+    w = _text_w(str(text), hgt)
+    corners = [_rot_pt(x, y, ang) for x, y in
+               ((0.0, 0.0), (w, 0.0), (w, hgt), (0.0, hgt))]
+    xs = [at[0] + c[0] for c in corners]
+    ys = [at[1] + c[1] for c in corners]
+    bbox = [min(xs), min(ys), max(xs), max(ys)]
+
+    att_defs = [
+        ("AA_TYPE", "component type", "TEXT"),
+        ("AA_ID", "component id", text_id),
+        ("AA_TEXT", "text content", str(text)),
+        ("AA_H", "text height", "%.4f" % hgt),
+        ("AA_ROT", "rotation deg", "%.4f" % float(rotation)),
+        ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+        ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {k: v for k, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, tuple(at), att_vals, layer=lay_name)
+    session.expect_attributes(block, {"AA_TYPE": "TEXT", "AA_ID": text_id})
+    return {"block": block, "handle": handle, "id": text_id, "text": str(text),
+            "height": hgt, "rotation": float(rotation), "bbox": bbox,
+            "geom_handles": handles}
+
+
+def read_text(session: Session, text_id: str) -> dict[str, Any]:
+    """回读注字：内容/字高/旋转/锚点。"""
+    attrs = session.attributes("AA_TXT_" + text_id)
+    if not attrs or attrs.get("AA_TYPE") != "TEXT":
+        raise CadError("没找到注字 %s" % text_id)
+    return {"id": text_id, "text": attrs.get("AA_TEXT", ""),
+            "height": float(attrs.get("AA_H") or 0),
+            "rotation": float(attrs.get("AA_ROT") or 0),
+            "at": [float(attrs.get("AA_ATX") or 0),
+                   float(attrs.get("AA_ATY") or 0)]}
+
+
+def create_leader(
+    session: Session,
+    lead_id: str,
+    at: tuple[float, float],
+    text: str,
+    to: tuple[float, float] | None = None,
+    height: float = 3.0,
+    shelf: float = 5.0,
+    factor: float | None = None,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """引线注字（索引/做法/材料）：`at` 为被注点，`to` 为文字基线左端（缺省右上 10mm）。
+
+    画斜引线（带 2.5mm 箭头）+ 文字下水平短线（shelf，GB/T 50001 的"引线横段"），
+    文字压在横段上。落块 `AA_LD_<id>`，`AA_TYPE=LEADER`，`read_leader` 回读。
+    """
+    if not str(text).strip():
+        raise CadError("引注内容不能为空")
+    if float(height) <= 0 or float(shelf) <= 0:
+        raise CadError("字高与横段长度必须大于 0")
+    block = "AA_LD_" + lead_id
+    if session.block_exists(block):
+        raise CadError("引注 %s 已存在，请换编号" % lead_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    f = float(factor) if factor is not None else 1.0
+    if f <= 0:
+        raise CadError("放大倍数必须大于 0")
+    ann = lambda mm: annot_size(mm, sc) * f  # noqa: E731
+    hgt = ann(float(height))
+    sh = ann(float(shelf))
+    at = (float(at[0]), float(at[1]))
+    if to is None:
+        to = (at[0] + ann(10.0), at[1] + ann(10.0))
+    to = (float(to[0]), float(to[1]))
+    dx, dy = to[0] - at[0], to[1] - at[1]
+    ln = math.hypot(dx, dy)
+    if ln < 1e-6:
+        raise CadError("引线起点与终点重合")
+    ux, uy = dx / ln, dy / ln
+
+    lay_dim = LAYERS["dim"]
+    lay_name = LAYERS["name"]
+    session.ensure_layers([lay_dim, lay_name])
+
+    body: list[str] = []
+    body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                % (at[0], at[1], to[0], to[1], lay_dim))
+    for sgn in (1.0, -1.0):
+        # 箭头两条边：从尖端沿引线反方向、再各偏 ±12°
+        ca, sa = math.cos(math.radians(12.0 * sgn)), math.sin(math.radians(12.0 * sgn))
+        vx, vy = -ux, -uy
+        ex = vx * ca - vy * sa
+        ey = vx * sa + vy * ca
+        body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                    % (at[0], at[1], at[0] + ex * ann(2.5), at[1] + ey * ann(2.5), lay_dim))
+    body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
+                % (to[0], to[1], to[0] + sh, to[1], lay_dim))
+    body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f 0.0)'
+                % (to[0] + ann(0.6), to[1] + ann(0.8), str(text).replace('"', "'"),
+                   lay_name, hgt))
+
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_symbol.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("引注没有生成任何图元")
+
+    tw = _text_w(str(text), hgt)
+    bbox = [min(at[0], to[0]) - ann(2.5), min(at[1], to[1]) - ann(0.5),
+            to[0] + max(sh, tw) + ann(1.0), to[1] + hgt + ann(1.0)]
+
+    att_defs = [
+        ("AA_TYPE", "component type", "LEADER"),
+        ("AA_ID", "component id", lead_id),
+        ("AA_TEXT", "text content", str(text)),
+        ("AA_H", "text height", "%.4f" % hgt),
+        ("AA_SHELF", "shelf length", "%.4f" % sh),
+        ("AA_ATX", "anchor x", "%.4f" % at[0]),
+        ("AA_ATY", "anchor y", "%.4f" % at[1]),
+        ("AA_TOX", "text x", "%.4f" % to[0]),
+        ("AA_TOY", "text y", "%.4f" % to[1]),
+        ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
+    ]
+    att_vals = {k: v for k, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    session.make_block(block, (0.0, 0.0), handles + att_handles)
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=lay_dim)
+    session.expect_attributes(block, {"AA_TYPE": "LEADER", "AA_ID": lead_id})
+    return {"block": block, "handle": handle, "id": lead_id, "text": str(text),
+            "at": list(at), "to": list(to), "height": hgt, "shelf": sh,
+            "bbox": bbox, "geom_handles": handles}
+
+
+def read_leader(session: Session, lead_id: str) -> dict[str, Any]:
+    """回读引注：内容/字高/横段/被注点/文字点。"""
+    attrs = session.attributes("AA_LD_" + lead_id)
+    if not attrs or attrs.get("AA_TYPE") != "LEADER":
+        raise CadError("没找到引注 %s" % lead_id)
+    return {"id": lead_id, "text": attrs.get("AA_TEXT", ""),
+            "height": float(attrs.get("AA_H") or 0),
+            "shelf": float(attrs.get("AA_SHELF") or 0),
+            "at": [float(attrs.get("AA_ATX") or 0),
+                   float(attrs.get("AA_ATY") or 0)],
+            "to": [float(attrs.get("AA_TOX") or 0),
+                   float(attrs.get("AA_TOY") or 0)]}

@@ -59,12 +59,16 @@ from aa_lib import (  # noqa: E402
     create_elev_balcony,
     create_foundation,
     create_wc_detail,
+    create_text,
+    create_leader,
     read_detail_mark,
     read_opening_detail,
     read_stair_detail,
     read_elev_balcony,
     read_foundation,
     read_wc_detail,
+    read_text,
+    read_leader,
     read_wall_node,
     create_roof,
     create_elevation,
@@ -614,6 +618,25 @@ def main(argv: list[str] | None = None) -> int:
     p_fd.add_argument("--no-dims", action="store_true", help="不注尺寸")
     p_fd.add_argument("--show", default=None, help="只回读已有")
 
+    p_txt = sub.add_parser("text", help="单行注字：门窗编号/材料做法等零星注字")
+    p_txt.add_argument("path")
+    p_txt.add_argument("id", nargs="?")
+    p_txt.add_argument("--at", default=None, help="文字左下角 x,y")
+    p_txt.add_argument("--text", default="", help="注字内容")
+    p_txt.add_argument("--height", type=float, default=3.5, help="图面字高 mm")
+    p_txt.add_argument("--rotation", type=float, default=0.0, help="旋转角（度，逆时针）")
+    p_txt.add_argument("--show", default=None, help="只回读已有")
+
+    p_ld = sub.add_parser("leader", help="引线注字：被注点 + 斜引线 + 横段文字")
+    p_ld.add_argument("path")
+    p_ld.add_argument("id", nargs="?")
+    p_ld.add_argument("--at", default=None, help="被注点 x,y")
+    p_ld.add_argument("--text", default="", help="引注内容")
+    p_ld.add_argument("--to", default=None, help="文字基线左端 x,y（缺省右上 10mm）")
+    p_ld.add_argument("--height", type=float, default=3.0, help="图面字高 mm")
+    p_ld.add_argument("--shelf", type=float, default=5.0, help="文字下横段长 mm")
+    p_ld.add_argument("--show", default=None, help="只回读已有")
+
     args = ap.parse_args(argv)
 
     try:
@@ -979,6 +1002,24 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.at), args.wall, args.steps,
                     args.step_h, args.step_w, args.depth, args.base,
                     args.ratio, args.factor, not args.no_dims)})
+        elif args.cmd == "text":
+            if args.show:
+                emit({"ok": True, **read_text(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("注字需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_text(
+                    session, args.id, _pt(args.at), args.text, args.height,
+                    args.rotation)})
+        elif args.cmd == "leader":
+            if args.show:
+                emit({"ok": True, **read_leader(session, args.show)})
+            else:
+                if args.at is None:
+                    raise CadError("引注需要 --at（或只用 --show 回读）")
+                emit({"ok": True, **create_leader(
+                    session, args.id, _pt(args.at), args.text,
+                    _pt(args.to) if args.to else None, args.height, args.shelf)})
         elif args.cmd == "show":
             emit({"ok": True, "components": components_report(session)})
         return 0
