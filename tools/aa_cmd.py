@@ -79,6 +79,7 @@ from aa_lib import (  # noqa: E402
     set_drawing_scale,
     audit,
     reconcile,
+    verify,
     create_elevation_mark,
     create_index_mark,
     create_section_mark,
@@ -340,6 +341,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rec.add_argument("path")
     p_rec.add_argument("--fix", action="store_true", help="自动收尾：删零长空墙、重挂唯一可匹配的悬空门窗、夹回越界洞口、重建房间面积")
     p_rec.add_argument("--tol", type=float, default=1.0, help="长度/重叠判定容差 mm")
+
+    p_ver = sub.add_parser("verify", help="全图复核（只读）：轴号重复/引用、门窗表樘数、楼层表与立面剖面、尺寸链合计")
+    p_ver.add_argument("path")
+    p_ver.add_argument("--strict", action="store_true", help="有 error 级问题就返回非零")
+    p_ver.add_argument("--tol", type=float, default=1.0, help="尺寸/标高判定容差 mm")
 
     p_rescale = sub.add_parser("rescale", help="按新出图比例重画全部注记（轴号/房间名/门窗编号/图名/指北针/尺寸）")
     p_rescale.add_argument("path")
@@ -831,6 +837,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "reconcile":
             emit({"ok": True, **reconcile(session, fix=bool(args.fix),
                                           tol=float(args.tol))})
+            return 0
+        elif args.cmd == "verify":
+            res = verify(session, tol=float(args.tol))
+            emit({"ok": True, **res})
+            if args.strict and res["errors"]:
+                return 1
             return 0
         elif args.cmd == "rescale":
             emit({"ok": True, **rescale_annotations(

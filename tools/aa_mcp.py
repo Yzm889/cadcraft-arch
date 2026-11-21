@@ -40,6 +40,7 @@ from aa_lib import (  # noqa: E402
     create_roof,
     audit,
     reconcile,
+    verify,
     create_elevation,
     create_section,
     create_floor_table,
@@ -96,7 +97,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.48"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.49"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -570,7 +571,19 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "图纸绝对路径"},
-                "fix": {"type": "boolean", "description": "是否重建可修复项（房间面积）", "default": False},
+                "fix": {"type": "boolean", "description": "是否做无歧义自动收尾（零长空墙/悬空门窗/越界洞口/房间面积）", "default": False},
+                "tol": {"type": "number", "description": "判定容差 mm", "default": 1.0},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_verify",
+        "description": "全图复核（只读，不改图）：轴号重复/墙轴号引用、门窗表樘数与图上洞口、楼层表与立面/剖面楼层行、尺寸测量与三道尺寸链合计。缺表/缺轴网按未做跳过。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
                 "tol": {"type": "number", "description": "判定容差 mm", "default": 1.0},
             },
             "required": ["path"],
@@ -1589,6 +1602,9 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "aa_reconcile":
         return {"ok": True, **reconcile(
             s, fix=bool(a.get("fix", False)), tol=_num(a.get("tol", 1.0), "tol"))}
+
+    if name == "aa_verify":
+        return {"ok": True, **verify(s, tol=_num(a.get("tol", 1.0), "tol"))}
 
     if name == "aa_rescale":
         return {"ok": True, **rescale_annotations(

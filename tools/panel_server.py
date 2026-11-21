@@ -45,6 +45,7 @@ from aa_lib import (  # noqa: E402
     set_opening,
     set_room,
     set_wall,
+    verify,
     wall_data,
 )
 from aa_mcp import aa_batch, aa_checkpoint, aa_restore  # noqa: E402
@@ -56,7 +57,7 @@ PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
 PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.48"
+VERSION = "1.0.49"
 
 
 def _attrs(geometry: dict[str, Any]) -> dict[str, str]:
@@ -83,14 +84,16 @@ def components_report(session: Session) -> list[dict[str, Any]]:
     return out
 
 
-def issues_from(rec: dict[str, Any], aud: dict[str, Any]) -> list[dict[str, Any]]:
+def issues_from(rec: dict[str, Any], aud: dict[str, Any],
+                ver: dict[str, Any]) -> list[dict[str, Any]]:
     rows = [{**it, "source": "reconcile"} for it in rec["issues"]]
     rows += [{**it, "source": "audit"} for it in aud["issues"]]
+    rows += [{**it, "source": "verify"} for it in ver["issues"]]
     return rows
 
 
 def issue_rows(session: Session) -> list[dict[str, Any]]:
-    return issues_from(reconcile(session), audit(session))
+    return issues_from(reconcile(session), audit(session), verify(session))
 
 
 def _kind_of(block: str) -> str:
@@ -341,7 +344,8 @@ def state_payload(path: Path) -> dict[str, Any]:
     rooms = room_data(s)
     rec = reconcile(s)
     aud = audit(s)
-    issues = issues_from(rec, aud)
+    ver = verify(s)
+    issues = issues_from(rec, aud, ver)
     prop = load_proposal(path)
     return {
         "ok": True,
@@ -358,6 +362,7 @@ def state_payload(path: Path) -> dict[str, Any]:
         "rooms": rooms,
         "reconcile": {k: v for k, v in rec.items() if k != "issues"},
         "audit": {k: v for k, v in aud.items() if k != "issues"},
+        "verify": {k: v for k, v in ver.items() if k != "issues"},
         "issues": issues,
         "snapshots": _snapshots(path),
         "view": {"window": preview_window(s), "aspect": PREVIEW_ASPECT},
@@ -625,6 +630,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             return {"ok": True, **reconcile(Session(path), fix=True)}
         if action == "audit":
             return {"ok": True, **audit(Session(path))}
+        if action == "verify":
+            return {"ok": True, **verify(Session(path))}
         raise CadError("未知动作：%s" % action)
 
     def log_message(self, fmt: str, *args: Any) -> None:

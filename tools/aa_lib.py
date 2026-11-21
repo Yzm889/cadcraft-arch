@@ -5262,6 +5262,374 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
             "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc}
 
 
+def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:
+    """全图复核：只读检查跨图纸/表的一致性，不改图。
+
+    与 `audit`（图面几何）、`reconcile`（构件自身自洽）分开，专查“图与表对不上”：
+      1. `axis_label_duplicate` / `axis_count_mismatch` / `axis_wall_ref`：轴号重复、
+         轴数与编号数量不符、墙的轴号引用不存在；
+      2. `opening_table_*`：门窗表樘数/编号/尺寸/层号与图上实际洞口是否一致；
+      3. `floor_*`：楼层表内部标高/层高是否自洽，立面/剖面的楼层行是否与楼层表一致；
+      4. `dim_*`：尺寸测量值与几何长度是否一致，同一条尺寸链的分段合计与外道总尺寸是否一致。
+    缺失的表/轴网按“没做”跳过，不把没画的表当成错误。返回 `issues/count/by_kind/
+    errors/warnings/stats/scale`。
+    """
+    issues: list[dict[str, Any]] = []
+    stats = {"axes": 0, "walls": 0, "openings": 0, "opening_tables": 0,
+             "floor_tables": 0, "floor_sources": 0, "dimensions": 0}
+
+    def add(kind: str, level: str, message: str, ref: str = "",
+            detail: str = "", suggestion: str = "") -> None:
+        issues.append({"kind": kind, "level": level, "message": message,
+                       "ref": ref, "detail": detail, "suggestion": suggestion})
+
+    def levels_of(text: str) -> list[int]:
+        out: list[int] = []
+        for part in str(text or "").replace("，", ",").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                a, b = part.split("-", 1)
+                out.extend(range(int(float(a)), int(float(b)) + 1))
+            else:
+                out.append(int(float(part)))
+        return sorted(set(out))
+
+    def floor_key(no: Any, elev: Any, height: Any) -> tuple[str, float, float]:
+        return (str(no).strip(), round(float(elev), 3), round(float(height), 3))
+
+    sc = drawing_scale(session)
+
+    # 1) 轴号：网格自己不能重号，墙引用的轴号必须存在。
+    grids = axis_grids(session)
+    stats["axes"] = len(grids)
+    all_labels: set[str] = set()
+    for g in grids:
+        if len(g["ver"]) != len(g["xpos"]) or len(g["hor"]) != len(g["ypos"]):
+            add("axis_count_mismatch", "error",
+                "轴网 %s 的轴数与编号数量不符（竖轴 %d/%d，横轴 %d/%d）"
+                % (g["id"], len(g["ver"]), len(g["xpos"]), len(g["hor"]), len(g["ypos"])),
+                g["id"], suggestion="重跑轴网或修复 AA_VER/AA_HOR 属性")
+        for labels, axis_name in ((g["ver"], "竖"), (g["hor"], "横")):
+            seen: set[str] = set()
+            for lab in labels:
+                if lab in seen:
+                    add("axis_label_duplicate", "error",
+                        "轴网 %s 的%s轴号重复：%s" % (g["id"], axis_name, lab),
+                        g["id"], suggestion="改成连续且不重复的轴号，再重跑墙轴号绑定")
+                seen.add(lab)
+                all_labels.add(lab)
+    walls = wall_data(session)
+    stats["walls"] = len(walls)
+    if grids:
+        for w in walls:
+            for key, ax in (("ax1", w.get("ax1", "")), ("ax2", w.get("ax2", ""))):
+                if ax and ax not in all_labels:
+                    add("axis_wall_ref", "error",
+                        "墙 %s 的 %s 引用了不存在的轴号 %s" % (w["id"], key.upper(), ax),
+                        w["id"], detail="%s=%s" % (key, ax),
+                        suggestion="重跑 bind-walls-to-axis，或补上对应轴号")
+
+    # 2) 门窗表：单张总表时逐行对图；多张表只提醒，不瞎汇总。
+    stats["openings"] = len(opening_data(session))
+    tables = []
+    for e in session.components("AA_TABLE_"):
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in e["geometry"].get("attribs", [])}
+        if attrs.get("AA_TYPE") == "OPENING_TABLE" or "门窗表" in attrs.get("AA_TITLE", ""):
+            tid = attrs.get("AA_ID") or e["geometry"]["block"][len("AA_TABLE_"):]
+            tables.append({"id": tid, "block": e["geometry"]["block"], "attrs": attrs})
+    stats["opening_tables"] = len(tables)
+    if len(tables) > 1:
+        add("opening_table_multiple", "warn",
+            "图上有 %d 张门窗表（%s）；请确认是否重复，复核只对单张总表逐行核对"
+            % (len(tables), "、".join(t["id"] for t in tables)),
+            tables[0]["id"], suggestion="只保留一张总表，或按层拆表后人工确认")
+    elif tables:
+        table = tables[0]
+        header = table["attrs"].get("AA_HEADER", "")
+        legacy = "所在层" not in header and len([c for c in header.split("~") if c]) == 6
+        rows_txt = table["attrs"].get("AA_ROWS", "")
+        rows: list[dict[str, Any]] = []
+        bad_schema = False
+        for raw in rows_txt.split("@@"):
+            if not raw:
+                continue
+            c = raw.split("~") + [""] * 7
+            if c[0] in ("合计", "总计") or (c[1] in ("合计", "总计", "")
+                                           and c[2] in ("合计", "总计", "")):
+                continue
+            try:
+                if legacy:
+                    # 旧版门窗表 6 列：编号~类别~宽~高~樘数~所在墙；没有窗台/所在层
+                    if len(c) < 6 or not c[0] or c[1] not in ("门", "窗", "门连窗"):
+                        raise ValueError("旧表行")
+                    rows.append({"no": c[0], "kind": c[1],
+                                 "width": float(c[2]), "height": float(c[3]),
+                                 "sill": None, "count": int(float(c[4] or 0)),
+                                 "levels": []})
+                else:
+                    size = c[3].split("×")
+                    if len(size) != 2:
+                        raise ValueError("洞口尺寸")
+                    rows.append({
+                        "no": c[1], "kind": c[2], "width": float(size[0]),
+                        "height": float(size[1]),
+                        "sill": 0.0 if c[4] in ("-", "") else float(c[4]),
+                        "count": int(float(c[5] or 0)), "levels": levels_of(c[6]),
+                    })
+            except (ValueError, IndexError):
+                bad_schema = True
+        if bad_schema or not rows:
+            add("opening_table_unreadable", "error",
+                "门窗表 %s 的表体行解析不了（AA_ROWS 可能是旧格式）" % table["id"],
+                table["id"], suggestion="重跑 opening-table 重新生成表")
+        else:
+            actual = opening_summary(session)
+            by_key: dict[tuple, list[dict[str, Any]]] = {}
+            for r in rows:
+                if legacy:
+                    key = (r["no"], r["kind"], round(r["width"], 1),
+                           round(r["height"], 1))
+                else:
+                    key = (r["no"], r["kind"], round(r["width"], 1),
+                           round(r["height"], 1), round(r["sill"], 1))
+                by_key.setdefault(key, []).append(r)
+            unknown = set()
+            for it in actual:
+                kind_text = {"DOOR": "门", "WINDOW": "窗",
+                             "DOORWIN": "门连窗"}.get(str(it["kind"]).upper(), str(it["kind"]))
+                if legacy:
+                    key = (it["no"], kind_text, round(it["width"], 1),
+                           round(it["height"], 1))
+                else:
+                    key = (it["no"], kind_text, round(it["width"], 1),
+                           round(it["height"], 1), round(it["sill"], 1))
+                hit = by_key.get(key)
+                if not hit:
+                    add("opening_table_missing", "error",
+                        "门窗表 %s 漏了 %s（%s %.0f×%.0f，图上 %d 樘）"
+                        % (table["id"], it["no"], kind_text, it["width"], it["height"],
+                           it["count"]), table["id"],
+                        suggestion="重跑 opening-table 重新统计")
+                    continue
+                row = hit[0]
+                unknown.add(id(row))
+                if row["count"] != it["count"]:
+                    add("opening_table_count", "error",
+                        "门窗表 %s 的 %s 樘数为 %d，图上实际 %d 樘"
+                        % (table["id"], it["no"], row["count"], it["count"]),
+                        table["id"], suggestion="重跑 opening-table 重新统计")
+                if not legacy and row["levels"] != sorted(int(x) for x in it["levels"]):
+                    add("opening_table_level", "warn",
+                        "门窗表 %s 的 %s 所在层为 %s，图上实际为 %s"
+                        % (table["id"], it["no"], _levels_text(row["levels"]),
+                           it["level_text"]), table["id"],
+                        suggestion="核对墙的 AA_FLOOR / 洞口归属层")
+            for r in rows:
+                if id(r) not in unknown:
+                    add("opening_table_extra", "error",
+                        "门窗表 %s 有表中项 %s，但图上没有对应洞口" % (table["id"], r["no"]),
+                        table["id"], suggestion="重跑 opening-table 重新统计")
+
+    # 3) 楼层表：表内标高/层高先自洽，再与立面/剖面记录逐层核对。
+    floor_tables = []
+    for e in session.components("AA_TABLE_"):
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in e["geometry"].get("attribs", [])}
+        if attrs.get("AA_TYPE") == "FLOOR_TABLE" or "楼层表" in attrs.get("AA_TITLE", ""):
+            tid = attrs.get("AA_ID") or e["geometry"]["block"][len("AA_TABLE_"):]
+            floor_tables.append({"id": tid, "block": e["geometry"]["block"], "attrs": attrs})
+    stats["floor_tables"] = len(floor_tables)
+    if len(floor_tables) > 1:
+        add("floor_table_multiple", "warn",
+            "图上有 %d 张楼层表（%s）；复核只按第一张核对"
+            % (len(floor_tables), "、".join(t["id"] for t in floor_tables)),
+            floor_tables[0]["id"], suggestion="只保留一张楼层表")
+    if floor_tables:
+        table = floor_tables[0]
+        rows: list[dict[str, Any]] = []
+        bad = False
+        for raw in table["attrs"].get("AA_ROWS", "").split("@@"):
+            if not raw:
+                continue
+            c = raw.split("~") + [""] * 5
+            try:
+                rows.append({"no": c[0],
+                             "elev": float(c[1].replace("±", "")) * 1000.0,
+                             "height": float(c[2])})
+            except (ValueError, IndexError):
+                bad = True
+        if bad or not rows:
+            add("floor_table_unreadable", "error",
+                "楼层表 %s 的表体行解析不了" % table["id"], table["id"],
+                suggestion="重跑 floor-table 重新生成")
+        else:
+            seen_no: set[str] = set()
+            for r in rows:
+                if r["no"] in seen_no:
+                    add("floor_table_no_duplicate", "error",
+                        "楼层表 %s 的层号重复：%s" % (table["id"], r["no"]),
+                        table["id"], suggestion="改成唯一的层号")
+                seen_no.add(r["no"])
+                if r["height"] <= 0:
+                    add("floor_height", "error",
+                        "楼层表 %s 的 %s 层层高不是正数：%s"
+                        % (table["id"], r["no"], r["height"]), table["id"],
+                        suggestion="改成正的层高")
+            for i in range(1, len(rows)):
+                prev, cur = rows[i - 1], rows[i]
+                prev_top = prev["elev"] + prev["height"]
+                if cur["elev"] <= prev["elev"] + tol:
+                    add("floor_elev_order", "error",
+                        "楼层表 %s 的 %s 层标高没有高于 %s 层"
+                        % (table["id"], cur["no"], prev["no"]), table["id"],
+                        suggestion="按自下而上顺序重排楼层表")
+                elif cur["elev"] < prev_top - tol:
+                    add("floor_elev_overlap", "error",
+                        "楼层表 %s 的 %s 层标高低于 %s 层顶（层高与标高重叠）"
+                        % (table["id"], cur["no"], prev["no"]), table["id"],
+                        suggestion="统一层高与标高")
+                elif cur["elev"] > prev_top + tol:
+                    add("floor_elev_gap", "warn",
+                        "楼层表 %s 的 %s 层标高比 %s 层顶高 %.0fmm（有未列楼层）"
+                        % (table["id"], cur["no"], prev["no"], cur["elev"] - prev_top),
+                        table["id"], suggestion="确认是否漏了一层，或修正标高")
+
+            sources = []
+            for prefix, kind in (("AA_ELEVATION_", "立面"), ("AA_SECTION_", "剖面")):
+                for e in session.components(prefix):
+                    attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                             for a in e["geometry"].get("attribs", [])}
+                    if attrs.get("AA_ROWS"):
+                        sources.append({"id": attrs.get("AA_ID") or
+                                        e["geometry"]["block"][len(prefix):],
+                                        "kind": kind, "rows": attrs["AA_ROWS"]})
+            stats["floor_sources"] = len(sources)
+            for src in sources:
+                src_rows = []
+                vals = src["rows"].split("~")
+                for i in range(0, len(vals) - 2, 3):
+                    try:
+                        src_rows.append({"no": vals[i], "elev": float(vals[i + 1]),
+                                         "height": float(vals[i + 2])})
+                    except ValueError:
+                        add("floor_source_unreadable", "error",
+                            "%s %s 的楼层行解析不了" % (src["kind"], src["id"]),
+                            src["id"], suggestion="重跑立面/剖面")
+                        src_rows = []
+                        break
+                if not src_rows:
+                    continue
+                if len(src_rows) != len(rows) or any(
+                        floor_key(a["no"], a["elev"], a["height"]) !=
+                        floor_key(b["no"], b["elev"], b["height"])
+                        for a, b in zip(src_rows, rows)):
+                    add("floor_source_mismatch", "error",
+                        "%s %s 的楼层行与楼层表 %s 不一致"
+                        % (src["kind"], src["id"], table["id"]), src["id"],
+                        detail="%s: %d 层 / 表: %d 层"
+                               % (src["id"], len(src_rows), len(rows)),
+                        suggestion="重跑立面/剖面，让它们吃同一张楼层表")
+
+    # 4) 尺寸：测量值对几何；同一道尺寸链的分段合计对更外一道总尺寸。
+    dims: list[dict[str, Any]] = []
+    for e in session.entities().get("entities", []):
+        if e.get("type") != "Dimension":
+            continue
+        g = e.get("geometry") or {}
+        p13, p14, dp = g.get("p13"), g.get("p14"), g.get("defpt")
+        if not p13 or not p14 or not dp:
+            continue
+        try:
+            dx, dy = p14["x"] - p13["x"], p14["y"] - p13["y"]
+            length = math.hypot(dx, dy)
+            measure = float(g.get("measurement") or 0.0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if measure <= tol or length <= tol:
+            add("dim_zero", "error",
+                "尺寸 %s 的测量值为 0（可能是零长标注）" % e.get("handle", ""),
+                detail="handle=%s" % e.get("handle", ""),
+                suggestion="删掉重注")
+            continue
+        if abs(measure - length) > tol:
+            add("dim_measure_mismatch", "error",
+                "尺寸 %s 的测量值 %.2f 与两点距离 %.2f 不符"
+                % (e.get("handle", ""), measure, length),
+                detail="handle=%s" % e.get("handle", ""),
+                suggestion="删掉重注，别手改尺寸文字")
+        ang = math.atan2(dy, dx) % math.pi
+        ux, uy = math.cos(ang), math.sin(ang)
+        nx, ny = -uy, ux
+        c = nx * float(dp["x"]) + ny * float(dp["y"])
+        t1 = ux * float(p13["x"]) + uy * float(p13["y"])
+        t2 = ux * float(p14["x"]) + uy * float(p14["y"])
+        dims.append({"handle": e.get("handle", ""), "ang": ang, "c": c,
+                     "t0": min(t1, t2), "t1": max(t1, t2), "m": measure})
+    stats["dimensions"] = len(dims)
+    groups: dict[tuple[int, int], dict[str, Any]] = {}
+    for d in dims:
+        key = (int(round(math.degrees(d["ang"]) * 10)), int(round(d["c"] / max(tol, 1e-9))))
+        g = groups.setdefault(key, {"ang": d["ang"], "c": d["c"], "segs": []})
+        g["segs"].append(d)
+    for g in groups.values():
+        segs = sorted(g["segs"], key=lambda x: x["t0"])
+        g["span"] = (max(x["t1"] for x in segs) - min(x["t0"] for x in segs))
+        g["sum"] = sum(x["m"] for x in segs)
+        g["overlap"] = False
+        for i in range(1, len(segs)):
+            if segs[i]["t0"] < segs[i - 1]["t1"] - tol:
+                g["overlap"] = True
+                add("dim_chain_overlap", "error",
+                    "尺寸 %s 与 %s 在同一条线上重叠"
+                    % (segs[i - 1]["handle"], segs[i]["handle"]),
+                    detail="c=%.1f t=%.1f..%.1f" % (g["c"], segs[i]["t0"], segs[i]["t1"]),
+                    suggestion="删掉重复尺寸，或重跑 annotate")
+    for g in groups.values():
+        if g["overlap"] or len(g["segs"]) == 0:
+            continue
+        candidates = []
+        for h in groups.values():
+            if h is g or len(h["segs"]) != 1:
+                continue
+            if abs(h["ang"] - g["ang"]) > 0.01:
+                continue
+            delta = abs(h["c"] - g["c"])
+            if delta < 3.0 * sc - tol or delta > 10.0 * sc + tol:
+                continue
+            if g["c"] * h["c"] < 0:
+                continue
+            hmin = min(h["segs"][0]["t0"], h["segs"][0]["t1"])
+            hmax = max(h["segs"][0]["t0"], h["segs"][0]["t1"])
+            if hmin < min(x["t0"] for x in g["segs"]) - tol:
+                continue
+            if hmax > max(x["t1"] for x in g["segs"]) + tol:
+                continue
+            if abs((hmax - hmin) - g["span"]) > tol:
+                continue
+            candidates.append(h)
+        if not candidates:
+            continue
+        total = min(candidates, key=lambda h: abs(h["c"] - g["c"]))
+        total_m = total["segs"][0]["m"]
+        if abs(g["sum"] - total_m) > tol:
+            add("dim_chain_total", "error",
+                "尺寸链分段合计 %.2f 与外道总尺寸 %.2f 不一致"
+                % (g["sum"], total_m),
+                detail="c=%.1f / 外道 c=%.1f" % (g["c"], total["c"]),
+                suggestion="重跑 annotate，别只补总尺寸")
+
+    by_kind: dict[str, int] = {}
+    for it in issues:
+        by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+    return {"issues": issues, "count": len(issues), "by_kind": by_kind,
+            "errors": sum(1 for it in issues if it["level"] == "error"),
+            "warnings": sum(1 for it in issues if it["level"] == "warn"),
+            "stats": stats, "scale": sc}
+
+
 def _poly_area(points: Sequence[Sequence[float]]) -> float:
     """鞋带公式：多边形面积（mm²），点串按顺序闭合。"""
     if len(points) < 3:

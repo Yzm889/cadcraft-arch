@@ -85,6 +85,7 @@
     $("#refreshBtn").disabled = on;
     $("#runAuditBtn").disabled = on;
     $("#runReconcileBtn").disabled = on;
+    $("#runVerifyBtn").disabled = on;
     $("#fixReconcileBtn").disabled = on;
     $("#snapshotBtn").disabled = on;
     for (const id of ["#acceptProposal", "#discardProposal"]) {
@@ -623,9 +624,11 @@
     $("#issueCount").textContent = String(issues.length);
     const rec = S.data.reconcile || {};
     const aud = S.data.audit || {};
+    const ver = S.data.verify || {};
     $("#issueSummary").innerHTML =
       `<span>一致检查 <b>${esc(rec.count || 0)}</b></span>` +
       `<span>图面自检 <b>${esc(aud.count || 0)}</b></span>` +
+      `<span>全图复核 <b>${esc(ver.count || 0)}</b></span>` +
       `<span>error <b>${esc(issues.filter((i) => i.level === "error").length)}</b></span>` +
       `<span>warn <b>${esc(issues.filter((i) => i.level === "warn").length)}</b></span>`;
     const list = $("#issuesList");
@@ -822,6 +825,9 @@
         toast("没有可自动修复的问题；有歧义的项请看建议", "");
       } else if (action === "reconcile_fix") {
         toast(`已自动修复 ${r.fixed.length} 项`, "ok");
+      } else if (action === "verify") {
+        toast(`全图复核：${r.errors || 0} error / ${r.warnings || 0} warn`,
+              r.errors ? "err" : "ok");
       } else {
         toast(`${action} 完成`, "ok");
       }
@@ -945,6 +951,7 @@
     $("#refreshBtn").addEventListener("click", () => refreshAll());
     $("#runReconcileBtn").addEventListener("click", () => runAction("reconcile", "", "正在做一致检查…"));
     $("#runAuditBtn").addEventListener("click", () => runAction("audit", "", "正在做图面自检…"));
+    $("#runVerifyBtn").addEventListener("click", () => runAction("verify", "", "正在做全图复核…"));
     $("#fixReconcileBtn").addEventListener("click", () => runAction(
       "reconcile_fix",
       "自动收尾只做意图明确的事：删除无门窗/房间引用的零长墙、重挂唯一可匹配的悬空门窗、夹回放得下的越界洞口、重建房间面积；有歧义的只列建议，不硬改。继续？",

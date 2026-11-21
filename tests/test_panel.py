@@ -60,15 +60,18 @@ def main() -> int:
         status, html = request(base, "/", raw=True)
         assert status == 200 and b"AI" in html and b"app.js" in html, status
 
-        # 2) 状态：构件 + 一致检查 + 自检
+        # 2) 状态：构件 + 一致检查 + 自检 + 全图复核
         q = urllib.parse.quote(str(CASE))
         status, st = request(base, "/api/state?path=" + q)
         assert st["ok"] and st["drawing"]["name"] == "case.dxf", st["drawing"]
         assert len(st["walls"]) >= 1 and st["components"], st
-        assert "reconcile" in st and "audit" in st, st.keys()
+        assert "reconcile" in st and "audit" in st and "verify" in st, st.keys()
         win = st["view"]["window"]
         assert len(win) == 4 and win[2] > win[0] and win[3] > win[1], st["view"]
         assert st["view"]["aspect"] == panel_server.PREVIEW_ASPECT, st["view"]
+        status, vr = request(base, "/api/action",
+                             {"path": str(CASE), "action": "verify"})
+        assert vr["ok"] and "issues" in vr and "stats" in vr, vr
 
         # 3) 预览 PNG
         status, png = request(base, "/api/preview?path=" + q, raw=True)
