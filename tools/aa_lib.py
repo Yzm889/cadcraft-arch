@@ -7337,6 +7337,9 @@ def create_foundation(
     cover: float = 50.0,
     beam: float = 250.0,
     cushion_ext: float = 50.0,
+    stub: float = 100.0,
+    soil: float = 0.0,
+    lime_layer: float = 150.0,
     rebar: bool = True,
     bars: int = 6,
     stirrup: str = "Φ6@250",
@@ -7351,6 +7354,7 @@ def create_foundation(
     墙身（wall 厚）从地面下到放脚顶，两侧对称各 `steps` 级台阶（每级高 step_h、宽 step_w），
     底部垫层厚 base（每边外伸 cushion_ext）；墙顶 cover 砖后设 beam 高地圈梁（可带 6Φ12/Φ6@250 配筋示意），
     beam 底设防潮层；注埋深与基底宽两道尺寸。地面线向两侧出头。
+    墙身在 ±0.000 以上留 stub 高并以折断线收头；垫层可由 `soil` 指定底部 3:7 灰土厚度（0 为全 C10）。
     落块 `AA_FD_<id>`，`AA_TYPE=FOUNDATION`，`read_foundation` 回读。
     """
     block = "AA_FD_" + item_id
@@ -7369,6 +7373,8 @@ def create_foundation(
         raise CadError("墙厚必须 >0、放脚级数必须 ≥1")
     if sh <= 0 or sw <= 0 or b <= 0 or cv < 0 or bm < 0 or ext < 0:
         raise CadError("台阶高/台阶宽/垫层厚必须 >0，覆盖/圈梁/垫层外伸不得 <0")
+    if stub < 0 or soil < 0 or soil > b or lime_layer <= 0:
+        raise CadError("墙头高/灰土厚不得 <0，灰土厚不得超过垫层厚，分层厚必须 >0")
     if bars < 0 or (rebar and bars < 2):
         raise CadError("配筋根数必须 ≥2（不画配筋时可为 0）")
     if rebar and bars % 2:
@@ -7406,16 +7412,20 @@ def create_foundation(
         body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f %.4f)'
                     % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
 
-    # 地面线
-    seg(-cush_half - ann(10.0), 0.0, cush_half + ann(10.0), 0.0, lay_floor)
+    # 地面线：墙身处断开，右段伸出承接 ±0.000 标高
+    y_stub = stub * f
+    lx = cush_half + ann(8.0)
+    seg(-cush_half - ann(20.0), 0.0, -half, 0.0, lay_floor)
+    seg(half, 0.0, lx + ann(12.0), 0.0, lay_floor)
 
     y_step0 = -DF + BF            # 第一级台阶顶（垫层顶）
     y_top = y_step0 + n * SHF     # 放脚顶（墙身下口）
     y_beam_top = -cv * f          # 地圈梁顶（砖覆盖 60）
     y_beam_bot = -(cv + bm) * f   # 地圈梁底（防潮层）
 
-    # 左侧轮廓：墙脚 -> 圈梁 -> 墙身 -> 逐级外放 -> 垫层
-    left = [(-half, 0.0), (-half, y_beam_top), (-half, y_beam_bot), (-half, y_top)]
+    # 左侧轮廓：墙头 -> 墙脚 -> 圈梁 -> 墙身 -> 逐级外放 -> 垫层
+    left = [(-half, y_stub), (-half, 0.0),
+            (-half, y_beam_top), (-half, y_beam_bot), (-half, y_top)]
     for k in range(n):
         y = y_top - k * SHF
         x = -(half + (k + 1) * SWF)
@@ -7435,11 +7445,30 @@ def create_foundation(
     right = [(-x, y) for (x, y) in reversed(left)][:-1]
     for i in range(len(right) - 1):
         seg(right[i][0], right[i][1], right[i + 1][0], right[i + 1][1], lay_wall)
+    # 墙头折断线：两侧墙边伸到 ±0.000 以上，用中间下凹的折线收头
+    y_break = y_stub - 0.5 * y_stub
+    notch = [(-0.25 * half, y_stub), (0.0, y_break), (0.25 * half, y_stub)]
+    if y_stub > 0:
+        seg(half, y_stub, half, 0.0, lay_wall)
+        seg(-half, y_stub, notch[0][0], notch[0][1], lay_wall)
+        seg(notch[0][0], notch[0][1], notch[1][0], notch[1][1], lay_wall)
+        seg(notch[1][0], notch[1][1], notch[2][0], notch[2][1], lay_wall)
+        seg(notch[2][0], notch[2][1], half, y_stub, lay_wall)
 
     ndim = 0
     if dims:
         th = ann(2.5)
         tick = ann(2.0)
+        # 墙厚：墙头上方（标准详图 240 一道）
+        dy0 = y_stub + ann(6.0)
+        for xx in (-half, half):
+            seg(xx, y_stub, xx, dy0 + ann(2.0), lay_dim)
+        seg(-half, dy0, half, dy0, lay_dim)
+        for xx in (-half, half):
+            seg(xx - tick, dy0 + tick, xx + tick, dy0 - tick, lay_dim)
+        label = "%g" % w
+        txt(-_text_w(label, th) / 2.0, dy0 + ann(3.0), label, th)
+        ndim += 1
         # 埋深：右侧（左侧留给材料引注）
         dx = cush_half + ann(28.0)
         for yy in (0.0, -DF):
@@ -7506,7 +7535,10 @@ def create_foundation(
 
     # ---- 材料填充（HATCH entmake 不可用，按多边形手绘剖面线/点）----
     # 砖砌体：墙身 + 放脚 45° 斜线；地圈梁范围挖空，改点状混凝土
-    poly = left + right + [(half, 0.0)]
+    if y_stub > 0:
+        poly = left + right + [(half, y_stub), notch[2], notch[1], notch[0]]
+    else:
+        poly = left + right + [(half, 0.0)]
     for (x1, y1), (x2, y2) in _hatch_polygon(poly, ann(1.1), 45.0):
         ym = (y1 + y2) / 2.0
         if y_beam_bot - ann(0.2) <= ym <= y_beam_top + ann(0.2):
@@ -7526,11 +7558,23 @@ def create_foundation(
             yy2 += step
             row += 1
 
-    # 圈梁：点状混凝土；垫层：点状骨料（C10）
-    dots(-half + ann(1.0), half - ann(1.0), y_beam_bot + ann(1.0),
-         y_beam_top - ann(1.0), ann(3.0), ann(0.32))
-    dots(-cush_half + ann(4.0), cush_half - ann(4.0), -DF + ann(4.0),
-         y_step0 - ann(1.0), ann(4.0), ann(0.4))
+    # 圈梁：点状混凝土；垫层：上部点状骨料（C10），下部 3:7 灰土按分层线
+    soil_f = soil * f
+    conc_top = y_step0
+    conc_bot = -DF + soil_f
+    if conc_top - conc_bot > ann(2.0):
+        dots(-half + ann(1.0), half - ann(1.0), y_beam_bot + ann(1.0),
+             y_beam_top - ann(1.0), ann(3.0), ann(0.32))
+        dots(-cush_half + ann(4.0), cush_half - ann(4.0), conc_bot + ann(2.0),
+             conc_top - ann(1.0), ann(4.0), ann(0.4))
+    else:
+        dots(-half + ann(1.0), half - ann(1.0), y_beam_bot + ann(1.0),
+             y_beam_top - ann(1.0), ann(3.0), ann(0.32))
+    if soil_f > 0:
+        yy = -DF + lime_layer * f
+        while yy < -DF + soil_f - ann(0.5):
+            seg(-cush_half + ann(2.0), yy, cush_half - ann(2.0), yy, lay_floor)
+            yy += lime_layer * f
 
     # 地圈梁配筋示意：bars 根（每侧一半）+ 箍筋
     if rebar and bm > 0 and bars >= 2:
@@ -7547,7 +7591,6 @@ def create_foundation(
             seg(-xb + ann(2.0), yy2, xb - ann(2.0), yy2, lay_dim)
 
     # 标高：±0.000、圈梁底（按 cover+beam 算）、垫层底
-    lx = cush_half + ann(8.0)
     body.append('(aa:elev %.3f 0.0 "±0.000" %.3f %.3f)'
                 % (lx, ann(3.0), ann(2.5)))
     if bm > 0:
@@ -7566,13 +7609,38 @@ def create_foundation(
 
     lx0 = -cush_half - ann(12.0)
     if bm > 0:
-        callout(-half * 0.8, y_beam_bot + ann(2.0), lx0,
-                y_beam_bot - ann(10.0),
-                "地圈梁 %g：%dΦ12 %s" % (bm, bars, stirrup))
+        hs = "地圈梁 %g" % bm
+        if rebar and bars >= 2:
+            hs += "：%dΦ12" % bars
+            if bm * f > ann(10.0):
+                callout(-half * 0.8, y_beam_top - 0.12 * bm * f, lx0,
+                        y_beam_top - 0.12 * bm * f, stirrup)
+                callout(-half * 0.8, y_beam_bot + 0.12 * bm * f, lx0,
+                        y_beam_bot + 0.12 * bm * f, hs)
+            else:
+                callout(-half * 0.8, (y_beam_top + y_beam_bot) / 2.0, lx0,
+                        (y_beam_top + y_beam_bot) / 2.0,
+                        "%s %s" % (hs, stirrup))
+        else:
+            callout(-half * 0.8, (y_beam_top + y_beam_bot) / 2.0, lx0,
+                    (y_beam_top + y_beam_bot) / 2.0, hs)
     callout(-half, (y_beam_bot + y_top) / 2.0, lx0,
             (y_beam_bot + y_top) / 2.0, "MU10 砖砌体")
-    callout(-cush_half, -DF + BF / 2.0, lx0,
-            -DF + BF / 2.0, "3:7 灰土 / C10 垫层")
+    # 垫层：C10 混凝土与 3:7 灰土可分层表达；soil=0 时按“或”标注
+    if soil > 0:
+        if b - soil > 0:
+            con_mid = -DF + soil_f + (BF - soil_f) / 2.0
+            callout(-cush_half, con_mid, lx0, con_mid, "C10 混凝土垫层")
+        lime_mid = -DF + soil_f / 2.0
+        callout(-cush_half, lime_mid, lx0, lime_mid, "3:7 灰土")
+    else:
+        mid = -DF + BF / 2.0
+        s1, s2 = "3:7 灰土", "（或 C10 混凝土垫层）"
+        seg(-cush_half, mid, lx0, mid, lay_dim)
+        shelf = max(_text_w(s1, ann(2.2)), _text_w(s2, ann(2.2))) + ann(2.0)
+        seg(lx0 - shelf, mid, lx0, mid, lay_dim)
+        txt(lx0 - shelf + ann(0.6), mid + ann(1.2), s1, ann(2.2))
+        txt(lx0 - shelf + ann(0.6), mid - ann(2.4), s2, ann(2.2))
 
     before = session.snapshot()
     session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
@@ -7582,7 +7650,8 @@ def create_foundation(
         raise CadError("基础没有生成任何图元")
 
     bbox = [-cush_half - ann(65.0), -DF - ann(30.0),
-            cush_half + ann(50.0), ann(10.0)]
+            cush_half + ann(50.0),
+            y_stub + ann(12.0 if dims else 2.0)]
     att_defs = [
         ("AA_TYPE", "component type", "FOUNDATION"),
         ("AA_ID", "component id", item_id),
@@ -7594,6 +7663,9 @@ def create_foundation(
         ("AA_BASE", "cushion thickness", "%.4f" % b),
         ("AA_BASEW", "base width", "%.4f" % (w + 2.0 * n * sw)),
         ("AA_CUSHW", "cushion width", "%.4f" % (w + 2.0 * n * sw + 2.0 * ext)),
+        ("AA_STUB", "wall stub above ground", "%.4f" % stub),
+        ("AA_SOIL", "lime soil thickness", "%.4f" % soil),
+        ("AA_LIME", "lime soil layer", "%.4f" % lime_layer),
         ("AA_COVER", "brick cover", "%.4f" % cv),
         ("AA_BEAM", "grade beam height", "%.4f" % bm),
         ("AA_BARS", "rebar count", str(bars)),
@@ -7614,7 +7686,8 @@ def create_foundation(
             "steps": n, "step_h": sh, "step_w": sw, "depth": D, "base": b,
             "base_width": w + 2.0 * n * sw,
             "cushion_width": w + 2.0 * n * sw + 2.0 * ext,
-            "cover": cv, "beam": bm, "bars": bars, "stirrup": stirrup,
+            "cover": cv, "beam": bm, "stub": stub, "soil": soil,
+            "lime_layer": lime_layer, "bars": bars, "stirrup": stirrup,
             "factor": f,
             "ratio": "1:%g" % ratio, "title": title, "dims": ndim, "bbox": bbox,
             "geom_handles": handles}
@@ -7634,6 +7707,9 @@ def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
             "base": float(attrs.get("AA_BASE") or 0),
             "base_width": float(attrs.get("AA_BASEW") or 0),
             "cushion_width": float(attrs.get("AA_CUSHW") or 0),
+            "stub": float(attrs.get("AA_STUB") or 0),
+            "soil": float(attrs.get("AA_SOIL") or 0),
+            "lime_layer": float(attrs.get("AA_LIME") or 0),
             "cover": float(attrs.get("AA_COVER") or 0),
             "beam": float(attrs.get("AA_BEAM") or 0),
             "bars": int(float(attrs.get("AA_BARS") or 0)),

@@ -29,7 +29,7 @@ def main() -> int:
     create_foundation(s, "FD1", (0.0, 0.0))
 
     export(s, ROOT / "samples" / "demo_foundation.png",
-           window=(-9000.0, -15000.0, 9000.0, 1500.0))
+           window=(-9000.0, -15000.0, 9000.0, 2500.0))
     print("OK demo_foundation")
     return 0
 

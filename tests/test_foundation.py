@@ -1,8 +1,8 @@
 """基础大放脚验收（v1.0.40）。
 
-验收：1:20 → 5 倍；墙身/两级台阶/垫层齐备；埋深与基底宽两道尺寸；
+验收：1:20 → 5 倍；墙身/两级台阶/垫层/墙头折断线齐备；墙厚、埋深、基底宽与竖向分道五道尺寸；
 级数与基底宽计算正确；bbox 与几何口径一致；属性回读；重号、墙厚 0、级数 0、
-埋深不足、比例 0 五类拒绝；CLI --show 与库一致。
+埋深不足、比例 0、配筋奇数六类拒绝；CLI --show 与库一致。
 """
 
 from __future__ import annotations
@@ -43,17 +43,17 @@ def main() -> int:
     set_drawing_scale(s, 100, rescale=False)
 
     fd = create_foundation(s, "FD1", (0.0, 0.0))
-    assert fd["factor"] == 5.0 and fd["dims"] == 4, fd
+    assert fd["factor"] == 5.0 and fd["dims"] == 5, fd
     assert fd["wall"] == 240.0 and fd["steps"] == 2, fd
     assert fd["depth"] == 2000.0 and fd["base"] == 300.0, fd
     assert fd["base_width"] == 500.0 and fd["cushion_width"] == 600.0, fd
     assert fd["ratio"] == "1:20", fd
-    assert fd["bbox"] == [-8000.0, -13000.0, 6500.0, 1000.0], fd["bbox"]
+    assert fd["bbox"] == [-8000.0, -13000.0, 6500.0, 1700.0], fd["bbox"]
 
     fd2 = create_foundation(s, "FD2", (9000.0, 0.0), wall=200.0, steps=1,
                             step_h=300.0, step_w=300.0, depth=1200.0, base=200.0)
     assert fd2["base_width"] == 800.0, fd2
-    assert fd2["bbox"] == [-8750.0, -9000.0, 7250.0, 1000.0], fd2["bbox"]
+    assert fd2["bbox"] == [-8750.0, -9000.0, 7250.0, 1700.0], fd2["bbox"]
 
     # 非标准规格：370 墙 / 三级 120×60 / 基底 730 / 垫层 790 / 无圈梁
     fd3 = create_foundation(s, "FD3", (0.0, -30000.0), wall=370.0, steps=3,
@@ -63,8 +63,22 @@ def main() -> int:
                             title="370 墙三级放脚")
     assert fd3["base_width"] == 730.0 and fd3["cushion_width"] == 790.0, fd3
     assert fd3["beam"] == 0.0 and fd3["bars"] == 0.0, fd3
-    assert fd3["dims"] == 4, fd3
-    assert fd3["bbox"] == [-8475.0, -12000.0, 6975.0, 1000.0], fd3["bbox"]
+    assert fd3["dims"] == 5, fd3
+    assert fd3["bbox"] == [-8475.0, -12000.0, 6975.0, 1700.0], fd3["bbox"]
+
+    # 垫层分层：300 厚中底部 150 为 3:7 灰土，按 100 分层
+    fd4 = create_foundation(s, "FD4", (9000.0, -30000.0),
+                            soil=150.0, lime_layer=100.0)
+    assert fd4["soil"] == 150.0 and fd4["lime_layer"] == 100.0, fd4
+    assert fd4["cushion_width"] == 600.0 and fd4["dims"] == 5, fd4
+    assert fd4["bbox"] == [-8000.0, -13000.0, 6500.0, 1700.0], fd4["bbox"]
+    assert read_foundation(s, "FD4")["soil"] == 150.0
+
+    # CLI 换规格：墙头 50、灰土 150 / 分层 100
+    q = cli("foundation", str(path), "FD5", "--at", "0,-60000",
+            "--stub", "50", "--soil", "150", "--lime-layer", "100")
+    assert q["ok"] and q["stub"] == 50.0 and q["soil"] == 150.0, q
+    assert q["lime_layer"] == 100.0 and q["dims"] == 5, q
 
     back = read_foundation(s, "FD1")
     assert back["wall"] == 240.0 and back["base_width"] == 500.0, back

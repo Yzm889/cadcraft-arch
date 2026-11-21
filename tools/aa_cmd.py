@@ -616,6 +616,9 @@ def main(argv: list[str] | None = None) -> int:
     p_fd.add_argument("--cover", type=float, default=50.0, help="圈梁上砖覆盖 mm")
     p_fd.add_argument("--beam", type=float, default=250.0, help="地圈梁高 mm（0 为不画）")
     p_fd.add_argument("--cushion-ext", type=float, default=50.0, help="垫层每边外伸 mm")
+    p_fd.add_argument("--stub", type=float, default=100.0, help="±0.000 以上墙头高 mm（0 为不留）")
+    p_fd.add_argument("--soil", type=float, default=0.0, help="垫层底部 3:7 灰土厚 mm（0 为全 C10）")
+    p_fd.add_argument("--lime-layer", type=float, default=150.0, help="灰土分层厚 mm")
     p_fd.add_argument("--no-rebar", action="store_true", help="不画配筋示意")
     p_fd.add_argument("--bars", type=int, default=6, help="圈梁纵筋根数（偶数，默认 6）")
     p_fd.add_argument("--stirrup", default="Φ6@250", help="箍筋标注，如 Φ6@250")
@@ -1008,6 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.at), args.wall, args.steps,
                     args.step_h, args.step_w, args.depth, args.base,
                     args.cover, args.beam, args.cushion_ext,
+                    args.stub, args.soil, args.lime_layer,
                     not args.no_rebar,
                     args.bars, args.stirrup,
                     args.ratio, args.factor, not args.no_dims)})
