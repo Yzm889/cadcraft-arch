@@ -5262,6 +5262,148 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
             "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc}
 
 
+def _poly_area(points: Sequence[Sequence[float]]) -> float:
+    """鞋带公式：多边形面积（mm²），点串按顺序闭合。"""
+    if len(points) < 3:
+        return 0.0
+    s = 0.0
+    for i, (x1, y1) in enumerate(points):
+        x2, y2 = points[(i + 1) % len(points)]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str, Any]:
+    """构件一致性检查；`fix=True` 时只重建可安全修复的房间面积。
+
+    检查的是"构件数据之间是否对得上"，不是图面好不好看（那归 `audit`）：
+      1. 墙长/墙厚为 0；
+      2. 门窗宿主墙不存在、洞口越出墙段、同墙洞口重叠；
+      3. 房间围合墙不存在、缺轮廓点、存储面积与轮廓鞋带面积不符。
+
+    可修复项目前只有房间面积：删旧房间，按当前墙环重建，面积/文字一起刷新。
+    修复前整图备份，任一房间失败即整图回滚；门窗宿主缺失/重叠不自动删改。
+    """
+    def scan() -> dict[str, Any]:
+        walls = wall_data(session)
+        wall_by_id = {w["id"]: w for w in walls}
+        opens = opening_data(session)
+        rooms = room_data(session)
+        issues: list[dict[str, Any]] = []
+
+        def add(kind: str, level: str, message: str, ref: str = "",
+                detail: str = "", fixable: bool = False) -> None:
+            issues.append({"kind": kind, "level": level, "message": message,
+                           "ref": ref, "detail": detail, "fixable": fixable})
+
+        for w in walls:
+            if w["len"] <= tol:
+                add("wall_zero_len", "error", "墙 %s 长度为 0" % w["id"], w["id"])
+            if w["thick"] <= tol:
+                add("wall_zero_thick", "error", "墙 %s 厚度为 0" % w["id"], w["id"])
+
+        by_wall: dict[str, list[dict[str, Any]]] = {}
+        for o in opens:
+            if o["width"] <= tol:
+                add("opening_zero_width", "error", "门窗 %s 宽度为 0" % o["id"], o["id"])
+            host = wall_by_id.get(o["wallid"])
+            if not host:
+                add("opening_orphan", "error",
+                    "门窗 %s 的宿主墙 %s 不存在" % (o["id"], o["wallid"] or "（空）"),
+                    o["id"], o["wallid"])
+                continue
+            if (o["pos"] - o["width"] / 2.0 < -tol or
+                    o["pos"] + o["width"] / 2.0 > host["len"] + tol):
+                add("opening_outside", "error",
+                    "门窗 %s 超出墙 %s（中心 %.1f / 宽 %.1f / 墙长 %.1f）"
+                    % (o["id"], o["wallid"], o["pos"], o["width"], host["len"]), o["id"])
+            by_wall.setdefault(o["wallid"], []).append(o)
+
+        for wid, items in by_wall.items():
+            for i in range(len(items)):
+                for j in range(i + 1, len(items)):
+                    a, b = items[i], items[j]
+                    a0, a1 = a["pos"] - a["width"] / 2.0, a["pos"] + a["width"] / 2.0
+                    b0, b1 = b["pos"] - b["width"] / 2.0, b["pos"] + b["width"] / 2.0
+                    if a0 < b1 - tol and b0 < a1 - tol:
+                        add("opening_overlap", "error",
+                            "墙 %s 上门窗 %s 与 %s 重叠" % (wid, a["id"], b["id"]),
+                            "%s/%s" % (a["id"], b["id"]))
+
+        for r in rooms:
+            missing = [w for w in r["walls"] if w not in wall_by_id]
+            if missing:
+                add("room_wall_missing", "error",
+                    "房间 %s 的围合墙不存在：%s" % (r["id"], ", ".join(missing)), r["id"])
+            if not r["pts"]:
+                add("room_no_outline", "warn",
+                    "房间 %s 没有轮廓点（旧版图纸），无法核算面积" % r["id"], r["id"])
+                continue
+            calc = _poly_area(r["pts"])
+            area_tol = max(tol, abs(r["area"]) * 1e-5)
+            if abs(calc - r["area"]) > area_tol:
+                add("room_area", "error",
+                    "房间 %s 存储面积 %.2f 与轮廓面积 %.2f 不符（差 %.2f）"
+                    % (r["id"], r["area"], calc, calc - r["area"]),
+                    r["id"], "stored=%.2f calc=%.2f" % (r["area"], calc),
+                    fixable=bool(r["walls"]) and not missing)
+
+        by_kind: dict[str, int] = {}
+        for it in issues:
+            by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+        return {
+            "issues": issues, "count": len(issues), "by_kind": by_kind,
+            "errors": sum(1 for it in issues if it["level"] == "error"),
+            "warnings": sum(1 for it in issues if it["level"] == "warn"),
+            "fixable": sum(1 for it in issues if it["fixable"]),
+            "components": {"walls": len(walls), "openings": len(opens), "rooms": len(rooms)},
+        }
+
+    before = scan()
+    if not fix:
+        return {**before, "fixed": [], "rolled_back": False}
+
+    targets = [it for it in before["issues"] if it["kind"] == "room_area" and it["fixable"]]
+    if not targets:
+        return {**before, "fixed": [], "rolled_back": False}
+
+    # 房间里重建会经 refresh_opening_labels 重排门窗；若门窗/墙体本身有错，
+    # 重建会被 set_opening 拒绝。先如实拦下，不让 fix 半途炸掉整图。
+    blocking = [it for it in before["issues"]
+                if it["kind"].startswith("opening_")
+                or it["kind"] in ("wall_zero_len", "wall_zero_thick", "room_wall_missing")]
+    if blocking:
+        return {**before, "fixed": [], "rolled_back": False,
+                "fix_skipped": "存在门窗/墙体/围合墙错误（%d 条），先修正后再重建房间"
+                              % len(blocking)}
+
+    backup = session.path.with_name(session.path.stem + ".reconcile.bak" + session.path.suffix)
+    shutil.copy2(session.path, backup)
+    fixed: list[dict[str, Any]] = []
+    try:
+        rooms = {r["id"]: r for r in room_data(session)}
+        for it in targets:
+            r = rooms.get(it["ref"])
+            if not r or not r["walls"]:
+                continue
+            old = r["area"]
+            delete_component(session, r["block"])
+            res = create_room(session, r["id"], r["walls"], name=r["name"],
+                              show_area=r["show_area"])
+            fixed.append({"room": r["id"], "old_area": old,
+                          "new_area": res["area"], "perimeter": res["perimeter"]})
+    except Exception as exc:
+        shutil.copy2(backup, session.path)
+        raise CadError("房间面积刷新失败（%s），已整图回滚（原图备份 %s）"
+                       % (exc, backup.name)) from exc
+    finally:
+        if backup.exists():
+            backup.unlink()
+
+    after = scan()
+    return {**after, "fixed": fixed, "rolled_back": False}
+
+
 def sheet_window(session: Session, sheet_id: str) -> list[float]:
     """图幅的导出窗口：外框四条边（含 5% 余量）。"""
     block = "AA_SHEET_" + sheet_id

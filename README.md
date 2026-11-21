@@ -4,11 +4,11 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.41，已实测跑通）
+## 现状（v1.0.43，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
-| 新建公制图纸 | `new` | 完成 | 建图即建 11 个标准层；`--scale 100` 可开图就定出图比例 |
+| 新建公制图纸 | `new` | 完成 | 建图即建 21 个标准层；`--scale 100` 可开图就定出图比例 |
 | 轴网（等距） | `axis` | 完成 | 4 纵 + 3 横、14 个图元、10 项属性、DWG 往返 |
 | **轴网自动** | `axis-auto` | 完成 | 由墙反推轴线：竖墙 x 聚类、横墙 y 聚类（`--tol` 50mm 合同轴）、竖轴编 1/2/3、横轴编 A/B/C、轴线端外伸 2400、斜墙跳过并记 `AA_SKIP`；回读校验线数/圈数/文字/线型（全 CENTER）；**生成时顺手把每堵墙的 AX1/AX2 回填**（横墙端点→1/2/3，竖墙端点→A/B/C，斜墙留空） |
 | 墙轴号回填 | `axis-bind` | 完成 | 对已有图按轴网回填墙的 AX1/AX2，只改属性不改几何（`--only-empty` 不覆盖手填值、`--tol` 可调） |
@@ -53,14 +53,15 @@
 | 索引 | `index` | 完成 | 直径 10mm 圆 + 水平直径线，上半详图编号、下半图号（同图写 `—`）；`AA_DETAIL`/`AA_SHEETNO` 可回读 |
 | 剖切 | `section` | 完成 | 位置线只画两端两段 6mm 粗线（不与图面线条相接），两端各 5mm 投射方向线，`1-1` 编号两端都写、按投射方向对齐；`direction` 收 down/up/left/right |
 | **图面自检** | `audit` | 完成 | 只报不改：墙端点没接上、门窗超出墙段、房间文字重叠、尺寸压轴号圈、图形超出图幅内框；返回 `issues/count/by_kind/errors`，`--strict` 有 error 级问题时返回 1 |
+| **构件一致性检查** | `reconcile` | 完成（B8-1） | 只查数据是否自洽：墙长/墙厚为 0、门窗宿主墙缺失或越出墙段/同墙重叠、房间存储面积与轮廓鞋带面积不符；`--fix` 只重建可修的房间面积（整图先备份 `<stem>.reconcile.bak.dxf`，任一失败整图回滚），返回 `issues/count/by_kind/fixable/fixed/rolled_back`；门窗/墙体同时有错时返回 `fix_skipped`，不硬修；不冒充联动重画尺寸/门窗表/立面 |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，37 个原子工具与 CLI 一一对应，另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，52 个原子工具与 CLI 一一对应，另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (31 tests)
+python tests/run_all.py     # ALL PASS (43 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/demo_building.py  # 生成 samples/demo_building.dxf + .png（全套图 A2）
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
@@ -207,7 +208,7 @@ python tools/aa_cmd.py show out.dxf
 | 表格 | `AA-TABLE` | 白 7 | 实线 | 0.18 | 房间表、门窗表 |
 | 图名/符号 | `AA-NAME` | 白 7 | 实线 | 0.25 | 图名文字、比例、指北针 |
 
-**层是自动建的，不用你手调**：`new` 一开图就把上表 11 层按颜色/线型/线宽建好；任何后续命令画之前都会再校验一遍，缺层补建、颜色线型线宽被改坏就**自动改回来**，改不回来直接报错（不静默放过）。`layers out.dxf --fix` 可对老图纸一次性补规格。取色截至 GB/T 50001 线宽组 b=0.35/0.5/0.7 与天正默认配色（轴线红、标注绿、门窗青）。
+**层是自动建的，不用你手调**：`new` 一开图就把上表 21 层按颜色/线型/线宽建好；任何后续命令画之前都会再校验一遍，缺层补建、颜色线型线宽被改坏就**自动改回来**，改不回来直接报错（不静默放过）。`layers out.dxf --fix` 可对老图纸一次性补规格。取色截至 GB/T 50001 线宽组 b=0.35/0.5/0.7 与天正默认配色（轴线红、标注绿、门窗青）。
 
 **图层名由你定**：把 `aa_layers.example.json` 复制成项目根的 `aa_layers.json`，值可以是层名字符串，也可以是对象覆盖颜色/线型/线宽：
 

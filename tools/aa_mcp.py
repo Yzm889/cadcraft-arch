@@ -38,6 +38,8 @@ from aa_lib import (  # noqa: E402
     create_apron,
     create_stair,
     create_roof,
+    audit,
+    reconcile,
     create_elevation,
     create_section,
     create_floor_table,
@@ -94,7 +96,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.41"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.43"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -556,6 +558,19 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "图纸绝对路径"},
+                "tol": {"type": "number", "description": "判定容差 mm", "default": 1.0},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "aa_reconcile",
+        "description": "构件一致性检查：墙长/墙厚为 0、门窗宿主缺失或越界/重叠、房间面积与轮廓不符；fix=true 时按当前墙环重建房间面积（门窗/墙体另有错则返回 fix_skipped，不硬修）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "fix": {"type": "boolean", "description": "是否重建可修复项（房间面积）", "default": False},
                 "tol": {"type": "number", "description": "判定容差 mm", "default": 1.0},
             },
             "required": ["path"],
@@ -1570,6 +1585,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name == "aa_audit":
         return {"ok": True, **audit(s, _num(a.get("tol", 1.0), "tol"))}
+
+    if name == "aa_reconcile":
+        return {"ok": True, **reconcile(
+            s, fix=bool(a.get("fix", False)), tol=_num(a.get("tol", 1.0), "tol"))}
 
     if name == "aa_rescale":
         return {"ok": True, **rescale_annotations(

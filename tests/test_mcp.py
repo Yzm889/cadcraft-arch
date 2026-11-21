@@ -42,11 +42,11 @@ def main() -> int:
     # 2) 工具表完整、每项都有 inputSchema 与 description
     tools = rpc("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 54, names
+    assert len(names) == 55, names
     for n in ("aa_new", "aa_axis", "aa_wall", "aa_opening", "aa_room",
               "aa_room_auto", "aa_split", "aa_merge", "aa_set_wall",
               "aa_set_opening", "aa_openings", "aa_opening_table", "aa_wall_node",
-              "aa_stair_detail", "aa_wc_detail", "aa_elev_balcony", "aa_foundation", "aa_text", "aa_leader", "aa_detail_mark", "aa_opening_detail", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms"):
+              "aa_stair_detail", "aa_wc_detail", "aa_elev_balcony", "aa_foundation", "aa_text", "aa_leader", "aa_detail_mark", "aa_opening_detail", "aa_copy_floor", "aa_sheet_set", "aa_sheet_index", "aa_show", "aa_set_room", "aa_rooms", "aa_reconcile"):
         assert n in names, n
     for t in tools:
         assert t["inputSchema"]["type"] == "object", t["name"]
@@ -127,6 +127,11 @@ def main() -> int:
     assert not is_err and q["rows"][0]["no"] == "M0921", q
     is_err, q = call("aa_opening_table", {"path": str(dxf), "show": "MC9"})
     assert is_err and "没找到" in q["error"], q
+
+    # 5b2) 构件一致性检查（MCP 侧 aa_reconcile）
+    is_err, q = call("aa_reconcile", {"path": str(dxf)})
+    assert not is_err and q["count"] == 0, q
+    assert q["components"]["walls"] >= 1, q
 
     # 5c) 图纸集 + 图纸目录（MCP 侧两条新工具）
     is_err, q = call("aa_sheet", {"path": str(dxf), "id": "S001", "size": "A4",
@@ -238,7 +243,7 @@ def main() -> int:
         lines = [proc.stdout.readline(), proc.stdout.readline()]
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
-        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 54, r2
+        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 55, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:
         proc.stdin.close()
