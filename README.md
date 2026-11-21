@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.44，已实测跑通）
+## 现状（v1.0.45，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -338,8 +338,20 @@ python tools/aa_mcp.py --selftest   # 只看工具表，确认版本与工具数
 - 构件树：墙 / 门窗 / 房间，点一条看原始属性
 - 问题清单：`reconcile` 数据一致性问题 + `audit` 图面压碰问题，点问题定位构件
 - 只改已有构件属性：墙厚/类型/材质/轴号，门窗中心/宽/高/窗台/编号，房间名；复用 `set_wall` / `set_opening` / `set_room`，失败回滚，改前自动存快照
+- AI 变更集：AI 先提交一组 `aa_set_wall` / `aa_set_opening` / `aa_set_room` 操作，面板在临时副本上预演，列出每个构件的改前/改后和新增/消除问题；接受后才整图写入，拒绝则原图不动
 - 改动前后对比、快照、字节级回退
 - 不提供画线、偏移、修剪、阵列等第二套绘图逻辑
+
+AI 变更集接口（面板运行时由 Agent 调用）：
+
+```json
+POST /api/proposal
+{"path":"samples/demo_building.dxf","title":"外墙加厚","ops":[
+  {"tool":"aa_set_wall","args":{"id":"W001","thick":300}}
+]}
+```
+
+面板收到后自动切到“变更”页，并挂出改前/改后预览；`/api/proposal/commit` 先存 `before-batch` 快照再写入，`/api/proposal/discard` 整批丢弃。
 
 ```bash
 python tools/panel_server.py --dxf samples/demo_building.dxf

@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 import shutil
 import sys
 import threading
@@ -46,12 +47,15 @@ from aa_lib import (  # noqa: E402
     set_wall,
     wall_data,
 )
-from aa_mcp import aa_checkpoint, aa_restore  # noqa: E402
+from aa_mcp import aa_batch, aa_checkpoint, aa_restore  # noqa: E402
 
 PANEL_DIR = ROOT / "panel"
 CACHE_DIR = ROOT / ".panel_cache"
+PROPOSAL_DIR = CACHE_DIR / "proposals"
+PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
+MAX_PROPOSAL_OPS = 100
 LOCK = threading.Lock()
-VERSION = "1.0.44"
+VERSION = "1.0.45"
 
 
 def _attrs(geometry: dict[str, Any]) -> dict[str, str]:
@@ -76,6 +80,216 @@ def components_report(session: Session) -> list[dict[str, Any]]:
             "attrs": _attrs(g),
         })
     return out
+
+
+def issues_from(rec: dict[str, Any], aud: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [{**it, "source": "reconcile"} for it in rec["issues"]]
+    rows += [{**it, "source": "audit"} for it in aud["issues"]]
+    return rows
+
+
+def issue_rows(session: Session) -> list[dict[str, Any]]:
+    return issues_from(reconcile(session), audit(session))
+
+
+def _kind_of(block: str) -> str:
+    if block.startswith("AA_WALL_"):
+        return "墙"
+    if block.startswith("AA_OPENING_"):
+        return "门窗"
+    if block.startswith("AA_ROOM_"):
+        return "房间"
+    return "其他"
+
+
+def _same(a: Any, b: Any) -> bool:
+    if a == b:
+        return True
+    try:
+        return abs(float(a) - float(b)) <= 1e-6
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def _component_changes(before: list[dict[str, Any]],
+                       after: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    old = {c["block"]: c for c in before}
+    new = {c["block"]: c for c in after}
+    changes: list[dict[str, Any]] = []
+    counts = {"added": 0, "removed": 0, "changed": 0}
+    for block in sorted(set(old) | set(new)):
+        a, b = old.get(block), new.get(block)
+        if a is None:
+            counts["added"] += 1
+            fields = [{"name": k, "before": None, "after": v} for k, v in sorted(b["attrs"].items())]
+            changes.append({"block": block, "id": b["attrs"].get("id") or block,
+                            "kind": _kind_of(block), "change": "added", "fields": fields})
+            continue
+        if b is None:
+            counts["removed"] += 1
+            fields = [{"name": k, "before": v, "after": None} for k, v in sorted(a["attrs"].items())]
+            changes.append({"block": block, "id": a["attrs"].get("id") or block,
+                            "kind": _kind_of(block), "change": "removed", "fields": fields})
+            continue
+        fields = []
+        for k in sorted(set(a["attrs"]) | set(b["attrs"])):
+            av, bv = a["attrs"].get(k), b["attrs"].get(k)
+            if not _same(av, bv):
+                fields.append({"name": k, "before": av, "after": bv})
+        if not _same(a["at"], b["at"]):
+            fields.append({"name": "at", "before": a["at"], "after": b["at"]})
+        if not _same(a["rotation_deg"], b["rotation_deg"]):
+            fields.append({"name": "rotation", "before": a["rotation_deg"], "after": b["rotation_deg"]})
+        if fields:
+            counts["changed"] += 1
+            changes.append({"block": block, "id": b["attrs"].get("id") or block,
+                            "kind": _kind_of(block), "change": "changed", "fields": fields})
+    return changes, counts
+
+
+def _issue_key(it: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (str(it.get("source") or ""), str(it.get("kind") or ""),
+            str(it.get("ref") or ""), str(it.get("message") or ""))
+
+
+def _issue_changes(before: list[dict[str, Any]],
+                   after: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    old = {_issue_key(it): it for it in before}
+    new = {_issue_key(it): it for it in after}
+    added = [new[k] for k in sorted(set(new) - set(old))]
+    fixed = [old[k] for k in sorted(set(old) - set(new))]
+    return added[:40], fixed[:40]
+
+
+def _proposal_dir(path: Path) -> Path:
+    tag = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:12]
+    return PROPOSAL_DIR / tag
+
+
+def _proposal_file(path: Path) -> Path:
+    return _proposal_dir(path) / "proposal.json"
+
+
+def _sha1(path: Path) -> str:
+    return hashlib.sha1(path.read_bytes()).hexdigest()
+
+
+def load_proposal(path: Path) -> dict[str, Any] | None:
+    f = _proposal_file(path)
+    if not f.exists():
+        return None
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    data["stale"] = data.get("base_sha1") != _sha1(path)
+    return data
+
+
+def public_proposal(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": data.get("id"),
+        "title": data.get("title"),
+        "created": data.get("created"),
+        "ops_count": len(data.get("ops") or []),
+        "summary": data.get("summary") or {},
+        "changes": (data.get("changes") or [])[:120],
+        "new_issues": data.get("new_issues") or [],
+        "fixed_issues": data.get("fixed_issues") or [],
+        "stale": bool(data.get("stale")),
+    }
+
+
+def _clean_ops(ops: Any) -> list[dict[str, Any]]:
+    if not isinstance(ops, list) or not ops:
+        raise CadError("变更集需要非空的 ops 列表")
+    if len(ops) > MAX_PROPOSAL_OPS:
+        raise CadError("变更集最多 %d 项操作" % MAX_PROPOSAL_OPS)
+    clean = []
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict):
+            raise CadError("变更集第 %d 项格式错误：需要 {tool, args}" % i)
+        tool = str(op.get("tool") or "")
+        if tool not in PROPOSAL_TOOLS:
+            raise CadError("变更集第 %d 项工具不允许：%s（当前只接受 %s）"
+                           % (i, tool, " / ".join(sorted(PROPOSAL_TOOLS))))
+        args = op.get("args") or {}
+        if not isinstance(args, dict):
+            raise CadError("变更集第 %d 项 args 必须是对象" % i)
+        args = {k: v for k, v in args.items() if k != "path"}
+        if not args.get("id"):
+            raise CadError("变更集第 %d 项缺少构件编号 id" % i)
+        clean.append({"tool": tool, "args": args})
+    return clean
+
+
+def create_proposal(path: Path, title: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
+    clean = _clean_ops(ops)
+    base_sha1 = _sha1(path)
+    d = _proposal_dir(path)
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    case = d / "case.dxf"
+    shutil.copy2(path, case)
+    try:
+        before = components_report(Session(path))
+        before_issues = issue_rows(Session(path))
+        batch = aa_batch(str(case), clean, rollback=True)
+        if not batch.get("ok"):
+            raise CadError("变更集第 %d 项 %s 失败：%s"
+                           % (int(batch.get("failed_index", 0)), batch.get("failed_tool"),
+                              batch.get("error", "未知错误")))
+        after = components_report(Session(case))
+        after_issues = issue_rows(Session(case))
+        changes, counts = _component_changes(before, after)
+        new_issues, fixed_issues = _issue_changes(before_issues, after_issues)
+        data = {
+            "id": time.strftime("%Y%m%d-%H%M%S"),
+            "title": (title or "AI 变更集").strip()[:80],
+            "created": time.time(),
+            "path": str(path),
+            "base_sha1": base_sha1,
+            "ops": clean,
+            "summary": counts,
+            "changes": changes[:200],
+            "new_issues": new_issues,
+            "fixed_issues": fixed_issues,
+            "preview_path": str(case),
+            "preview_mtime": case.stat().st_mtime,
+        }
+        _proposal_file(path).write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                        encoding="utf-8")
+        return data
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+
+
+def commit_proposal(path: Path) -> dict[str, Any]:
+    data = load_proposal(path)
+    if not data:
+        raise CadError("没有待确认的 AI 变更集")
+    if data["stale"]:
+        raise CadError("原图已变化，变更集预演失效，请让 AI 重新提交")
+    case = Path(data["preview_path"])
+    if not case.exists():
+        raise CadError("变更集临时图纸不存在，请重新提交")
+    ck = aa_checkpoint(str(path), "before-batch")
+    tmp = path.with_name(path.name + ".panel.tmp")
+    try:
+        shutil.copy2(case, tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    shutil.rmtree(_proposal_dir(path), ignore_errors=True)
+    return {"ok": True, "checkpoint": ck["id"], "bytes": path.stat().st_size}
+
+
+def discard_proposal(path: Path) -> dict[str, Any]:
+    d = _proposal_dir(path)
+    existed = d.exists()
+    shutil.rmtree(d, ignore_errors=True)
+    return {"ok": True, "discarded": existed}
 
 
 def _resolve_dxf(raw: str, root: Path, default: Path) -> Path:
@@ -117,11 +331,8 @@ def state_payload(path: Path) -> dict[str, Any]:
     rooms = room_data(s)
     rec = reconcile(s)
     aud = audit(s)
-    issues = []
-    for it in rec["issues"]:
-        issues.append({**it, "source": "reconcile"})
-    for it in aud["issues"]:
-        issues.append({**it, "source": "audit"})
+    issues = issues_from(rec, aud)
+    prop = load_proposal(path)
     return {
         "ok": True,
         "drawing": {
@@ -139,6 +350,7 @@ def state_payload(path: Path) -> dict[str, Any]:
         "audit": {k: v for k, v in aud.items() if k != "issues"},
         "issues": issues,
         "snapshots": _snapshots(path),
+        "proposal": public_proposal(prop) if prop else None,
     }
 
 
@@ -252,6 +464,17 @@ class PanelHandler(BaseHTTPRequestHandler):
                 with LOCK:
                     png = preview_png(path)
                 return self._send(png, "image/png")
+            if u.path == "/api/proposal/preview":
+                path = self._path(q)
+                with LOCK:
+                    prop = load_proposal(path)
+                    if not prop:
+                        raise CadError("没有待确认的 AI 变更集")
+                    case = Path(prop.get("preview_path") or "")
+                    if not case.exists():
+                        raise CadError("变更集临时图纸不存在，请重新提交")
+                    png = preview_png(case)
+                return self._send(png, "image/png")
             if u.path == "/api/snapshots":
                 path = self._path(q)
                 return self._json({"ok": True, "snapshots": _snapshots(path)})
@@ -278,6 +501,21 @@ class PanelHandler(BaseHTTPRequestHandler):
                     raise CadError("缺少构件编号")
                 with LOCK:
                     res = edit_component(path, kind, cid, fields)
+                return self._json({"ok": True, "result": res})
+            if u.path == "/api/proposal":
+                path = self._path({"path": [body.get("path", "")]})
+                with LOCK:
+                    data = create_proposal(path, str(body.get("title", "")), body.get("ops"))
+                return self._json({"ok": True, "proposal": public_proposal(data)})
+            if u.path == "/api/proposal/commit":
+                path = self._path({"path": [body.get("path", "")]})
+                with LOCK:
+                    res = commit_proposal(path)
+                return self._json({"ok": True, "result": res})
+            if u.path == "/api/proposal/discard":
+                path = self._path({"path": [body.get("path", "")]})
+                with LOCK:
+                    res = discard_proposal(path)
                 return self._json({"ok": True, "result": res})
             self._json({"ok": False, "error": "未知接口：%s" % u.path}, 404)
         except Exception as exc:  # noqa: BLE001

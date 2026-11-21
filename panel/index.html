@@ -81,6 +81,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="components" role="tab">构件 <span id="compCount">0</span></button>
         <button class="tab" data-tab="issues" role="tab">问题 <span id="issueCount">0</span></button>
+        <button class="tab" data-tab="proposal" role="tab">变更 <span id="proposalCount">0</span></button>
         <button class="tab" data-tab="snapshots" role="tab">快照 <span id="snapCount">0</span></button>
       </nav>
 
@@ -102,6 +103,12 @@
         <div class="issue-summary" id="issueSummary">—</div>
         <div class="issue-list" id="issuesList">
           <div class="placeholder">一致检查：墙/门窗/房间数据是否对得上；图面自检：线、字、尺寸是否压碰。</div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-proposal" hidden>
+        <div id="proposalPane">
+          <div class="placeholder">当前没有待确认的 AI 变更。AI 通过 <code>/api/proposal</code> 提交后，这里会列出改前/改后和影响的问题。</div>
         </div>
       </div>
 

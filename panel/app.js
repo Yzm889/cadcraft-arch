@@ -20,6 +20,7 @@
     busy: false,
     tab: "components",
     showOther: false,
+    proposalId: "",
   };
 
   const esc = (v) => String(v == null ? "" : v)
@@ -85,6 +86,10 @@
     $("#runReconcileBtn").disabled = on;
     $("#fixReconcileBtn").disabled = on;
     $("#snapshotBtn").disabled = on;
+    for (const id of ["#acceptProposal", "#discardProposal"]) {
+      const el = $(id);
+      if (el) el.disabled = on || (id === "#acceptProposal" && S.data?.proposal?.stale);
+    }
   }
 
   async function apiGet(url) {
@@ -146,10 +151,14 @@
     try {
       const q = encodeURIComponent(S.path);
       const data = await apiGet(`/api/state?path=${q}`);
+      const pid = data.proposal ? data.proposal.id : "";
+      const newProposal = !!(pid && pid !== S.proposalId);
+      S.proposalId = pid || "";
       S.data = data;
       S.path = data.drawing.path;
       $("#pathInput").value = data.drawing.path;
       renderAll();
+      if (newProposal) setTab("proposal");
       await loadPreview();
       log(`已读取 ${data.drawing.name}：${data.walls.length} 墙 / ${data.openings.length} 门窗 / ${data.rooms.length} 房间`);
     } catch (e) {
@@ -162,17 +171,55 @@
     }
   }
 
+  function loadImg(src) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = src;
+    });
+  }
+
+  function previewUrl(path, mtime = 0) {
+    return `/api/preview?path=${encodeURIComponent(path)}&v=${encodeURIComponent(mtime)}`;
+  }
+
   async function loadPreview() {
     if (!S.data) return;
-    const q = encodeURIComponent(S.data.drawing.path);
-    const url = `/api/preview?path=${q}&v=${encodeURIComponent(S.data.drawing.mtime)}`;
+    const d = S.data.drawing;
+    const mainUrl = previewUrl(d.path, d.mtime);
+    const p = S.data.proposal;
+    if (p && p.id) {
+      const afterUrl = `/api/proposal/preview?path=${encodeURIComponent(d.path)}&v=${encodeURIComponent(p.id)}`;
+      const [afterOk, beforeOk] = await Promise.all([loadImg(afterUrl), loadImg(mainUrl)]);
+      if (afterOk) {
+        $("#preview").src = afterUrl;
+        $("#preview").hidden = false;
+        $("#empty").hidden = true;
+        S.currentSrc = afterUrl;
+        $("#openPreviewBtn").disabled = false;
+        if (beforeOk) {
+          S.prevSrc = mainUrl;
+          $("#previewPrev").src = mainUrl;
+          $("#compareToggle").disabled = false;
+          $("#compareToggle").classList.add("primary");
+          S.compare = true;
+        } else {
+          S.compare = false;
+          $("#compareToggle").disabled = true;
+          $("#compareToggle").classList.remove("primary");
+        }
+        applyCompare();
+        return;
+      }
+    }
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        $("#preview").src = url;
+        $("#preview").src = mainUrl;
         $("#preview").hidden = false;
         $("#empty").hidden = true;
-        S.currentSrc = url;
+        S.currentSrc = mainUrl;
         $("#openPreviewBtn").disabled = false;
         applyCompare();
         resolve();
@@ -181,7 +228,7 @@
         error("预览导出失败，可先看构件与问题清单。");
         resolve();
       };
-      img.src = url;
+      img.src = mainUrl;
     });
   }
 
@@ -190,6 +237,7 @@
     renderMeta();
     renderComponents();
     renderIssues();
+    renderProposal();
     renderSnapshots();
     renderInspector();
   }
@@ -441,6 +489,137 @@
         </span>`;
       if (ref) row.addEventListener("click", () => selectById(ref));
       list.appendChild(row);
+    }
+  }
+
+  // ---------- AI 变更 ----------
+  const FIELD_LABEL = {
+    thick: "墙厚", kind: "类型", mat: "材质", ax1: "轴号1", ax2: "轴号2",
+    name: "名称", pos: "中心距", width: "宽", height: "高", sill: "窗台",
+    frame: "框厚", no: "编号", labelside: "编号侧", len: "长", area: "面积",
+    perimeter: "周长", walls: "围合墙", floor: "层", at: "位置", rotation: "转角",
+  };
+  const proposalValue = (v) => {
+    if (v === null || v === undefined || v === "") return "—";
+    if (Array.isArray(v)) return v.join(", ");
+    return String(v);
+  };
+
+  function renderProposal() {
+    const box = $("#proposalPane");
+    const p = S.data && S.data.proposal;
+    $("#proposalCount").textContent = String(p ? (p.ops_count || 0) : 0);
+    if (!p || !p.id) {
+      box.innerHTML = `<div class="placeholder">当前没有待确认的 AI 变更。AI 通过 <code>/api/proposal</code> 提交后，这里会列出改前/改后和影响的问题。</div>`;
+      return;
+    }
+    const sum = p.summary || {};
+    const changed = (sum.changed || 0) + (sum.added || 0) + (sum.removed || 0);
+    const created = p.created ? new Date(p.created * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+    const rows = (p.changes || []).slice(0, 40);
+    const stale = !!p.stale;
+    const changesHtml = rows.map((c) => {
+      const tag = c.change === "added" ? "新增" : c.change === "removed" ? "删除" : "修改";
+      const cls = c.change === "added" || c.change === "removed" ? c.change : "";
+      const fields = (c.fields || []).slice(0, c.change === "changed" ? 8 : 5).map((f) => `
+        <div class="diff-field">
+          <span class="diff-key">${esc(FIELD_LABEL[f.name] || f.name)}</span>
+          <span class="diff-old">${esc(proposalValue(f.before))}</span>
+          <span class="diff-arrow">→</span>
+          <span class="diff-new">${esc(proposalValue(f.after))}</span>
+        </div>`).join("");
+      const more = (c.fields || []).length > (c.change === "changed" ? 8 : 5)
+        ? `<div class="proposal-more">另有 ${(c.fields || []).length - (c.change === "changed" ? 8 : 5)} 个属性</div>` : "";
+      return `
+        <div class="diff-row ${cls}">
+          <div class="diff-line">
+            <span class="diff-tag ${cls}">${tag}</span>
+            <span class="diff-id">${esc(c.id)}</span>
+            <span class="diff-kind">${esc(c.kind)}</span>
+          </div>
+          <div class="diff-fields">${fields}${more}</div>
+        </div>`;
+    }).join("");
+    const newIssues = (p.new_issues || []).slice(0, 2).map((it) =>
+      `<div>· ${esc(it.kind || "")} ${esc(it.ref || "")}：${esc(it.message || "")}</div>`).join("");
+    const fixedIssues = (p.fixed_issues || []).slice(0, 2).map((it) =>
+      `<div>· ${esc(it.kind || "")} ${esc(it.ref || "")}：${esc(it.message || "")}</div>`).join("");
+    box.innerHTML = `
+      <div class="proposal-card">
+        <div class="proposal-head">
+          <div>
+            <div class="proposal-title">${esc(p.title || "AI 变更集")}</div>
+            <div class="proposal-kicker">${esc(p.id)}${created ? ` · ${esc(created)}` : ""}</div>
+          </div>
+          <span class="proposal-badge ${stale ? "stale" : ""}">${stale ? "已失效" : "待确认"}</span>
+        </div>
+        ${stale ? `<div class="proposal-alert stale">原图在预演之后变过，这份变更集不能直接写入。让 AI 按当前图纸重新提交。</div>` : ""}
+        <div class="proposal-sum">
+          <div><b>${esc(sum.changed || 0)}</b>修改</div>
+          <div><b>${esc(sum.added || 0)}</b>新增</div>
+          <div><b>${esc(sum.removed || 0)}</b>删除</div>
+        </div>
+        <div class="proposal-kicker">${p.ops_count || 0} 项 AI 操作 · 共 ${changed} 个构件变化</div>
+        ${newIssues ? `<div class="proposal-alert new">新增问题 ${p.new_issues.length} 条${newIssues}</div>` : ""}
+        ${fixedIssues ? `<div class="proposal-alert fixed">消除问题 ${p.fixed_issues.length} 条${fixedIssues}</div>` : ""}
+        <div class="diff-head"><span>构件差异</span><span>改前 → 改后</span></div>
+        ${changesHtml || `<div class="placeholder">变更集执行成功，但没有识别到构件属性差异（可能操作是幂等的）。</div>`}
+        <div class="proposal-actions">
+          <button id="acceptProposal" class="btn primary" type="button" ${stale ? "disabled" : ""}>接受并写入</button>
+          <button id="discardProposal" class="btn danger" type="button">整批放弃</button>
+        </div>
+      </div>`;
+    const accept = $("#acceptProposal");
+    const discard = $("#discardProposal");
+    if (accept) accept.addEventListener("click", commitProposal);
+    if (discard) discard.addEventListener("click", discardProposal);
+  }
+
+  async function commitProposal() {
+    const p = S.data && S.data.proposal;
+    if (!p || !p.id) return;
+    const sum = p.summary || {};
+    if (!confirm(`接受 AI 变更集？\n${p.title || p.id}\n修改 ${sum.changed || 0} / 新增 ${sum.added || 0} / 删除 ${sum.removed || 0}\n\n会先存 before-batch 快照，再整图写入。`)) return;
+    clearError();
+    setBusy(true, "正在写入变更集…");
+    try {
+      const res = await apiPost("/api/proposal/commit", { path: S.path });
+      const r = res.result || res;
+      log(`接受变更集 ${p.id}，快照 ${r.checkpoint}`, "ok");
+      toast("AI 变更集已写入", "ok");
+      S.selected = null;
+      await refreshAll(true);
+      setTab("components");
+    } catch (e) {
+      error(`写入变更集失败：${e.message}`);
+      toast("变更集未写入，图纸未改", "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discardProposal() {
+    const p = S.data && S.data.proposal;
+    if (!p || !p.id) return;
+    if (!confirm(`整批放弃 AI 变更集？\n${p.title || p.id}\n原图不会被修改。`)) return;
+    clearError();
+    setBusy(true, "正在放弃变更集…");
+    try {
+      await apiPost("/api/proposal/discard", { path: S.path });
+      log(`已放弃变更集 ${p.id}`, "ok");
+      toast("已放弃 AI 变更集", "ok");
+      S.compare = false;
+      S.prevSrc = "";
+      $("#compareToggle").classList.remove("primary");
+      $("#compareToggle").disabled = true;
+      $("#compareBar").hidden = true;
+      S.selected = null;
+      await refreshAll(true);
+      setTab("components");
+    } catch (e) {
+      error(`放弃变更集失败：${e.message}`);
+    } finally {
+      setBusy(false);
     }
   }
 

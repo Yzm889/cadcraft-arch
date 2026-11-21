@@ -99,12 +99,63 @@ def main() -> int:
         got3 = [r for r in st3["rooms"] if r["id"] == room["id"]][0]
         assert got3["name"] == orig, got3
 
+        # 7) AI 变更集：预演 -> 预览 -> 接受
+        wall = st["walls"][0]
+        orig_thick = wall["thick"]
+        ops = [
+            {"tool": "aa_set_wall", "args": {"id": wall["id"], "thick": 300}},
+            {"tool": "aa_set_room", "args": {"id": room["id"], "name": "AI 变更"}},
+        ]
+        status, pv = request(base, "/api/proposal", {"path": str(CASE),
+                                                     "title": "面板预演",
+                                                     "ops": ops})
+        prop = pv["proposal"]
+        assert prop["ops_count"] == 2 and not prop["stale"], prop
+        assert prop["summary"]["changed"] >= 2, prop["summary"]
+        assert any(c["id"] == wall["id"] and any(f["name"] == "thick" for f in c["fields"])
+                   for c in prop["changes"]), prop["changes"]
+        status, png2 = request(base, "/api/proposal/preview?path=" + q, raw=True)
+        assert status == 200 and png2.startswith(b"\x89PNG") and len(png2) > 2048, len(png2)
+        status, stp = request(base, "/api/state?path=" + q)
+        assert stp["proposal"] and stp["proposal"]["id"] == prop["id"], stp.get("proposal")
+
+        status, cm = request(base, "/api/proposal/commit", {"path": str(CASE)})
+        ck2 = cm["result"]["checkpoint"]
+        assert ck2 and ck2.endswith(".dxf"), cm
+        status, st4 = request(base, "/api/state?path=" + q)
+        assert not st4["proposal"], st4.get("proposal")
+        wall4 = [w for w in st4["walls"] if w["id"] == wall["id"]][0]
+        room4 = [r for r in st4["rooms"] if r["id"] == room["id"]][0]
+        assert abs(wall4["thick"] - 300) < 1e-6 and room4["name"] == "AI 变更", (wall4, room4)
+
+        # 8) 接受后可回退；放弃则原图不动
+        status, rs2 = request(base, "/api/action",
+                              {"path": str(CASE), "action": "restore", "snapshot": ck2})
+        assert rs2["ok"], rs2
+        status, st5 = request(base, "/api/state?path=" + q)
+        wall5 = [w for w in st5["walls"] if w["id"] == wall["id"]][0]
+        room5 = [r for r in st5["rooms"] if r["id"] == room["id"]][0]
+        assert abs(wall5["thick"] - orig_thick) < 1e-6 and room5["name"] == orig, (wall5, room5)
+
+        status, pv2 = request(base, "/api/proposal", {
+            "path": str(CASE), "title": "放弃测试",
+            "ops": [{"tool": "aa_set_room", "args": {"id": room["id"], "name": "不应写入"}}],
+        })
+        assert pv2["proposal"]["summary"]["changed"] == 1, pv2
+        status, dc = request(base, "/api/proposal/discard", {"path": str(CASE)})
+        assert dc["ok"] and dc["result"]["discarded"], dc
+        status, st6 = request(base, "/api/state?path=" + q)
+        assert not st6["proposal"], st6.get("proposal")
+        room6 = [r for r in st6["rooms"] if r["id"] == room["id"]][0]
+        assert room6["name"] == orig, room6
+
         print("PASS test_panel")
         return 0
     finally:
         srv.shutdown()
         srv.server_close()
         th.join(timeout=10)
+        panel_server.discard_proposal(CASE)
         shutil.rmtree(WORK, ignore_errors=True)
 
 
