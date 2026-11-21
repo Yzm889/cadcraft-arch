@@ -21,6 +21,7 @@
     tab: "components",
     showOther: false,
     proposalId: "",
+    showAllChanges: true,
   };
 
   const esc = (v) => String(v == null ? "" : v)
@@ -418,34 +419,83 @@
     return [c.at[0] - half, c.at[1] - half, c.at[0] + half, c.at[1] + half];
   }
 
+  function kindOfBlock(block) {
+    if (String(block || "").startsWith("AA_WALL_")) return "wall";
+    if (String(block || "").startsWith("AA_OPENING_")) return "opening";
+    if (String(block || "").startsWith("AA_ROOM_")) return "room";
+    return "other";
+  }
+
   function renderOverlay() {
     const layer = $("#hlLayer");
     if (!layer) return;
-    const sel = S.selected;
     const img = $("#preview");
+    const sel = S.selected;
+    const p = S.data && S.data.proposal;
     const view = overlayView();
-    if (!sel || !view || !view.window || !S.data || img.hidden) {
+    if (!view || !view.window || !S.data || img.hidden) {
       layer.hidden = true;
       layer.innerHTML = "";
       return;
     }
-    let box = worldBox(sel.kind, sel.id, overlaySource());
-    if (!box) box = worldBox(sel.kind, sel.id, S.data);
-    if (!box) {
+
+    const items = [];
+    const pushBox = (kind, id, phase, cls, label) => {
+      if (!kind || !id) return;
+      const src = phase === "before" ? S.data : overlaySource();
+      const box = worldBox(kind, id, src);
+      if (!box) return;
+      items.push({ kind, id, phase, cls, label, box, selected: false });
+    };
+
+    if (p && p.id && S.showAllChanges) {
+      for (const c of (p.changes || [])) {
+        const kind = kindOfBlock(c.block);
+        if (kind === "other") continue;
+        if (c.change === "added") {
+          pushBox(kind, c.id, "after", "added", `新增 ${c.id}`);
+        } else if (c.change === "removed") {
+          pushBox(kind, c.id, "before", "removed", `删除 ${c.id}`);
+        } else {
+          pushBox(kind, c.id, "before", "before", `改前 ${c.id}`);
+          pushBox(kind, c.id, "after", "after", `改后 ${c.id}`);
+        }
+      }
+    }
+
+    if (sel) {
+      const hits = items.filter((it) => it.kind === sel.kind && it.id === sel.id);
+      if (hits.length) {
+        for (const it of hits) it.selected = true;
+      } else {
+        pushBox(sel.kind, sel.id, "after", "after", sel.id);
+        if (items.length) items[items.length - 1].selected = true;
+      }
+    }
+
+    if (!items.length) {
       layer.hidden = true;
       layer.innerHTML = "";
       return;
     }
+
     const [x0, y0, x1, y1] = view.window;
-    const left = Math.max(0, Math.min(100, (box[0] - x0) / (x1 - x0) * 100));
-    const right = Math.max(0, Math.min(100, (box[2] - x0) / (x1 - x0) * 100));
-    const top = Math.max(0, Math.min(100, (y1 - box[3]) / (y1 - y0) * 100));
-    const bottom = Math.max(0, Math.min(100, (y1 - box[1]) / (y1 - y0) * 100));
-    const w = Math.max(0.8, right - left);
-    const h = Math.max(0.8, bottom - top);
-    layer.innerHTML = `<div class="hl-box" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%">
-      <span class="hl-tag">${esc(sel.id)} · ${esc(KIND_LABEL[sel.kind] || sel.kind)}</span>
-    </div>`;
+    items.sort((a, b) => Number(a.selected) - Number(b.selected));
+    layer.innerHTML = items.map((it) => {
+      const [bx0, by0, bx1, by1] = it.box;
+      const left = Math.max(0, Math.min(100, (bx0 - x0) / (x1 - x0) * 100));
+      const right = Math.max(0, Math.min(100, (bx1 - x0) / (x1 - x0) * 100));
+      const top = Math.max(0, Math.min(100, (y1 - by1) / (y1 - y0) * 100));
+      const bottom = Math.max(0, Math.min(100, (y1 - by0) / (y1 - y0) * 100));
+      const w = Math.max(0.8, right - left);
+      const h = Math.max(0.8, bottom - top);
+      const cls = `hl-box ${it.cls}${it.selected ? " selected" : ""}`;
+      const tagCls = `hl-tag ${it.cls}${it.selected ? " selected" : ""}`;
+      const tag = it.selected ? `${it.label} · ${KIND_LABEL[it.kind] || it.kind}` : it.label;
+      return `<div class="${cls}" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%">
+        <span class="${tagCls}">${esc(tag)}</span>
+      </div>`;
+    }).join("");
     layer.hidden = false;
   }
 
@@ -662,13 +712,26 @@
             <div class="proposal-title">${esc(p.title || "AI 变更集")}</div>
             <div class="proposal-kicker">${esc(p.id)}${created ? ` · ${esc(created)}` : ""}</div>
           </div>
-          <span class="proposal-badge ${stale ? "stale" : ""}">${stale ? "已失效" : "待确认"}</span>
+          <div class="proposal-head-right">
+            <label class="proposal-toggle" title="在预览图上同时框出这次变更的全部构件">
+              <input id="showAllChanges" type="checkbox" ${S.showAllChanges ? "checked" : ""}>
+              <span>全部改动</span>
+            </label>
+            <span class="proposal-badge ${stale ? "stale" : ""}">${stale ? "已失效" : "待确认"}</span>
+          </div>
         </div>
         ${stale ? `<div class="proposal-alert stale">原图在预演之后变过，这份变更集不能直接写入。让 AI 按当前图纸重新提交。</div>` : ""}
         <div class="proposal-sum">
           <div><b>${esc(sum.changed || 0)}</b>修改</div>
           <div><b>${esc(sum.added || 0)}</b>新增</div>
           <div><b>${esc(sum.removed || 0)}</b>删除</div>
+        </div>
+        <div class="overlay-legend">
+          <span class="before">改前</span>
+          <span class="after">改后</span>
+          <span class="added">新增</span>
+          <span class="removed">删除</span>
+          <em>预览图上同时标出</em>
         </div>
         <div class="proposal-kicker">${p.ops_count || 0} 项 AI 操作 · 共 ${changed} 个构件变化</div>
         ${newIssues ? `<div class="proposal-alert new">新增问题 ${p.new_issues.length} 条${newIssues}</div>` : ""}
@@ -682,8 +745,13 @@
       </div>`;
     const accept = $("#acceptProposal");
     const discard = $("#discardProposal");
+    const allChanges = $("#showAllChanges");
     if (accept) accept.addEventListener("click", commitProposal);
     if (discard) discard.addEventListener("click", discardProposal);
+    if (allChanges) allChanges.addEventListener("change", () => {
+      S.showAllChanges = allChanges.checked;
+      renderOverlay();
+    });
     for (const row of box.querySelectorAll(".diff-row")) {
       row.addEventListener("click", () => focusComponent(row.dataset.kind, row.dataset.id));
     }

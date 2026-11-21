@@ -117,6 +117,7 @@ def main() -> int:
         assert prop["summary"]["changed"] >= 2, prop["summary"]
         assert len(prop["view"]["window"]) == 4 and prop["view"]["aspect"] == panel_server.PREVIEW_ASPECT, prop["view"]
         assert prop["geometry"]["walls"] and prop["geometry"]["rooms"], prop["geometry"].keys()
+        assert prop["geometry"]["openings"], prop["geometry"].keys()
         assert any(c["id"] == wall["id"] and any(f["name"] == "thick" for f in c["fields"])
                    for c in prop["changes"]), prop["changes"]
         status, png2 = request(base, "/api/proposal/preview?path=" + q, raw=True)
