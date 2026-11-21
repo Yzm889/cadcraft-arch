@@ -609,10 +609,14 @@ def main(argv: list[str] | None = None) -> int:
     p_fd.add_argument("--at", default=None, help="墙中心线与室外地面交点 x,y")
     p_fd.add_argument("--wall", type=float, default=240.0, help="墙厚 mm")
     p_fd.add_argument("--steps", type=int, default=2, help="放脚级数")
-    p_fd.add_argument("--step-h", type=float, default=120.0, help="台阶高 mm（砖放脚 120）")
-    p_fd.add_argument("--step-w", type=float, default=60.0, help="台阶宽 mm（砖放脚 60）")
-    p_fd.add_argument("--depth", type=float, default=1500.0, help="埋深 mm")
+    p_fd.add_argument("--step-h", type=float, default=130.0, help="台阶高 mm（砖放脚 130）")
+    p_fd.add_argument("--step-w", type=float, default=65.0, help="台阶宽 mm（砖放脚 65）")
+    p_fd.add_argument("--depth", type=float, default=2000.0, help="埋深 mm")
     p_fd.add_argument("--base", type=float, default=300.0, help="垫层厚 mm")
+    p_fd.add_argument("--cover", type=float, default=50.0, help="圈梁上砖覆盖 mm")
+    p_fd.add_argument("--beam", type=float, default=250.0, help="地圈梁高 mm（0 为不画）")
+    p_fd.add_argument("--cushion-ext", type=float, default=50.0, help="垫层每边外伸 mm")
+    p_fd.add_argument("--no-rebar", action="store_true", help="不画配筋示意")
     p_fd.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
     p_fd.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
     p_fd.add_argument("--no-dims", action="store_true", help="不注尺寸")
@@ -1001,6 +1005,8 @@ def main(argv: list[str] | None = None) -> int:
                 emit({"ok": True, **create_foundation(
                     session, args.id, _pt(args.at), args.wall, args.steps,
                     args.step_h, args.step_w, args.depth, args.base,
+                    args.cover, args.beam, args.cushion_ext,
+                    not args.no_rebar,
                     args.ratio, args.factor, not args.no_dims)})
         elif args.cmd == "text":
             if args.show:

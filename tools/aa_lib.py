@@ -7330,10 +7330,14 @@ def create_foundation(
     at: tuple[float, float],
     wall: float = 240.0,
     steps: int = 2,
-    step_h: float = 120.0,
-    step_w: float = 60.0,
-    depth: float = 1500.0,
+    step_h: float = 130.0,
+    step_w: float = 65.0,
+    depth: float = 2000.0,
     base: float = 300.0,
+    cover: float = 50.0,
+    beam: float = 250.0,
+    cushion_ext: float = 50.0,
+    rebar: bool = True,
     ratio: float = 20.0,
     factor: float | None = None,
     dims: bool = True,
@@ -7343,7 +7347,8 @@ def create_foundation(
     """基础大放脚（1:20）：以墙中心线与**室外地面**交点为 `at`，向下画基础剖面。
 
     墙身（wall 厚）从地面下到放脚顶，两侧对称各 `steps` 级台阶（每级高 step_h、宽 step_w），
-    底部垫层厚 base；注埋深与基底宽两道尺寸。地面线向两侧出头。
+    底部垫层厚 base（每边外伸 cushion_ext）；墙顶 cover 砖后设 beam 高地圈梁（可带 6Φ12/Φ6@250 配筋示意），
+    beam 底设防潮层；注埋深与基底宽两道尺寸。地面线向两侧出头。
     落块 `AA_FD_<id>`，`AA_TYPE=FOUNDATION`，`read_foundation` 回读。
     """
     block = "AA_FD_" + item_id
@@ -7355,12 +7360,16 @@ def create_foundation(
     sw = float(step_w)
     D = float(depth)
     b = float(base)
+    cv = float(cover)
+    bm = float(beam)
+    ext = float(cushion_ext)
     if w <= 0 or n < 1:
         raise CadError("墙厚必须 >0、放脚级数必须 ≥1")
-    if sh <= 0 or sw <= 0 or b <= 0:
-        raise CadError("台阶高/台阶宽/垫层厚必须 >0")
-    if D <= n * sh + b:
-        raise CadError("埋深必须大于 放脚高 + 垫层厚（现在 %g ≤ %g）" % (D, n * sh + b))
+    if sh <= 0 or sw <= 0 or b <= 0 or cv < 0 or bm < 0 or ext < 0:
+        raise CadError("台阶高/台阶宽/垫层厚必须 >0，覆盖/圈梁/垫层外伸不得 <0")
+    if D <= n * sh + b + bm + cv:
+        raise CadError("埋深必须大于 放脚高 + 垫层 + 圈梁 + 覆盖（现在 %g ≤ %g）"
+                       % (D, n * sh + b + bm + cv))
     ratio = float(ratio)
     if ratio <= 0:
         raise CadError("详图比例必须大于 0")
@@ -7373,6 +7382,7 @@ def create_foundation(
     WF, SHF, SWF, DF, BF = w * f, sh * f, sw * f, D * f, b * f
     half = WF / 2.0
     base_half = half + n * SWF
+    cush_half = base_half + ext * f
 
     lay_wall = LAYERS["wall"]
     lay_floor = LAYERS["step"]
@@ -7391,13 +7401,15 @@ def create_foundation(
                     % (x, y, str(s).replace('"', "'"), lay_name, hgt, ang))
 
     # 地面线
-    seg(-base_half - ann(10.0), 0.0, base_half + ann(10.0), 0.0, lay_floor)
+    seg(-cush_half - ann(10.0), 0.0, cush_half + ann(10.0), 0.0, lay_floor)
 
     y_step0 = -DF + BF            # 第一级台阶顶（垫层顶）
     y_top = y_step0 + n * SHF     # 放脚顶（墙身下口）
+    y_beam_top = -cv * f          # 地圈梁顶（砖覆盖 60）
+    y_beam_bot = -(cv + bm) * f   # 地圈梁底（防潮层）
 
-    # 左侧轮廓：墙脚 -> 逐级外放 -> 垫层底
-    left = [(-half, 0.0), (-half, y_top)]
+    # 左侧轮廓：墙脚 -> 圈梁 -> 墙身 -> 逐级外放 -> 垫层
+    left = [(-half, 0.0), (-half, y_beam_top), (-half, y_beam_bot), (-half, y_top)]
     for k in range(n):
         y = y_top - k * SHF
         x = -(half + (k + 1) * SWF)
@@ -7405,10 +7417,15 @@ def create_foundation(
         left.append((x, y - SHF))
     for i in range(len(left) - 1):
         seg(left[i][0], left[i][1], left[i + 1][0], left[i + 1][1], lay_wall)
+    # 圈梁上下边线
+    for yy in (y_beam_top, y_beam_bot):
+        seg(-half, yy, half, yy, lay_wall)
     tail_y = left[-1][1]
-    seg(left[-1][0], tail_y, left[-1][0], -DF, lay_wall)      # 垫层左外沿
-    seg(left[-1][0], -DF, -left[-1][0], -DF, lay_wall)        # 垫层底
-    seg(-left[-1][0], -DF, -left[-1][0], tail_y, lay_wall)    # 垫层右外沿
+    seg(left[-1][0], tail_y, -cush_half, y_step0, lay_wall)   # 垫层顶左外伸
+    seg(-cush_half, y_step0, -cush_half, -DF, lay_wall)       # 垫层左外沿
+    seg(-cush_half, -DF, cush_half, -DF, lay_wall)            # 垫层底
+    seg(cush_half, -DF, cush_half, y_step0, lay_wall)         # 垫层右外沿
+    seg(cush_half, y_step0, -left[-1][0], y_step0, lay_wall)  # 垫层顶右外伸
     right = [(-x, y) for (x, y) in reversed(left)][:-1]
     for i in range(len(right) - 1):
         seg(right[i][0], right[i][1], right[i + 1][0], right[i + 1][1], lay_wall)
@@ -7417,25 +7434,55 @@ def create_foundation(
     if dims:
         th = ann(2.5)
         tick = ann(2.0)
-        # 埋深：左侧
-        dx = -base_half - ann(10.0)
+        # 埋深：右侧（左侧留给材料引注）
+        dx = cush_half + ann(28.0)
         for yy in (0.0, -DF):
-            seg(-base_half, yy, dx - ann(2.0), yy, lay_dim)
+            seg(cush_half, yy, dx + ann(2.0), yy, lay_dim)
         seg(dx, 0.0, dx, -DF, lay_dim)
         for yy in (0.0, -DF):
             seg(dx - tick, yy + tick, dx + tick, yy - tick, lay_dim)
         label = "%g" % D
-        txt(dx - ann(1.2) - th, -DF / 2.0 - th / 2.0, label, th, 1.5708)
+        txt(dx + ann(1.2), -DF / 2.0 - th / 2.0, label, th, 1.5708)
         ndim += 1
-        # 基底宽：下方
+        # 垫层总宽：下方
         dy = -DF - ann(10.0)
-        for xx in (-base_half, base_half):
+        for xx in (-cush_half, cush_half):
             seg(xx, -DF, xx, dy - ann(2.0), lay_dim)
-        seg(-base_half, dy, base_half, dy, lay_dim)
-        for xx in (-base_half, base_half):
+        seg(-cush_half, dy, cush_half, dy, lay_dim)
+        for xx in (-cush_half, cush_half):
             seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
-        label = "%g" % (w + 2.0 * n * sw)
+        label = "%g" % (w + 2.0 * n * sw + 2.0 * ext)
         txt(-_text_w(label, th) / 2.0, dy - ann(4.0), label, th)
+        ndim += 1
+        # 垫层外伸分道 50 / 基底 500 / 50
+        dy2 = -DF - ann(7.0)
+        for xx in (-cush_half, -base_half, base_half, cush_half):
+            seg(xx, -DF, xx, dy2 - ann(2.0), lay_dim)
+        for a, b2, lab in ((-cush_half, -base_half, ext),
+                           (-base_half, base_half, w + 2.0 * n * sw),
+                           (base_half, cush_half, ext)):
+            seg(a, dy2, b2, dy2, lay_dim)
+            t2 = ann(2.0)
+            txt((a + b2) / 2.0 - _text_w("%g" % lab, t2) / 2.0,
+                dy2 - ann(3.0), "%g" % lab, t2)
+        ndim += 1
+        # 竖向分道：覆盖 / 圈梁 / 墙身 / 每级放脚 / 垫层
+        xv = half + ann(9.0)
+        ys = [0.0, y_beam_top, y_beam_bot, y_top]
+        for k in range(1, n + 1):
+            ys.append(y_top - k * SHF)
+        ys.append(-DF)
+        labs = ["%g" % cv, "%g" % bm,
+                "%g" % (D - b - n * sh - bm - cv)]
+        labs += ["%g" % sh] * n + ["%g" % b]
+        for i in range(len(ys) - 1):
+            y1, y2 = ys[i], ys[i + 1]
+            seg(xv, y1, xv, y2, lay_dim)
+            for yy in (y1, y2):
+                seg(xv - tick, yy + tick, xv + tick, yy - tick, lay_dim)
+            t2 = ann(1.8)
+            txt(xv + ann(1.2), (y1 + y2) / 2.0 - _text_w(labs[i], t2) / 2.0,
+                labs[i], t2, 1.5708)
         ndim += 1
 
     if not title:
@@ -7448,40 +7495,67 @@ def create_foundation(
                 % (-tw / 2.0, ty, title.replace('"', "'"), ratio))
 
     # ---- 材料填充（HATCH entmake 不可用，按多边形手绘剖面线/点）----
-    # 墙身 + 放脚轮廓（到垫层顶），一次打 45° 斜线
+    # 砖砌体：墙身 + 放脚 45° 斜线；地圈梁范围挖空，改点状混凝土
     poly = left + right + [(half, 0.0)]
-    for (x1, y1), (x2, y2) in _hatch_polygon(poly, ann(1.2), 45.0):
+    for (x1, y1), (x2, y2) in _hatch_polygon(poly, ann(1.1), 45.0):
+        ym = (y1 + y2) / 2.0
+        if y_beam_bot - ann(0.2) <= ym <= y_beam_top + ann(0.2):
+            continue
         seg(x1, y1, x2, y2, lay_wall)
-    # 垫层：点状骨料（C10 素混凝土习惯）
-    yy = -DF + ann(4.0)
-    stagger = 0
-    while yy < -DF + BF - ann(1.0):
-        xx = -base_half + ann(4.0) + (ann(3.0) if stagger % 2 else 0.0)
-        while xx < base_half - ann(4.0):
-            body.append('(aa:mkcircle (list %.3f %.3f) %.3f "%s")'
-                        % (xx, yy, ann(0.45), lay_wall))
-            xx += ann(6.0)
-        yy += ann(6.0)
-        stagger += 1
 
-    # 标高：室内 ±0.000 与垫层底
-    lx = base_half + ann(6.0)
+    def dots(x0: float, x1: float, y0: float, y1: float,
+             step: float, r: float) -> None:
+        yy2 = y0 + step * 0.5
+        row = 0
+        while yy2 < y1 - step * 0.2:
+            xx2 = x0 + step * 0.5 + (step * 0.5 if row % 2 else 0.0)
+            while xx2 < x1 - step * 0.2:
+                body.append('(aa:mkcircle (list %.3f %.3f) %.3f "%s")'
+                            % (xx2, yy2, r, lay_wall))
+                xx2 += step
+            yy2 += step
+            row += 1
+
+    # 圈梁：点状混凝土；垫层：点状骨料（C10）
+    dots(-half + ann(1.0), half - ann(1.0), y_beam_bot + ann(1.0),
+         y_beam_top - ann(1.0), ann(3.0), ann(0.32))
+    dots(-cush_half + ann(4.0), cush_half - ann(4.0), -DF + ann(4.0),
+         y_step0 - ann(1.0), ann(4.0), ann(0.4))
+
+    # 地圈梁配筋示意：6Φ12（每侧 3 根）+ Φ6@250 箍筋
+    if rebar and bm > 0:
+        xb = half - ann(4.0)
+        for xr in (xb, xb - ann(5.0), xb - ann(10.0)):
+            for sgn in (-1.0, 1.0):
+                seg(sgn * xr, y_beam_bot + ann(3.0),
+                    sgn * xr, y_beam_top - ann(3.0), lay_dim)
+        for k in (1, 2):
+            yy2 = y_beam_top - beam * f * k / 3.0
+            seg(-xb + ann(2.0), yy2, xb - ann(2.0), yy2, lay_dim)
+
+    # 标高：±0.000、圈梁底 -0.300、垫层底
+    lx = cush_half + ann(8.0)
     body.append('(aa:elev %.3f 0.0 "±0.000" %.3f %.3f)'
                 % (lx, ann(3.0), ann(2.5)))
+    body.append('(aa:elev %.3f %.3f "-0.300" %.3f %.3f)'
+                % (lx, y_beam_bot, ann(3.0), ann(2.5)))
     body.append('(aa:elev %.3f %.3f "-%.3f" %.3f %.3f)'
                 % (lx, -DF, D / 1000.0, ann(3.0), ann(2.5)))
 
-    # 材料引注：砖砌体 / 混凝土垫层
+    # 材料/配筋引注
     def callout(sx2: float, sy2: float, tx2: float, ty2: float, s: str) -> None:
         seg(sx2, sy2, tx2, ty2, lay_dim)
         shelf = _text_w(s, ann(2.2)) + ann(2.0)
-        seg(tx2, ty2, tx2 + shelf, ty2, lay_dim)
-        txt(tx2 + ann(0.6), ty2 + ann(0.8), s, ann(2.2))
+        seg(tx2 - shelf, ty2, tx2, ty2, lay_dim)
+        txt(tx2 - shelf + ann(0.6), ty2 + ann(0.8), s, ann(2.2))
 
-    tx = base_half + ann(6.0)
-    callout(half, y_top / 2.0, tx, y_top / 2.0, "MU10 砖砌体")
-    callout(base_half * 0.75, -DF + BF / 2.0, tx,
-            -DF + BF + ann(3.0), "C10 混凝土垫层")
+    lx0 = -cush_half - ann(12.0)
+    callout(-half * 0.8, y_beam_bot + ann(2.0), lx0,
+            y_beam_bot - ann(10.0), "地圈梁 250：6Φ12 Φ6@250")
+    callout(-half, (y_beam_bot + y_top) / 2.0, lx0,
+            (y_beam_bot + y_top) / 2.0, "MU10 砖砌体")
+    callout(-cush_half, -DF + BF / 2.0, lx0,
+            -DF + BF / 2.0, "3:7 灰土 / C10 垫层")
 
     before = session.snapshot()
     session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
@@ -7490,8 +7564,8 @@ def create_foundation(
     if not handles:
         raise CadError("基础没有生成任何图元")
 
-    bbox = [-base_half - ann(30.0), -DF - ann(30.0),
-            base_half + ann(40.0), ann(10.0)]
+    bbox = [-cush_half - ann(65.0), -DF - ann(30.0),
+            cush_half + ann(50.0), ann(10.0)]
     att_defs = [
         ("AA_TYPE", "component type", "FOUNDATION"),
         ("AA_ID", "component id", item_id),
@@ -7502,6 +7576,9 @@ def create_foundation(
         ("AA_DEPTH", "embedment depth", "%.4f" % D),
         ("AA_BASE", "cushion thickness", "%.4f" % b),
         ("AA_BASEW", "base width", "%.4f" % (w + 2.0 * n * sw)),
+        ("AA_CUSHW", "cushion width", "%.4f" % (w + 2.0 * n * sw + 2.0 * ext)),
+        ("AA_COVER", "brick cover", "%.4f" % cv),
+        ("AA_BEAM", "grade beam height", "%.4f" % bm),
         ("AA_FACTOR", "enlarge factor", "%.4f" % f),
         ("AA_RATIO", "detail ratio", "1:%g" % ratio),
         ("AA_TITLE", "detail title", str(title)),
@@ -7516,7 +7593,9 @@ def create_foundation(
     session.expect_attributes(block, {"AA_TYPE": "FOUNDATION", "AA_ID": item_id})
     return {"block": block, "handle": handle, "id": item_id, "wall": w,
             "steps": n, "step_h": sh, "step_w": sw, "depth": D, "base": b,
-            "base_width": w + 2.0 * n * sw, "factor": f,
+            "base_width": w + 2.0 * n * sw,
+            "cushion_width": w + 2.0 * n * sw + 2.0 * ext,
+            "cover": cv, "beam": bm, "factor": f,
             "ratio": "1:%g" % ratio, "title": title, "dims": ndim, "bbox": bbox,
             "geom_handles": handles}
 
@@ -7534,6 +7613,9 @@ def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
             "depth": float(attrs.get("AA_DEPTH") or 0),
             "base": float(attrs.get("AA_BASE") or 0),
             "base_width": float(attrs.get("AA_BASEW") or 0),
+            "cushion_width": float(attrs.get("AA_CUSHW") or 0),
+            "cover": float(attrs.get("AA_COVER") or 0),
+            "beam": float(attrs.get("AA_BEAM") or 0),
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", ""),
             "title": attrs.get("AA_TITLE", "")}
