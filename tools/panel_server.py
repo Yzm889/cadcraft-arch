@@ -57,7 +57,9 @@ PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
 PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.49"
+VERSION = "1.0.50"
+RECENT_FILE = CACHE_DIR / "recent.json"
+MAX_RECENT = 8
 
 
 def _attrs(geometry: dict[str, Any]) -> dict[str, str]:
@@ -320,6 +322,92 @@ def _resolve_dxf(raw: str, root: Path, default: Path) -> Path:
     return p
 
 
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _all_recent() -> list[Path]:
+    try:
+        rows = json.loads(RECENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for raw in rows if isinstance(rows, list) else []:
+        try:
+            p = Path(str(raw)).resolve()
+        except (OSError, ValueError):
+            continue
+        if p.suffix.lower() == ".dxf":
+            out.append(p)
+    return out
+
+
+def _recent_paths(root: Path) -> list[Path]:
+    return [p for p in _all_recent()
+            if _inside(p, root) and p.is_file()][:MAX_RECENT]
+
+
+def _remember_recent(path: Path) -> None:
+    p = path.resolve()
+    keep = [p] + [x for x in _all_recent() if x != p and x.is_file()]
+    keep = keep[:MAX_RECENT]
+    CACHE_DIR.mkdir(exist_ok=True)
+    tmp = RECENT_FILE.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps([str(x) for x in keep], ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(RECENT_FILE)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+
+
+def _recent_rows(root: Path) -> list[dict[str, Any]]:
+    rows = []
+    for p in _recent_paths(root):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        rel = str(p.relative_to(root)) if _inside(p, root) else str(p)
+        rows.append({"name": p.name, "path": str(p), "rel": rel,
+                     "mtime": st.st_mtime, "bytes": st.st_size})
+    return rows
+
+
+def _file_rows(root: Path, raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    p = Path(text) if text else root
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    if not _inside(p, root):
+        raise CadError("拒绝访问：目录必须在 %s 之内（需要外部目录请用 --root 指定）" % root)
+    if not p.is_dir():
+        raise CadError("不是文件夹：%s" % p)
+    dirs, files = [], []
+    try:
+        for f in p.iterdir():
+            if f.name.startswith("."):
+                continue
+            try:
+                if f.is_dir():
+                    dirs.append({"name": f.name, "path": str(f)})
+                elif f.suffix.lower() == ".dxf" and f.is_file():
+                    st = f.stat()
+                    files.append({"name": f.name, "path": str(f),
+                                  "rel": str(f.relative_to(root)),
+                                  "mtime": st.st_mtime, "bytes": st.st_size})
+            except OSError:
+                continue
+    except OSError as exc:
+        raise CadError("读不了文件夹：%s（%s）" % (p, exc))
+    dirs.sort(key=lambda x: x["name"].casefold())
+    files.sort(key=lambda x: x["name"].casefold())
+    parent = str(p.parent) if p != root else ""
+    return {"ok": True, "root": str(root), "dir": str(p), "parent": parent,
+            "dirs": dirs[:80], "files": files[:160]}
+
+
 def _snapshots(path: Path) -> list[dict[str, Any]]:
     d = path.parent / ".aa_snap"
     if not d.exists():
@@ -518,7 +606,14 @@ class PanelHandler(BaseHTTPRequestHandler):
             if u.path == "/api/state":
                 path = self._path(q)
                 with LOCK:
-                    return self._json(state_payload(path))
+                    data = state_payload(path)
+                    _remember_recent(path)
+                    data["recent"] = _recent_rows(self.server.root)  # type: ignore[attr-defined]
+                    return self._json(data)
+            if u.path == "/api/files":
+                raw = (q.get("dir") or [""])[0]
+                with LOCK:
+                    return self._json(_file_rows(self.server.root, unquote(raw)))  # type: ignore[attr-defined]
             if u.path == "/api/preview":
                 path = self._path(q)
                 with LOCK:
@@ -600,7 +695,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         default = self.server.default_dxf  # type: ignore[attr-defined]
         rel = default.relative_to(root) if root in default.parents else default
         return {"ok": True, "root": str(root), "default": str(rel),
-                "default_abs": str(default), "version": VERSION}
+                "default_abs": str(default), "version": VERSION,
+                "recent": _recent_rows(root)}
 
     def _path(self, q: dict[str, list[str]]) -> Path:
         raw = (q.get("path") or [""])[0]

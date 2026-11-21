@@ -22,6 +22,8 @@
     showOther: false,
     proposalId: "",
     showAllChanges: true,
+    filesDir: "",
+    recent: [],
   };
 
   const esc = (v) => String(v == null ? "" : v)
@@ -82,6 +84,7 @@
     const dot = $("#liveDot");
     dot.className = `dot ${on ? "busy" : (S.data ? "on" : "")}`;
     $("#openBtn").disabled = on;
+    $("#browseBtn").disabled = on;
     $("#refreshBtn").disabled = on;
     $("#runAuditBtn").disabled = on;
     $("#runReconcileBtn").disabled = on;
@@ -122,6 +125,7 @@
   async function loadConfig() {
     try {
       S.config = await apiGet("/api/config");
+      S.recent = S.config.recent || [];
       $("#version").textContent = `v${S.config.version}`;
       $("#pathInput").value = S.config.default;
       if (S.config.default) await openDrawing(false);
@@ -130,8 +134,58 @@
     }
   }
 
-  async function openDrawing(showLog = true) {
+  function renderRecent(rows = S.recent) {
+    const list = $("#recentList");
+    if (!rows || !rows.length) {
+      list.innerHTML = '<div class="placeholder">还没有最近记录</div>';
+      return;
+    }
+    list.innerHTML = rows.map((r) => `
+      <button class="recent-item" data-path="${esc(r.path)}" title="${esc(r.rel || r.path)}">
+        <strong>${esc(r.name)}</strong>
+        <span>${esc(r.rel || r.path)}</span>
+      </button>`).join("");
+  }
+
+  async function loadFiles(dir = "") {
+    const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    const list = $("#fileList");
+    list.innerHTML = '<div class="placeholder">正在读取…</div>';
+    try {
+      const r = await apiGet(`/api/files${q}`);
+      S.filesDir = r.dir;
+      $("#pickerRoot").textContent = `根目录：${r.root}`;
+      $("#pickerCwd").textContent = r.dir;
+      $("#pickerUp").disabled = !r.parent;
+      $("#pickerUp").dataset.dir = r.parent || "";
+      const rows = [
+        ...r.dirs.map((d) => `<button class="file-item dir" data-dir="${esc(d.path)}">
+          <span class="ico">▸</span><span class="nm">${esc(d.name)}</span></button>`),
+        ...r.files.map((f) => `<button class="file-item" data-path="${esc(f.path)}">
+          <span class="ico">DXF</span><span class="nm">${esc(f.name)}</span>
+          <span class="meta">${fmt(f.bytes / 1024)} KB</span></button>`),
+      ];
+      list.innerHTML = rows.length ? rows.join("") :
+        '<div class="placeholder">这个文件夹里没有子文件夹或 .dxf 图纸</div>';
+    } catch (e) {
+      list.innerHTML = `<div class="placeholder">${esc(e.message)}</div>`;
+    }
+  }
+
+  function openPicker() {
     if (S.busy) return;
+    renderRecent();
+    $("#pickerModal").hidden = false;
+    loadFiles(S.filesDir || (S.config && S.config.root) || "");
+  }
+
+  function closePicker() {
+    $("#pickerModal").hidden = true;
+  }
+
+  async function openDrawing(showLog = true, requested = "") {
+    if (S.busy) return;
+    if (requested) $("#pathInput").value = requested;
     const raw = $("#pathInput").value.trim();
     if (!raw) { toast("请填写图纸路径", "err"); return; }
     if (showLog) log(`打开图纸：${raw}`);
@@ -158,8 +212,11 @@
       S.proposalId = pid || "";
       S.data = data;
       S.path = data.drawing.path;
+      S.filesDir = String(data.drawing.path || "").replace(/[\\/][^\\/]+$/, "");
+      S.recent = data.recent || S.recent;
       $("#pathInput").value = data.drawing.path;
       renderAll();
+      if (!$("#pickerModal").hidden) closePicker();
       if (newProposal) setTab("proposal");
       await loadPreview();
       log(`已读取 ${data.drawing.name}：${data.walls.length} 墙 / ${data.openings.length} 门窗 / ${data.rooms.length} 房间`);
@@ -947,6 +1004,29 @@
   // ---------- 绑定 ----------
   function bind() {
     $("#openBtn").addEventListener("click", () => openDrawing(true));
+    $("#browseBtn").addEventListener("click", openPicker);
+    $("#pickerClose").addEventListener("click", closePicker);
+    $("#pickerUp").addEventListener("click", () => loadFiles($("#pickerUp").dataset.dir || ""));
+    $("#pickerOpenPath").addEventListener("click", () => {
+      const p = $("#pickerPath").value.trim();
+      if (p) openDrawing(true, p);
+    });
+    $("#pickerPath").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") $("#pickerOpenPath").click();
+    });
+    $("#recentList").addEventListener("click", (e) => {
+      const b = e.target.closest(".recent-item");
+      if (b) openDrawing(true, b.dataset.path || "");
+    });
+    $("#fileList").addEventListener("click", (e) => {
+      const b = e.target.closest(".file-item");
+      if (!b) return;
+      if (b.dataset.dir) loadFiles(b.dataset.dir);
+      else if (b.dataset.path) openDrawing(true, b.dataset.path);
+    });
+    $("#pickerModal").addEventListener("click", (e) => {
+      if (e.target === $("#pickerModal")) closePicker();
+    });
     $("#pathInput").addEventListener("keydown", (e) => { if (e.key === "Enter") openDrawing(true); });
     $("#refreshBtn").addEventListener("click", () => refreshAll());
     $("#runReconcileBtn").addEventListener("click", () => runAction("reconcile", "", "正在做一致检查…"));
@@ -975,6 +1055,10 @@
     $("#clearLog").addEventListener("click", () => { $("#logList").innerHTML = ""; });
     for (const b of $$(".tab")) b.addEventListener("click", () => setTab(b.dataset.tab));
     window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$("#pickerModal").hidden) {
+        closePicker();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
         e.preventDefault();
         refreshAll();

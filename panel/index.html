@@ -19,6 +19,7 @@
     <div class="pathbox">
       <label for="pathInput">图纸</label>
       <input id="pathInput" spellcheck="false" placeholder="samples/demo_building.dxf">
+      <button id="browseBtn" class="btn" title="浏览图纸文件">浏览</button>
       <button id="openBtn" class="btn primary">打开</button>
     </div>
     <div class="topmeta">
@@ -143,6 +144,36 @@
     </div>
     <div class="log-list" id="logList"></div>
   </footer>
+
+  <div class="modal" id="pickerModal" hidden>
+    <div class="modal-card picker-card">
+      <div class="modal-head">
+        <div>
+          <h2>打开图纸</h2>
+          <span class="muted" id="pickerRoot">—</span>
+        </div>
+        <button id="pickerClose" class="btn icon" title="关闭">×</button>
+      </div>
+      <div class="picker-body">
+        <section class="recent-box">
+          <label>最近图纸</label>
+          <div class="recent-list" id="recentList"><div class="placeholder">还没有最近记录</div></div>
+        </section>
+        <section class="file-box">
+          <div class="file-bar">
+            <label class="muted">当前文件夹</label>
+            <button id="pickerUp" class="btn">上一级</button>
+            <span class="file-cwd" id="pickerCwd">—</span>
+          </div>
+          <div class="file-list" id="fileList"><div class="placeholder">正在读取…</div></div>
+          <div class="picker-bottom">
+            <input id="pickerPath" spellcheck="false" placeholder="也可直接填绝对路径或相对仓库根路径">
+            <button id="pickerOpenPath" class="btn primary">打开这张图</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
 </div>

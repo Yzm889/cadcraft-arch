@@ -59,6 +59,8 @@ def main() -> int:
         # 1) 静态页
         status, html = request(base, "/", raw=True)
         assert status == 200 and b"AI" in html and b"app.js" in html, status
+        status, cfg = request(base, "/api/config")
+        assert cfg["ok"] and cfg["root"] == str(ROOT) and "recent" in cfg, cfg
 
         # 2) 状态：构件 + 一致检查 + 自检 + 全图复核
         q = urllib.parse.quote(str(CASE))
@@ -69,6 +71,10 @@ def main() -> int:
         win = st["view"]["window"]
         assert len(win) == 4 and win[2] > win[0] and win[3] > win[1], st["view"]
         assert st["view"]["aspect"] == panel_server.PREVIEW_ASPECT, st["view"]
+        assert any(r["path"] == str(CASE.resolve()) for r in st["recent"]), st["recent"]
+        status, files = request(base, "/api/files?dir=" + urllib.parse.quote(str(WORK)))
+        assert files["ok"] and any(f["name"] == "case.dxf" for f in files["files"]), files
+        assert files["dir"] == str(WORK.resolve()), files["dir"]
         status, vr = request(base, "/api/action",
                              {"path": str(CASE), "action": "verify"})
         assert vr["ok"] and "issues" in vr and "stats" in vr, vr
