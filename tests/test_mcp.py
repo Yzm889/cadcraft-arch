@@ -209,7 +209,7 @@ def main() -> int:
 
     # 5j) 基础大放脚
     is_err, q = call("aa_foundation", {"path": str(dxf), "id": "FD1", "at": [0, -10000]})
-    assert not is_err and q["steps"] == 2 and q["base_width"] == 1040.0, q
+    assert not is_err and q["steps"] == 2 and q["base_width"] == 480.0, q
     is_err, q = call("aa_foundation", {"path": str(dxf), "id": "FD1", "at": [0, -10000]})
     assert is_err and "已存在" in q["error"], q
 

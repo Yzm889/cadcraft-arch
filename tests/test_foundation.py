@@ -46,17 +46,17 @@ def main() -> int:
     assert fd["factor"] == 5.0 and fd["dims"] == 2, fd
     assert fd["wall"] == 240.0 and fd["steps"] == 2, fd
     assert fd["depth"] == 1500.0 and fd["base"] == 300.0, fd
-    assert fd["base_width"] == 1040.0, fd
+    assert fd["base_width"] == 480.0, fd
     assert fd["ratio"] == "1:20", fd
-    assert fd["bbox"] == [-5600.0, -10500.0, 3800.0, 1000.0], fd["bbox"]
+    assert fd["bbox"] == [-4200.0, -10500.0, 5200.0, 1000.0], fd["bbox"]
 
     fd2 = create_foundation(s, "FD2", (9000.0, 0.0), wall=200.0, steps=1,
                             step_h=300.0, step_w=300.0, depth=1200.0, base=200.0)
     assert fd2["base_width"] == 800.0, fd2
-    assert fd2["bbox"] == [-5000.0, -9000.0, 3200.0, 1000.0], fd2["bbox"]
+    assert fd2["bbox"] == [-5000.0, -9000.0, 6000.0, 1000.0], fd2["bbox"]
 
     back = read_foundation(s, "FD1")
-    assert back["wall"] == 240.0 and back["base_width"] == 1040.0, back
+    assert back["wall"] == 240.0 and back["base_width"] == 480.0, back
     assert back["depth"] == 1500.0 and back["factor"] == 5.0, back
     back2 = read_foundation(s, "FD2")
     assert back2["steps"] == 1 and back2["base"] == 200.0, back2
@@ -77,11 +77,11 @@ def main() -> int:
             raise AssertionError("应拒绝：%s" % want)
 
     q = cli("foundation", str(path), "FD1", "--show=FD1")
-    assert q["ok"] and q["steps"] == 2 and q["base_width"] == 1040.0, q
+    assert q["ok"] and q["steps"] == 2 and q["base_width"] == 480.0, q
     q = cli("foundation", str(path), "FD2", "--show=FD2")
     assert q["ok"] and q["steps"] == 1 and q["base_width"] == 800.0, q
 
-    print("基础大放脚: 240 墙 / 2 级 300×200 / 埋深 1500 / 垫层 300 / 基底 1040")
+    print("基础大放脚: 240 墙 / 2 级 120×60 / 埋深 1500 / 垫层 300 / 基底 480")
     print("PASS test_foundation")
     return 0
 

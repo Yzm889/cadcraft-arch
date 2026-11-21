@@ -4616,6 +4616,44 @@ def _text_w(s: str, h: float) -> float:
     return sum(h * (1.0 if ord(ch) > 127 else 0.55) for ch in s)
 
 
+def _hatch_polygon(points: Sequence[Sequence[float]], spacing: float,
+                   angle: float = 45.0) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """在任意简单多边形内画单向剖面线（HATCH 的替代）：返回裁剪后的线段。
+
+    做法：把多边形旋转到剖面线水平，按 spacing 扫水平线，求与各边交点、
+    排序后奇偶配对，再转回原坐标。适用于墙身/放脚这类凸多边形，
+    凹多边形按奇偶规则也能正确截断。
+    """
+    import math as _m
+    a = _m.radians(angle)
+    ca, sa = _m.cos(a), _m.sin(a)
+    rot = [(p[0] * ca + p[1] * sa, -p[0] * sa + p[1] * ca) for p in points]
+    ys = [p[1] for p in rot]
+    y0, y1 = min(ys), max(ys)
+    segs: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    n = int(_m.floor((y1 - y0) / spacing)) + 1
+    for k in range(n + 1):
+        yy = y0 + k * spacing
+        if yy <= y0 + 1e-9 or yy >= y1 - 1e-9:
+            continue
+        xs = []
+        m = len(rot)
+        for i in range(m):
+            ax, ay = rot[i]
+            bx, by = rot[(i + 1) % m]
+            if (ay <= yy < by) or (by <= yy < ay):
+                t = (yy - ay) / (by - ay)
+                xs.append(ax + t * (bx - ax))
+        xs.sort()
+        for i in range(0, len(xs) - 1, 2):
+            if xs[i + 1] - xs[i] < 1e-6:
+                continue
+            p1 = (xs[i] * ca - yy * sa, xs[i] * sa + yy * ca)
+            p2 = (xs[i + 1] * ca - yy * sa, xs[i + 1] * sa + yy * ca)
+            segs.append((p1, p2))
+    return segs
+
+
 def _insert_tf(pt: tuple[float, float], ref: dict[str, Any]) -> tuple[float, float]:
     """块内局部点 -> 世界坐标（按 INSERT 的插入点/旋转/缩放）。"""
     g = ref["geometry"]
@@ -7292,8 +7330,8 @@ def create_foundation(
     at: tuple[float, float],
     wall: float = 240.0,
     steps: int = 2,
-    step_h: float = 300.0,
-    step_w: float = 200.0,
+    step_h: float = 120.0,
+    step_w: float = 60.0,
     depth: float = 1500.0,
     base: float = 300.0,
     ratio: float = 20.0,
@@ -7409,6 +7447,42 @@ def create_foundation(
     body.append('(aa:title %.3f %.3f "%s" "1:%g")'
                 % (-tw / 2.0, ty, title.replace('"', "'"), ratio))
 
+    # ---- 材料填充（HATCH entmake 不可用，按多边形手绘剖面线/点）----
+    # 墙身 + 放脚轮廓（到垫层顶），一次打 45° 斜线
+    poly = left + right + [(half, 0.0)]
+    for (x1, y1), (x2, y2) in _hatch_polygon(poly, ann(1.2), 45.0):
+        seg(x1, y1, x2, y2, lay_wall)
+    # 垫层：点状骨料（C10 素混凝土习惯）
+    yy = -DF + ann(4.0)
+    stagger = 0
+    while yy < -DF + BF - ann(1.0):
+        xx = -base_half + ann(4.0) + (ann(3.0) if stagger % 2 else 0.0)
+        while xx < base_half - ann(4.0):
+            body.append('(aa:mkcircle (list %.3f %.3f) %.3f "%s")'
+                        % (xx, yy, ann(0.45), lay_wall))
+            xx += ann(6.0)
+        yy += ann(6.0)
+        stagger += 1
+
+    # 标高：室内 ±0.000 与垫层底
+    lx = base_half + ann(6.0)
+    body.append('(aa:elev %.3f 0.0 "±0.000" %.3f %.3f)'
+                % (lx, ann(3.0), ann(2.5)))
+    body.append('(aa:elev %.3f %.3f "-%.3f" %.3f %.3f)'
+                % (lx, -DF, D / 1000.0, ann(3.0), ann(2.5)))
+
+    # 材料引注：砖砌体 / 混凝土垫层
+    def callout(sx2: float, sy2: float, tx2: float, ty2: float, s: str) -> None:
+        seg(sx2, sy2, tx2, ty2, lay_dim)
+        shelf = _text_w(s, ann(2.2)) + ann(2.0)
+        seg(tx2, ty2, tx2 + shelf, ty2, lay_dim)
+        txt(tx2 + ann(0.6), ty2 + ann(0.8), s, ann(2.2))
+
+    tx = base_half + ann(6.0)
+    callout(half, y_top / 2.0, tx, y_top / 2.0, "MU10 砖砌体")
+    callout(base_half * 0.75, -DF + BF / 2.0, tx,
+            -DF + BF + ann(3.0), "C10 混凝土垫层")
+
     before = session.snapshot()
     session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
                  libraries=("aa_core.lisp", "aa_symbol.lisp"))
@@ -7417,7 +7491,7 @@ def create_foundation(
         raise CadError("基础没有生成任何图元")
 
     bbox = [-base_half - ann(30.0), -DF - ann(30.0),
-            base_half + ann(12.0), ann(10.0)]
+            base_half + ann(40.0), ann(10.0)]
     att_defs = [
         ("AA_TYPE", "component type", "FOUNDATION"),
         ("AA_ID", "component id", item_id),
