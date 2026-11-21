@@ -24,6 +24,7 @@
     showAllChanges: true,
     filesDir: "",
     recent: [],
+    openTabs: [],
   };
 
   const esc = (v) => String(v == null ? "" : v)
@@ -85,6 +86,7 @@
     dot.className = `dot ${on ? "busy" : (S.data ? "on" : "")}`;
     $("#openBtn").disabled = on;
     $("#browseBtn").disabled = on;
+    $("#tabAddBtn").disabled = on;
     $("#refreshBtn").disabled = on;
     $("#runAuditBtn").disabled = on;
     $("#runReconcileBtn").disabled = on;
@@ -183,20 +185,231 @@
     $("#pickerModal").hidden = true;
   }
 
-  async function openDrawing(showLog = true, requested = "") {
-    if (S.busy) return;
-    if (requested) $("#pathInput").value = requested;
-    const raw = $("#pathInput").value.trim();
-    if (!raw) { toast("请填写图纸路径", "err"); return; }
-    if (showLog) log(`打开图纸：${raw}`);
-    S.path = raw;
+  // ---------- 图纸页签 ----------
+  function samePath(a, b) {
+    const norm = (p) => String(p || "").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+    return !!a && !!b && norm(a) === norm(b);
+  }
+
+  function tabFor(path) {
+    return S.openTabs.find((t) => samePath(t.path, path)) || null;
+  }
+
+  function activeTab() {
+    return S.data ? tabFor(S.path) : null;
+  }
+
+  function captureTab() {
+    const t = activeTab();
+    if (!t || !S.data) return;
+    t.data = S.data;
+    t.name = S.data.drawing.name;
+    t.selected = S.selected ? { ...S.selected } : null;
+    t.currentSrc = S.currentSrc;
+    t.prevSrc = S.prevSrc;
+    t.compare = S.compare;
+    t.zoom = S.zoom;
+    t.tab = S.tab;
+    t.filesDir = S.filesDir;
+    t.split = Number($("#compareRange").value || 50);
+    t.scrollTop = $("#previewScroll").scrollTop;
+    t.proposalId = S.proposalId;
+  }
+
+  function renderTabs() {
+    const list = $("#drawingTabList");
+    if (!list) return;
+    $("#drawingTabCount").textContent = `${S.openTabs.length} 张`;
+    if (!S.openTabs.length) {
+      list.innerHTML = '<span class="drawing-tab-empty">还没有打开的图纸</span>';
+      return;
+    }
+    list.innerHTML = S.openTabs.map((t) => {
+      const active = samePath(t.path, S.path) && !!S.data;
+      const label = String(t.name || "").replace(/\.dxf$/i, "");
+      return `<div class="drawing-tab${active ? " active" : ""}" data-path="${esc(t.path)}" title="${esc(t.path)}">
+        <button class="drawing-tab-main" type="button" data-activate="${esc(t.path)}" title="${esc(t.path)}">
+          <span class="dt-ico">DXF</span><span class="dt-name">${esc(label)}</span>
+        </button>
+        <button class="drawing-tab-close" type="button" data-close="${esc(t.path)}" title="关闭标签，不改图纸">×</button>
+      </div>`;
+    }).join("");
+    const act = list.querySelector(".drawing-tab.active");
+    if (act) act.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function resetPanel() {
+    S.path = "";
+    S.data = null;
     S.selected = null;
+    S.currentSrc = "";
     S.prevSrc = "";
     S.compare = false;
+    S.proposalId = "";
+    S.zoom = 100;
+    clearError();
+    $("#pathInput").value = "";
+    $("#drawingMeta").textContent = "等待打开图纸";
+    $("#statusText").textContent = "未载入";
+    $("#issueBadge").hidden = true;
+    $("#previewStat").textContent = "—";
+    S.baseStat = "";
+    $("#compCount").textContent = "0";
+    $("#issueCount").textContent = "0";
+    $("#proposalCount").textContent = "0";
+    $("#snapCount").textContent = "0";
+    $("#compList").innerHTML = '<div class="placeholder">载入图纸后列出墙、门窗、房间。</div>';
+    $("#issuesList").innerHTML = '<div class="placeholder">一致检查查构件自洽；图面自检查线字压碰；全图复核查轴号、门窗表、楼层表与尺寸链。</div>';
+    $("#proposalPane").innerHTML = '<div class="placeholder">当前没有待确认的 AI 变更。AI 通过 <code>/api/proposal</code> 提交后，这里会列出改前/改后和影响的问题。</div>';
+    $("#snapshotList").innerHTML = '<div class="placeholder">快照存在同目录 .aa_snap/，回退是字节级还原。</div>';
+    $("#preview").hidden = true;
+    $("#preview").removeAttribute("src");
+    $("#previewPrev").hidden = true;
+    $("#previewPrev").removeAttribute("src");
+    $("#hlLayer").hidden = true;
+    $("#hlLayer").innerHTML = "";
+    $("#empty").hidden = false;
     $("#compareToggle").disabled = true;
     $("#compareToggle").classList.remove("primary");
     $("#compareBar").hidden = true;
-    await refreshAll(true);
+    $("#openPreviewBtn").disabled = true;
+    $("#previewStack").style.setProperty("--zoom", "100%");
+    renderInspector();
+    setTab("components");
+    renderTabs();
+  }
+
+  function restoreTab(t) {
+    if (!t || !t.data) return;
+    S.path = t.path;
+    S.data = t.data;
+    S.selected = t.selected ? { ...t.selected } : null;
+    S.currentSrc = t.currentSrc || previewUrl(t.data.drawing.path, t.data.drawing.mtime);
+    S.prevSrc = t.prevSrc || "";
+    S.compare = !!(t.compare && S.prevSrc);
+    S.zoom = Number(t.zoom) || 100;
+    S.proposalId = (t.data.proposal && t.data.proposal.id) || "";
+    S.filesDir = t.filesDir || String(t.data.drawing.path).replace(/[\\/][^\\/]+$/, "");
+    $("#pathInput").value = t.data.drawing.path;
+    clearError();
+    $("#empty").hidden = true;
+    const cur = $("#preview");
+    cur.src = S.currentSrc;
+    cur.hidden = false;
+    const prev = $("#previewPrev");
+    if (S.prevSrc) {
+      prev.src = S.prevSrc;
+    } else {
+      prev.hidden = true;
+      prev.removeAttribute("src");
+    }
+    $("#openPreviewBtn").disabled = false;
+    $("#compareToggle").disabled = !S.prevSrc;
+    $("#compareToggle").classList.toggle("primary", S.compare);
+    $("#compareRange").value = String(t.split || 50);
+    renderAll();
+    setTab(t.tab || "components");
+    setZoom(S.zoom);
+    applyCompare();
+    renderOverlay();
+    requestAnimationFrame(() => {
+      $("#previewScroll").scrollTop = Number(t.scrollTop) || 0;
+    });
+  }
+
+  async function checkTabFresh(t) {
+    if (!t || !t.data) return;
+    try {
+      const meta = await apiGet(`/api/stat?path=${encodeURIComponent(t.path)}`);
+      if (!samePath(S.path, t.path)) return;
+      const d = t.data.drawing;
+      if (meta.mtime_ns === d.mtime_ns && meta.bytes === d.size) return;
+      log(`${t.name} 在面板外变过，重新读取`);
+      toast("图纸已在外部变过，正在重新读取", "");
+      await refreshAll(true);
+    } catch (e) {
+      if (samePath(S.path, t.path)) log(`检查图纸状态失败：${e.message}`, "err");
+    }
+  }
+
+  function activateTab(path) {
+    if (S.busy) return;
+    if (samePath(S.path, path) && S.data) { renderTabs(); return; }
+    captureTab();
+    const t = tabFor(path);
+    if (!t || !t.data) { toast("这张图还没有载入", "err"); return; }
+    restoreTab(t);
+    renderTabs();
+    log(`切换图纸：${t.data.drawing.name}`);
+    checkTabFresh(t);
+  }
+
+  function closeTab(path) {
+    if (S.busy) return;
+    const idx = S.openTabs.findIndex((t) => samePath(t.path, path));
+    if (idx < 0) return;
+    const wasActive = samePath(S.path, path) && !!S.data;
+    S.openTabs.splice(idx, 1);
+    if (!wasActive) { renderTabs(); return; }
+    if (S.openTabs.length) {
+      const next = S.openTabs[Math.min(idx, S.openTabs.length - 1)];
+      restoreTab(next);
+      renderTabs();
+      log(`关闭标签，切换到：${next.data.drawing.name}`);
+      checkTabFresh(next);
+    } else {
+      resetPanel();
+    }
+  }
+
+  async function openDrawing(showLog = true, requested = "") {
+    if (S.busy) return;
+    if (requested) $("#pathInput").value = requested;
+    const raw = (requested || $("#pathInput").value || "").trim();
+    if (!raw) { toast("请填写图纸路径", "err"); return; }
+    const cached = tabFor(raw);
+    if (cached) {
+      closePicker();
+      if (samePath(S.path, raw) && S.data) {
+        renderTabs();
+        return;
+      }
+      if (showLog) log(`切换图纸：${cached.data.drawing.name}`);
+      captureTab();
+      restoreTab(cached);
+      renderTabs();
+      checkTabFresh(cached);
+      return;
+    }
+    if (showLog) log(`打开图纸：${raw}`);
+    const prevPath = S.path;
+    captureTab();
+    S.path = raw;
+    S.selected = null;
+    S.currentSrc = "";
+    S.prevSrc = "";
+    S.compare = false;
+    $("#preview").hidden = true;
+    $("#preview").removeAttribute("src");
+    $("#previewPrev").hidden = true;
+    $("#previewPrev").removeAttribute("src");
+    $("#hlLayer").hidden = true;
+    $("#hlLayer").innerHTML = "";
+    $("#compareToggle").disabled = true;
+    $("#compareToggle").classList.remove("primary");
+    $("#compareBar").hidden = true;
+    const ok = await refreshAll(true);
+    if (!ok) {
+      const prev = tabFor(prevPath);
+      if (prev && prev.data) {
+        restoreTab(prev);
+        renderTabs();
+        toast("图纸打开失败，已恢复上一张", "err");
+      } else {
+        resetPanel();
+        toast("图纸打开失败，看看操作记录", "err");
+      }
+    }
   }
 
   async function refreshAll(force = false) {
@@ -214,17 +427,28 @@
       S.path = data.drawing.path;
       S.filesDir = String(data.drawing.path || "").replace(/[\\/][^\\/]+$/, "");
       S.recent = data.recent || S.recent;
+      let tab = tabFor(S.path);
+      if (!tab) {
+        tab = { path: S.path, name: data.drawing.name, data };
+        S.openTabs.push(tab);
+      }
+      tab.name = data.drawing.name;
+      tab.data = data;
       $("#pathInput").value = data.drawing.path;
       renderAll();
+      renderTabs();
       if (!$("#pickerModal").hidden) closePicker();
       if (newProposal) setTab("proposal");
       await loadPreview();
+      captureTab();
       log(`已读取 ${data.drawing.name}：${data.walls.length} 墙 / ${data.openings.length} 门窗 / ${data.rooms.length} 房间`);
+      return true;
     } catch (e) {
       error(e.message);
       $("#empty").hidden = false;
       $("#preview").hidden = true;
       $("#previewPrev").hidden = true;
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1005,6 +1229,21 @@
   function bind() {
     $("#openBtn").addEventListener("click", () => openDrawing(true));
     $("#browseBtn").addEventListener("click", openPicker);
+    $("#tabAddBtn").addEventListener("click", openPicker);
+    $("#drawingTabList").addEventListener("click", (e) => {
+      const close = e.target.closest("[data-close]");
+      if (close) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTab(close.dataset.close);
+        return;
+      }
+      const act = e.target.closest("[data-activate]");
+      if (act) {
+        e.preventDefault();
+        activateTab(act.dataset.activate);
+      }
+    });
     $("#pickerClose").addEventListener("click", closePicker);
     $("#pickerUp").addEventListener("click", () => loadFiles($("#pickerUp").dataset.dir || ""));
     $("#pickerOpenPath").addEventListener("click", () => {

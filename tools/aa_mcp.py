@@ -97,7 +97,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.50"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.51"}
 PROTOCOL_VERSION = "2024-11-05"
 
 

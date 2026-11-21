@@ -59,6 +59,9 @@ def main() -> int:
         # 1) 静态页
         status, html = request(base, "/", raw=True)
         assert status == 200 and b"AI" in html and b"app.js" in html, status
+        assert b"drawingTabList" in html and b"tabAddBtn" in html, "缺少多图纸页签容器"
+        status, js = request(base, "/app.js", raw=True)
+        assert b"openTabs" in js and b"/api/stat" in js, "前端页签缓存/失效检查未接入"
         status, cfg = request(base, "/api/config")
         assert cfg["ok"] and cfg["root"] == str(ROOT) and "recent" in cfg, cfg
 
@@ -66,6 +69,7 @@ def main() -> int:
         q = urllib.parse.quote(str(CASE))
         status, st = request(base, "/api/state?path=" + q)
         assert st["ok"] and st["drawing"]["name"] == "case.dxf", st["drawing"]
+        assert st["drawing"]["mtime_ns"] == CASE.stat().st_mtime_ns, st["drawing"]
         assert len(st["walls"]) >= 1 and st["components"], st
         assert "reconcile" in st and "audit" in st and "verify" in st, st.keys()
         win = st["view"]["window"]
@@ -75,6 +79,9 @@ def main() -> int:
         status, files = request(base, "/api/files?dir=" + urllib.parse.quote(str(WORK)))
         assert files["ok"] and any(f["name"] == "case.dxf" for f in files["files"]), files
         assert files["dir"] == str(WORK.resolve()), files["dir"]
+        status, meta = request(base, "/api/stat?path=" + q)
+        assert (meta["ok"] and meta["path"] == str(CASE.resolve())
+                and meta["bytes"] == CASE.stat().st_size), meta
         status, vr = request(base, "/api/action",
                              {"path": str(CASE), "action": "verify"})
         assert vr["ok"] and "issues" in vr and "stats" in vr, vr

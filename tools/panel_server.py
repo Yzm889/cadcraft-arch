@@ -57,7 +57,7 @@ PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
 PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.50"
+VERSION = "1.0.51"
 RECENT_FILE = CACHE_DIR / "recent.json"
 MAX_RECENT = 8
 
@@ -426,6 +426,7 @@ def _snapshots(path: Path) -> list[dict[str, Any]]:
 
 def state_payload(path: Path) -> dict[str, Any]:
     s = Session(path)
+    st = path.stat()
     comps = components_report(s)
     walls = wall_data(s)
     openings = opening_data(s)
@@ -440,8 +441,9 @@ def state_payload(path: Path) -> dict[str, Any]:
         "drawing": {
             "path": str(path),
             "name": path.name,
-            "mtime": path.stat().st_mtime,
-            "size": path.stat().st_size,
+            "mtime": st.st_mtime,
+            "mtime_ns": st.st_mtime_ns,
+            "size": st.st_size,
             "scale": drawing_scale(s),
         },
         "components": comps,
@@ -614,6 +616,13 @@ class PanelHandler(BaseHTTPRequestHandler):
                 raw = (q.get("dir") or [""])[0]
                 with LOCK:
                     return self._json(_file_rows(self.server.root, unquote(raw)))  # type: ignore[attr-defined]
+            if u.path == "/api/stat":
+                path = self._path(q)
+                with LOCK:
+                    st = path.stat()
+                return self._json({"ok": True, "path": str(path), "name": path.name,
+                                   "mtime": st.st_mtime, "mtime_ns": st.st_mtime_ns,
+                                   "bytes": st.st_size})
             if u.path == "/api/preview":
                 path = self._path(q)
                 with LOCK:
