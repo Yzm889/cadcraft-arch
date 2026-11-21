@@ -901,7 +901,9 @@ TOOLS: list[dict[str, Any]] = [
                 "cover": {"type": "number", "description": "圈梁上砖覆盖 mm", "default": 50},
                 "beam": {"type": "number", "description": "地圈梁高 mm（0 为不画）", "default": 250},
                 "cushion_ext": {"type": "number", "description": "垫层每边外伸 mm", "default": 50},
-                "rebar": {"type": "boolean", "description": "是否画 6Φ12/Φ6@250 配筋示意", "default": True},
+                "rebar": {"type": "boolean", "description": "是否画配筋示意", "default": True},
+                "bars": {"type": "integer", "description": "圈梁纵筋根数（偶数）", "default": 6},
+                "stirrup": {"type": "string", "description": "箍筋标注", "default": "Φ6@250"},
                 "ratio": {"type": "number", "description": "详图比例分母", "default": 20},
                 "factor": {"type": "number", "description": "直接给放大倍数"},
                 "dims": {"type": "boolean", "description": "是否注尺寸", "default": True},
@@ -1383,6 +1385,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                                  _num(a.get("beam", 250), "beam"),
                                  _num(a.get("cushion_ext", 50), "cushion_ext"),
                                  bool(a.get("rebar", True)),
+                                 int(a.get("bars", 6)),
+                                 str(a.get("stirrup", "Φ6@250")),
                                  _num(a.get("ratio", 20), "ratio"), a.get("factor"),
                                  bool(a.get("dims", True)))
 

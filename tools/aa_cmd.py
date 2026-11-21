@@ -617,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
     p_fd.add_argument("--beam", type=float, default=250.0, help="地圈梁高 mm（0 为不画）")
     p_fd.add_argument("--cushion-ext", type=float, default=50.0, help="垫层每边外伸 mm")
     p_fd.add_argument("--no-rebar", action="store_true", help="不画配筋示意")
+    p_fd.add_argument("--bars", type=int, default=6, help="圈梁纵筋根数（偶数，默认 6）")
+    p_fd.add_argument("--stirrup", default="Φ6@250", help="箍筋标注，如 Φ6@250")
     p_fd.add_argument("--ratio", type=float, default=20.0, help="详图比例分母")
     p_fd.add_argument("--factor", type=float, default=None, help="直接给放大倍数")
     p_fd.add_argument("--no-dims", action="store_true", help="不注尺寸")
@@ -1007,6 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.step_h, args.step_w, args.depth, args.base,
                     args.cover, args.beam, args.cushion_ext,
                     not args.no_rebar,
+                    args.bars, args.stirrup,
                     args.ratio, args.factor, not args.no_dims)})
         elif args.cmd == "text":
             if args.show:

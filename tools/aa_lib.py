@@ -7338,6 +7338,8 @@ def create_foundation(
     beam: float = 250.0,
     cushion_ext: float = 50.0,
     rebar: bool = True,
+    bars: int = 6,
+    stirrup: str = "Φ6@250",
     ratio: float = 20.0,
     factor: float | None = None,
     dims: bool = True,
@@ -7367,6 +7369,8 @@ def create_foundation(
         raise CadError("墙厚必须 >0、放脚级数必须 ≥1")
     if sh <= 0 or sw <= 0 or b <= 0 or cv < 0 or bm < 0 or ext < 0:
         raise CadError("台阶高/台阶宽/垫层厚必须 >0，覆盖/圈梁/垫层外伸不得 <0")
+    if bars < 0 or (rebar and bars < 2):
+        raise CadError("配筋根数必须 ≥2（不画配筋时可为 0）")
     if D <= n * sh + b + bm + cv:
         raise CadError("埋深必须大于 放脚高 + 垫层 + 圈梁 + 覆盖（现在 %g ≤ %g）"
                        % (D, n * sh + b + bm + cv))
@@ -7461,6 +7465,8 @@ def create_foundation(
         for a, b2, lab in ((-cush_half, -base_half, ext),
                            (-base_half, base_half, w + 2.0 * n * sw),
                            (base_half, cush_half, ext)):
+            if b2 - a < 1.0:
+                continue
             seg(a, dy2, b2, dy2, lay_dim)
             t2 = ann(2.0)
             txt((a + b2) / 2.0 - _text_w("%g" % lab, t2) / 2.0,
@@ -7477,6 +7483,8 @@ def create_foundation(
         labs += ["%g" % sh] * n + ["%g" % b]
         for i in range(len(ys) - 1):
             y1, y2 = ys[i], ys[i + 1]
+            if abs(y1 - y2) < 1.0:
+                continue
             seg(xv, y1, xv, y2, lay_dim)
             for yy in (y1, y2):
                 seg(xv - tick, yy + tick, xv + tick, yy - tick, lay_dim)
@@ -7522,23 +7530,28 @@ def create_foundation(
     dots(-cush_half + ann(4.0), cush_half - ann(4.0), -DF + ann(4.0),
          y_step0 - ann(1.0), ann(4.0), ann(0.4))
 
-    # 地圈梁配筋示意：6Φ12（每侧 3 根）+ Φ6@250 箍筋
-    if rebar and bm > 0:
+    # 地圈梁配筋示意：bars 根（每侧一半）+ 箍筋
+    if rebar and bm > 0 and bars >= 2:
         xb = half - ann(4.0)
-        for xr in (xb, xb - ann(5.0), xb - ann(10.0)):
+        per_side = bars // 2
+        for k in range(per_side):
+            xr = xb - k * ann(5.0)
             for sgn in (-1.0, 1.0):
                 seg(sgn * xr, y_beam_bot + ann(3.0),
                     sgn * xr, y_beam_top - ann(3.0), lay_dim)
-        for k in (1, 2):
-            yy2 = y_beam_top - beam * f * k / 3.0
+        ns = max(2, int(round(bm / 125.0)))
+        for k in range(1, ns):
+            yy2 = y_beam_top - beam * f * k / ns
             seg(-xb + ann(2.0), yy2, xb - ann(2.0), yy2, lay_dim)
 
-    # 标高：±0.000、圈梁底 -0.300、垫层底
+    # 标高：±0.000、圈梁底（按 cover+beam 算）、垫层底
     lx = cush_half + ann(8.0)
     body.append('(aa:elev %.3f 0.0 "±0.000" %.3f %.3f)'
                 % (lx, ann(3.0), ann(2.5)))
-    body.append('(aa:elev %.3f %.3f "-0.300" %.3f %.3f)'
-                % (lx, y_beam_bot, ann(3.0), ann(2.5)))
+    if bm > 0:
+        lev = -(cv + bm) / 1000.0
+        body.append('(aa:elev %.3f %.3f "%.3f" %.3f %.3f)'
+                    % (lx, y_beam_bot, lev, ann(3.0), ann(2.5)))
     body.append('(aa:elev %.3f %.3f "-%.3f" %.3f %.3f)'
                 % (lx, -DF, D / 1000.0, ann(3.0), ann(2.5)))
 
@@ -7550,8 +7563,10 @@ def create_foundation(
         txt(tx2 - shelf + ann(0.6), ty2 + ann(0.8), s, ann(2.2))
 
     lx0 = -cush_half - ann(12.0)
-    callout(-half * 0.8, y_beam_bot + ann(2.0), lx0,
-            y_beam_bot - ann(10.0), "地圈梁 250：6Φ12 Φ6@250")
+    if bm > 0:
+        callout(-half * 0.8, y_beam_bot + ann(2.0), lx0,
+                y_beam_bot - ann(10.0),
+                "地圈梁 %g：%dΦ12 %s" % (bm, bars, stirrup))
     callout(-half, (y_beam_bot + y_top) / 2.0, lx0,
             (y_beam_bot + y_top) / 2.0, "MU10 砖砌体")
     callout(-cush_half, -DF + BF / 2.0, lx0,
@@ -7579,6 +7594,8 @@ def create_foundation(
         ("AA_CUSHW", "cushion width", "%.4f" % (w + 2.0 * n * sw + 2.0 * ext)),
         ("AA_COVER", "brick cover", "%.4f" % cv),
         ("AA_BEAM", "grade beam height", "%.4f" % bm),
+        ("AA_BARS", "rebar count", str(bars)),
+        ("AA_STIRRUP", "stirrup", str(stirrup)),
         ("AA_FACTOR", "enlarge factor", "%.4f" % f),
         ("AA_RATIO", "detail ratio", "1:%g" % ratio),
         ("AA_TITLE", "detail title", str(title)),
@@ -7595,7 +7612,8 @@ def create_foundation(
             "steps": n, "step_h": sh, "step_w": sw, "depth": D, "base": b,
             "base_width": w + 2.0 * n * sw,
             "cushion_width": w + 2.0 * n * sw + 2.0 * ext,
-            "cover": cv, "beam": bm, "factor": f,
+            "cover": cv, "beam": bm, "bars": bars, "stirrup": stirrup,
+            "factor": f,
             "ratio": "1:%g" % ratio, "title": title, "dims": ndim, "bbox": bbox,
             "geom_handles": handles}
 
@@ -7616,6 +7634,8 @@ def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
             "cushion_width": float(attrs.get("AA_CUSHW") or 0),
             "cover": float(attrs.get("AA_COVER") or 0),
             "beam": float(attrs.get("AA_BEAM") or 0),
+            "bars": int(float(attrs.get("AA_BARS") or 0)),
+            "stirrup": attrs.get("AA_STIRRUP", ""),
             "factor": float(attrs.get("AA_FACTOR") or 0),
             "ratio": attrs.get("AA_RATIO", ""),
             "title": attrs.get("AA_TITLE", "")}

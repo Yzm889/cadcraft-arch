@@ -55,6 +55,17 @@ def main() -> int:
     assert fd2["base_width"] == 800.0, fd2
     assert fd2["bbox"] == [-8750.0, -9000.0, 7250.0, 1000.0], fd2["bbox"]
 
+    # 非标准规格：370 墙 / 三级 120×60 / 基底 730 / 垫层 790 / 无圈梁
+    fd3 = create_foundation(s, "FD3", (0.0, -30000.0), wall=370.0, steps=3,
+                            step_h=120.0, step_w=60.0, depth=1800.0,
+                            base=200.0, cover=40.0, beam=0.0,
+                            cushion_ext=30.0, rebar=False, bars=0,
+                            title="370 墙三级放脚")
+    assert fd3["base_width"] == 730.0 and fd3["cushion_width"] == 790.0, fd3
+    assert fd3["beam"] == 0.0 and fd3["bars"] == 0.0, fd3
+    assert fd3["dims"] == 4, fd3
+    assert fd3["bbox"] == [-8475.0, -12000.0, 6975.0, 1000.0], fd3["bbox"]
+
     back = read_foundation(s, "FD1")
     assert back["wall"] == 240.0 and back["base_width"] == 500.0, back
     assert back["depth"] == 2000.0 and back["factor"] == 5.0, back
@@ -63,10 +74,10 @@ def main() -> int:
 
     cases = [
         (lambda: create_foundation(s, "FD1", (0.0, 0.0)), "已存在"),
-        (lambda: create_foundation(s, "FD3", (0.0, 0.0), wall=0), "墙厚"),
-        (lambda: create_foundation(s, "FD3", (0.0, 0.0), steps=0), "放脚级数"),
-        (lambda: create_foundation(s, "FD3", (0.0, 0.0), depth=500), "埋深"),
-        (lambda: create_foundation(s, "FD3", (0.0, 0.0), ratio=0), "比例"),
+        (lambda: create_foundation(s, "FD9", (0.0, 0.0), wall=0), "墙厚"),
+        (lambda: create_foundation(s, "FD9", (0.0, 0.0), steps=0), "放脚级数"),
+        (lambda: create_foundation(s, "FD9", (0.0, 0.0), depth=500), "埋深"),
+        (lambda: create_foundation(s, "FD9", (0.0, 0.0), ratio=0), "比例"),
     ]
     for fn, want in cases:
         try:
@@ -80,6 +91,8 @@ def main() -> int:
     assert q["ok"] and q["steps"] == 2 and q["base_width"] == 500.0, q
     q = cli("foundation", str(path), "FD2", "--show=FD2")
     assert q["ok"] and q["steps"] == 1 and q["base_width"] == 800.0, q
+    q = cli("foundation", str(path), "FD3", "--show=FD3")
+    assert q["ok"] and q["base_width"] == 730.0 and q["beam"] == 0.0, q
 
     print("基础大放脚: 240 墙 / 2 级 130×65 / 埋深 2000 / 垫层 300 / 基底 500 / 垫层 600")
     print("PASS test_foundation")
