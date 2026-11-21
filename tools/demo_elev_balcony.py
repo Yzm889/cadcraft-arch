@@ -31,7 +31,7 @@ def main() -> int:
                      openings=[{"floor": 1, "x": 3200.0, "w": 1600.0, "h": 2100.0,
                                 "sill": 0.0, "kind": "DOOR"}],
                      roof="FLAT", dims=False, marks=True)
-    create_elev_balcony(s, "EB1", (1200.0, 3600.0), 2400.0)
+    create_elev_balcony(s, "EB1", (1200.0, 3500.0), 2400.0)
     create_elev_balcony(s, "EB2", (3200.0, 2100.0), 1600.0, kind="AWNING", slab=120.0)
 
     export(s, ROOT / "samples" / "demo_elev_balcony.png",

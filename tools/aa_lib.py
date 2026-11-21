@@ -7211,15 +7211,24 @@ def create_elev_balcony(
     if dims:
         th = ann(2.5)
         tick = ann(2.0)
-        # 宽：下方
-        dy = Y - ann(10.0)
+        # 宽：阳台注在挑板下方；雨篷在门洞上方，注在板顶以上，避免压住门扇
+        if kind == "AWNING":
+            base = Y + t
+            dy = base + ann(4.0)
+            ty = dy + ann(1.2)
+            sgn = 1.0
+        else:
+            base = Y
+            dy = Y - ann(10.0)
+            ty = dy - ann(4.0)
+            sgn = -1.0
         for xx in (X, X + w):
-            seg(xx, Y, xx, dy - ann(2.0), lay_dim)
+            seg(xx, base, xx, dy + sgn * ann(2.0), lay_dim)
         seg(X, dy, X + w, dy, lay_dim)
         for xx in (X, X + w):
             seg(xx - tick, dy + tick, xx + tick, dy - tick, lay_dim)
         label = "%g" % w
-        txt(X + w / 2.0 - _text_w(label, th) / 2.0, dy - ann(4.0), label, th)
+        txt(X + w / 2.0 - _text_w(label, th) / 2.0, ty, label, th)
         ndim += 1
         if kind == "BALCONY":
             dx = X - ann(10.0)
