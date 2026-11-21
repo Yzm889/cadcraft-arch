@@ -96,7 +96,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.47"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.48"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -565,7 +565,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "aa_reconcile",
-        "description": "构件一致性检查：墙长/墙厚为 0、门窗宿主缺失或越界/重叠、房间面积与轮廓不符；fix=true 时按当前墙环重建房间面积（门窗/墙体另有错则返回 fix_skipped，不硬修）。",
+        "description": "构件一致性检查：墙长/墙厚为 0、门窗宿主缺失或越界/重叠、房间面积与轮廓不符；fix=true 只修无歧义项（删零长空墙、重挂唯一可匹配的悬空门窗、夹回放得下的越界洞口、重建房间面积），墙厚 0/重叠/多候选等只返回 suggestion，不硬改。",
         "inputSchema": {
             "type": "object",
             "properties": {

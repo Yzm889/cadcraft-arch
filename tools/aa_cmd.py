@@ -336,9 +336,9 @@ def main(argv: list[str] | None = None) -> int:
     p_audit.add_argument("path")
     p_audit.add_argument("--strict", action="store_true", help="有 error 级问题就返回非零")
 
-    p_rec = sub.add_parser("reconcile", help="构件一致性检查：墙/门窗/房间数据对不上时列出；--fix 重建房间面积（门窗/墙体另有错则跳过）")
+    p_rec = sub.add_parser("reconcile", help="构件一致性检查：墙/门窗/房间数据对不上时列出；--fix 只修无歧义项（零长空墙/悬空门窗/越界洞口/房间面积），其余只给建议")
     p_rec.add_argument("path")
-    p_rec.add_argument("--fix", action="store_true", help="重建可修复项（目前只有房间面积）")
+    p_rec.add_argument("--fix", action="store_true", help="自动收尾：删零长空墙、重挂唯一可匹配的悬空门窗、夹回越界洞口、重建房间面积")
     p_rec.add_argument("--tol", type=float, default=1.0, help="长度/重叠判定容差 mm")
 
     p_rescale = sub.add_parser("rescale", help="按新出图比例重画全部注记（轴号/房间名/门窗编号/图名/指北针/尺寸）")

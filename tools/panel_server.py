@@ -56,7 +56,7 @@ PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
 PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.47"
+VERSION = "1.0.48"
 
 
 def _attrs(geometry: dict[str, Any]) -> dict[str, str]:

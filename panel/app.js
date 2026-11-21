@@ -643,6 +643,7 @@
         <span>
           <span class="issue-kind">${esc(it.source || "")} · ${esc(it.kind || "")}${it.fixable ? '<span class="issue-fixable">可修</span>' : ""}</span>
           <span class="issue-msg">${esc(it.message || "")}</span>
+          ${it.suggestion ? `<span class="issue-suggestion">建议：${esc(it.suggestion)}</span>` : ""}
           ${ref ? `<span class="issue-ref">${esc(ref)} →</span>` : ""}
         </span>`;
       if (ref) row.addEventListener("click", () => selectById(ref));
@@ -815,9 +816,12 @@
       const r = res.result || res;
       log(`${action} 完成：${JSON.stringify(r).slice(0, 900)}`, "ok");
       if (r.fix_skipped) {
-        toast(`已跳过：${r.fix_skipped}`, "err");
+        const done = r.fixed && r.fixed.length ? `已修 ${r.fixed.length} 项；` : "";
+        toast(`${done}${r.fix_skipped}`, "err");
       } else if (action === "reconcile_fix" && (!r.fixed || !r.fixed.length)) {
-        toast("没有可重建的房间面积（可能已一致）", "");
+        toast("没有可自动修复的问题；有歧义的项请看建议", "");
+      } else if (action === "reconcile_fix") {
+        toast(`已自动修复 ${r.fixed.length} 项`, "ok");
       } else {
         toast(`${action} 完成`, "ok");
       }
@@ -943,8 +947,8 @@
     $("#runAuditBtn").addEventListener("click", () => runAction("audit", "", "正在做图面自检…"));
     $("#fixReconcileBtn").addEventListener("click", () => runAction(
       "reconcile_fix",
-      "只重建房间面积；门窗/墙体本身有错时会跳过（fix_skipped），不会硬改。继续？",
-      "正在修复房间面积…"
+      "自动收尾只做意图明确的事：删除无门窗/房间引用的零长墙、重挂唯一可匹配的悬空门窗、夹回放得下的越界洞口、重建房间面积；有歧义的只列建议，不硬改。继续？",
+      "正在自动收尾…"
     ));
     $("#snapshotBtn").addEventListener("click", snapshotNow);
     $("#snapLabel").addEventListener("keydown", (e) => { if (e.key === "Enter") snapshotNow(); });

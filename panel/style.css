@@ -400,6 +400,7 @@ h1, h2, p { margin: 0; }
 .issue-row.warn { border-left-color: var(--warn); }
 .issue-kind { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
 .issue-msg { font-size: 11px; color: #cbd7e3; margin-top: 2px; }
+.issue-suggestion { display: block; font-size: 10px; color: #d7b777; margin-top: 3px; line-height: 1.45; }
 .issue-ref { font-family: var(--mono); font-size: 9.5px; color: var(--accent-2); margin-top: 3px; }
 .issue-fixable { color: var(--warn); font-size: 9.5px; margin-left: 6px; }
 .sev { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--dim); }

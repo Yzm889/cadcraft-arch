@@ -1,7 +1,7 @@
-"""构件一致性检查 + 房间面积修复验收（v1.0.43）。
+"""构件一致性检查 + 无歧义自动收尾验收（v1.0.48）。
 
-验收：房间面积被改坏后能报出 `room_area`；`fix=True` 按当前墙环重建并恢复面积；
-门窗位置越界能报 `opening_outside`，修复不会误删门窗。
+验收：房间面积、越界洞口、零长墙、悬空门窗可修；重叠/多候选/尺寸放不下只给建议；
+fix 先洞口后房间，任一失败整图回滚。
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from aa_lib import (  # noqa: E402
     create_opening,
     create_room,
     create_wall,
+    delete_component,
     reconcile,
     set_drawing_scale,
 )
@@ -72,7 +73,7 @@ def main() -> int:
     back = s.attributes("AA_ROOM_R001")
     assert abs(float(back["AA_AREA"]) - 5760.0 * 3760.0) < 1.0, back
 
-    # 2) 把门窗中心改到墙外，应报 opening_outside；房间面积仍正确
+    # 2) 把门窗中心改到墙外：fix 应夹回墙内（保留宽度），不删门窗
     door_h = s.component_handle("AA_OPENING_", "D001")
     s.run([("attedit", {"handle": door_h, "values": {"AA_POS": "7000"}})],
           save=True)
@@ -81,17 +82,101 @@ def main() -> int:
     assert "opening_outside" in kinds, bad_open["issues"]
     assert not any(it["kind"] == "room_area" for it in bad_open["issues"]), bad_open
 
-    # 3) 门窗坏 + 房间面积也坏时，fix 不应硬重建房间而把整图炸掉；应如实跳过
+    moved = reconcile(s, fix=True)
+    assert any(f.get("action") == "move_opening" for f in moved["fixed"]), moved
+    assert not any(it["kind"] == "opening_outside" for it in moved["issues"]), moved
+    back = s.attributes("AA_OPENING_D001")
+    assert abs(float(back["AA_POS"]) - 5500.0) < 1e-6, back
+
+    # 3) 门窗越界 + 房间面积也坏：先夹回洞口，再重建房间，不应整批跳过
     room_h = s.component_handle("AA_ROOM_", "R001")
     s.run([("attedit", {"handle": room_h, "values": {"AA_AREA": "0"}})],
+          save=True)
+    door_h = s.component_handle("AA_OPENING_", "D001")
+    s.run([("attedit", {"handle": door_h, "values": {"AA_POS": "7000"}})],
           save=True)
     both = reconcile(s)
     kinds = {it["kind"] for it in both["issues"]}
     assert {"opening_outside", "room_area"} <= kinds, both["issues"]
-    skipped = reconcile(s, fix=True)
-    assert skipped["fix_skipped"] and not skipped["fixed"], skipped
-    assert not skipped["rolled_back"], skipped
+    done = reconcile(s, fix=True)
+    actions = {f.get("action") for f in done["fixed"]}
+    assert {"move_opening", "rebuild_room"} <= actions, done
+    assert not done.get("fix_skipped"), done
+    assert not any(it["kind"] in ("opening_outside", "room_area")
+                   for it in done["issues"]), done
 
+    # 4) 同墙洞口重叠：谁该让位不明确，只给建议，不硬改
+    create_opening(s, "D002", "W001", "DOOR", 1000.0, 4500.0,
+                   height=2100.0, sill=0.0)
+    d2_h = s.component_handle("AA_OPENING_", "D002")
+    door_h = s.component_handle("AA_OPENING_", "D001")
+    s.run([("attedit", {"handle": door_h, "values": {"AA_POS": "5200"}})],
+          save=True)
+    overlap = reconcile(s)
+    assert any(it["kind"] == "opening_overlap" for it in overlap["issues"]), overlap
+    keep = reconcile(s, fix=True)
+    assert not keep["fixed"], keep
+    assert any(it["suggestion"] for it in keep["suggestions"]), keep.get("suggestions")
+    d2 = s.attributes("AA_OPENING_D002")
+    assert abs(float(d2["AA_POS"]) - 4500.0) < 1e-6, d2
+
+    # 5) 零长墙：无门窗、无房间引用时自动删除；有门窗时只建议
+    edge = OUT / "test_reconcile_edges.dxf"
+    edge.unlink(missing_ok=True)
+    e = Session(edge)
+    e.new_metric()
+    set_drawing_scale(e, 100, rescale=False)
+    create_wall(e, "W100", (0.0, 0.0), (1000.0, 0.0), thick=240.0)
+    w100_h = e.component_handle("AA_WALL_", "W100")
+    e.run([("attedit", {"handle": w100_h, "values": {"AA_LEN": "0"}})],
+          save=True)
+    z = reconcile(e, fix=True)
+    assert any(f.get("action") == "delete_wall" for f in z["fixed"]), z
+    assert z["components"]["walls"] == 0, z
+
+    create_wall(e, "W200", (0.0, 3000.0), (6000.0, 3000.0), thick=240.0)
+    create_opening(e, "D200", "W200", "DOOR", 1000.0, 1000.0,
+                   height=2100.0, sill=0.0)
+    w200_h = e.component_handle("AA_WALL_", "W200")
+    e.run([("attedit", {"handle": w200_h, "values": {"AA_LEN": "0"}})],
+          save=True)
+    z2 = reconcile(e, fix=True)
+    assert not z2["fixed"], z2
+    assert z2["components"]["walls"] == 1, z2
+    assert any(it["kind"] == "wall_zero_len" and it["suggestion"] for it in z2["suggestions"]), z2
+
+    # 6) 悬空门窗：唯一同向、同起点的墙可挂时自动重挂；多个候选不硬改
+    hop = OUT / "test_reconcile_host.dxf"
+    hop.unlink(missing_ok=True)
+    h = Session(hop)
+    h.new_metric()
+    set_drawing_scale(h, 100, rescale=False)
+    create_wall(h, "W300", (0.0, 0.0), (6000.0, 0.0), thick=240.0)
+    create_opening(h, "D300", "W300", "DOOR", 1000.0, 1000.0,
+                   height=2100.0, sill=0.0)
+    delete_component(h, "AA_WALL_W300")
+    create_wall(h, "W301", (0.0, 0.0), (6000.0, 0.0), thick=240.0)
+    orphan = reconcile(h)
+    assert any(it["kind"] == "opening_orphan" and it["fixable"]
+               for it in orphan["issues"]), orphan
+    healed = reconcile(h, fix=True)
+    assert any(f.get("action") == "rehost_opening" for f in healed["fixed"]), healed
+    assert not any(it["kind"] == "opening_orphan" for it in healed["issues"]), healed
+    attr = h.attributes("AA_OPENING_D300")
+    assert attr["AA_WALLID"] == "W301", attr
+
+    # 7) 洞口比墙还长：放不下，只建议
+    d300_h = h.component_handle("AA_OPENING_", "D300")
+    h.run([("attedit", {"handle": d300_h, "values": {"AA_WIDTH": "7000"}})],
+          save=True)
+    too_wide = reconcile(h, fix=True)
+    assert not too_wide["fixed"], too_wide
+    assert any(it["kind"] == "opening_outside" and "洞口比墙还长" in it["suggestion"]
+               for it in too_wide["suggestions"]), too_wide
+
+    path.unlink(missing_ok=True)
+    edge.unlink(missing_ok=True)
+    hop.unlink(missing_ok=True)
     print("PASS test_reconcile")
     return 0
 

@@ -5274,50 +5274,147 @@ def _poly_area(points: Sequence[Sequence[float]]) -> float:
 
 
 def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str, Any]:
-    """构件一致性检查；`fix=True` 时只重建可安全修复的房间面积。
+    """构件一致性检查；`fix=True` 只修“意图明确”的问题。
 
     检查的是"构件数据之间是否对得上"，不是图面好不好看（那归 `audit`）：
       1. 墙长/墙厚为 0；
-      2. 门窗宿主墙不存在、洞口越出墙段、同墙洞口重叠；
+      2. 门窗宿主墙不存在、洞口越出墙段、同墙洞口重叠、宽度为 0；
       3. 房间围合墙不存在、缺轮廓点、存储面积与轮廓鞋带面积不符。
 
-    可修复项目前只有房间面积：删旧房间，按当前墙环重建，面积/文字一起刷新。
-    修复前整图备份，任一房间失败即整图回滚；门窗宿主缺失/重叠不自动删改。
+    自动修复只做安全、无歧义的动作：
+      - 无门窗且不被房间引用的零长墙：删除；
+      - 悬空门窗：只有一个同向、起点重合、洞口放得下的墙可挂时，重挂过去；
+      - 洞口越界：墙长放得下且夹回墙内后不压别的洞口时，平移到墙内；
+      - 宽度为 0 的门窗：删除；
+      - 房间面积：围合墙齐全时按当前墙环重建。
+    多解/需要猜尺寸的情况只返回 `suggestion`，不硬改。修复前整图备份，
+    任一动作失败整图回滚。
     """
+    def parallel(a: float, b: float) -> bool:
+        d = abs((a - b + math.pi / 2.0) % math.pi - math.pi / 2.0)
+        return d <= 0.03
+
     def scan() -> dict[str, Any]:
         walls = wall_data(session)
         wall_by_id = {w["id"]: w for w in walls}
         opens = opening_data(session)
         rooms = room_data(session)
+        refs = {e["geometry"].get("block"): e for e in session.references()}
         issues: list[dict[str, Any]] = []
 
         def add(kind: str, level: str, message: str, ref: str = "",
-                detail: str = "", fixable: bool = False) -> None:
+                detail: str = "", fixable: bool = False,
+                suggestion: str = "", action: dict[str, Any] | None = None) -> None:
             issues.append({"kind": kind, "level": level, "message": message,
-                           "ref": ref, "detail": detail, "fixable": fixable})
-
-        for w in walls:
-            if w["len"] <= tol:
-                add("wall_zero_len", "error", "墙 %s 长度为 0" % w["id"], w["id"])
-            if w["thick"] <= tol:
-                add("wall_zero_thick", "error", "墙 %s 厚度为 0" % w["id"], w["id"])
+                           "ref": ref, "detail": detail, "fixable": fixable,
+                           "suggestion": suggestion, "action": action})
 
         by_wall: dict[str, list[dict[str, Any]]] = {}
         for o in opens:
+            by_wall.setdefault(o["wallid"], []).append(o)
+        room_wall_ids = {wid for r in rooms for wid in r["walls"]}
+
+        def slot_free(wid: str, pos: float, width: float, exclude: str) -> bool:
+            w = wall_by_id.get(wid)
+            if not w or width <= tol:
+                return False
+            if pos - width / 2.0 < -tol or pos + width / 2.0 > w["len"] + tol:
+                return False
+            for other in by_wall.get(wid, []):
+                if other["id"] == exclude:
+                    continue
+                lo, hi = pos - width / 2.0, pos + width / 2.0
+                olo, ohi = (other["pos"] - other["width"] / 2.0,
+                            other["pos"] + other["width"] / 2.0)
+                if min(hi, ohi) - max(lo, olo) > tol:
+                    return False
+            return True
+
+        def host_candidates(o: dict[str, Any]) -> list[dict[str, Any]]:
+            ref = refs.get(o["block"])
+            if not ref:
+                return []
+            ip = ref["geometry"]["insert"]
+            ang = float(ref["geometry"].get("rotation", 0.0))
+            out = []
+            for w in walls:
+                if w["len"] + tol < o["width"] or not parallel(ang, w["rotation_rad"]):
+                    continue
+                p1 = w["p1"]
+                if math.hypot(ip["x"] - p1[0], ip["y"] - p1[1]) > max(2.0 * tol, 5.0):
+                    continue
+                if slot_free(w["id"], o["pos"], o["width"], o["id"]):
+                    out.append(w)
+            return out
+
+        for w in walls:
+            if w["len"] <= tol:
+                used_by_room = w["id"] in room_wall_ids
+                on_wall = by_wall.get(w["id"], [])
+                if used_by_room:
+                    suggestion = "被房间引用；删墙会让房间失去围合，请先重画房间"
+                elif on_wall:
+                    suggestion = ("墙上有 %d 樘门窗，删墙会留下悬空门窗；请先确认墙位或移走门窗"
+                                  % len(on_wall))
+                else:
+                    suggestion = ""
+                add("wall_zero_len", "error", "墙 %s 长度为 0" % w["id"], w["id"],
+                    fixable=not used_by_room and not on_wall,
+                    suggestion=suggestion,
+                    action=(None if used_by_room or on_wall else
+                            {"kind": "delete_wall", "wall": w["id"], "block": w["block"]}))
+            if w["thick"] <= tol:
+                add("wall_zero_thick", "error", "墙 %s 厚度为 0" % w["id"], w["id"],
+                    suggestion="墙厚为 0，需先指定 120/240 等实际厚度，不自动猜")
+
+        for o in opens:
             if o["width"] <= tol:
-                add("opening_zero_width", "error", "门窗 %s 宽度为 0" % o["id"], o["id"])
+                add("opening_zero_width", "error",
+                    "门窗 %s 宽度为 0" % o["id"], o["id"], fixable=True,
+                    action={"kind": "delete_opening", "opening": o["id"],
+                            "block": o["block"]})
+                continue
             host = wall_by_id.get(o["wallid"])
             if not host:
-                add("opening_orphan", "error",
-                    "门窗 %s 的宿主墙 %s 不存在" % (o["id"], o["wallid"] or "（空）"),
-                    o["id"], o["wallid"])
+                cands = host_candidates(o)
+                if len(cands) == 1:
+                    target = cands[0]
+                    add("opening_orphan", "error",
+                        "门窗 %s 的宿主墙 %s 不存在" % (o["id"], o["wallid"] or "（空）"),
+                        o["id"], o["wallid"], fixable=True,
+                        action={"kind": "rehost_opening", "opening": o["id"],
+                                "from": o["wallid"], "to": target["id"],
+                                "pos": o["pos"]})
+                else:
+                    why = ("附近有 %d 道同向墙都能挂，无法判断原宿主" % len(cands)
+                           if cands else "附近没有可挂靠的同向墙")
+                    add("opening_orphan", "error",
+                        "门窗 %s 的宿主墙 %s 不存在" % (o["id"], o["wallid"] or "（空）"),
+                        o["id"], o["wallid"], suggestion=why + "；请指定新宿主墙")
                 continue
             if (o["pos"] - o["width"] / 2.0 < -tol or
                     o["pos"] + o["width"] / 2.0 > host["len"] + tol):
-                add("opening_outside", "error",
-                    "门窗 %s 超出墙 %s（中心 %.1f / 宽 %.1f / 墙长 %.1f）"
-                    % (o["id"], o["wallid"], o["pos"], o["width"], host["len"]), o["id"])
-            by_wall.setdefault(o["wallid"], []).append(o)
+                if o["width"] > host["len"] + tol:
+                    add("opening_outside", "error",
+                        "门窗 %s 超出墙 %s（中心 %.1f / 宽 %.1f / 墙长 %.1f）"
+                        % (o["id"], o["wallid"], o["pos"], o["width"], host["len"]),
+                        o["id"], suggestion="洞口比墙还长；请加长墙或缩小洞口")
+                else:
+                    new_pos = min(max(o["pos"], o["width"] / 2.0),
+                                  host["len"] - o["width"] / 2.0)
+                    if slot_free(o["wallid"], new_pos, o["width"], o["id"]):
+                        add("opening_outside", "error",
+                            "门窗 %s 超出墙 %s（中心 %.1f / 宽 %.1f / 墙长 %.1f）"
+                            % (o["id"], o["wallid"], o["pos"], o["width"], host["len"]),
+                            o["id"], fixable=True,
+                            action={"kind": "move_opening", "opening": o["id"],
+                                    "wall": o["wallid"], "from": o["pos"],
+                                    "to": new_pos})
+                    else:
+                        add("opening_outside", "error",
+                            "门窗 %s 超出墙 %s（中心 %.1f / 宽 %.1f / 墙长 %.1f）"
+                            % (o["id"], o["wallid"], o["pos"], o["width"], host["len"]),
+                            o["id"], suggestion="夹回墙内会与同墙洞口重叠；请人工决定保留哪樘")
 
         for wid, items in by_wall.items():
             for i in range(len(items)):
@@ -5328,25 +5425,30 @@ def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str
                     if a0 < b1 - tol and b0 < a1 - tol:
                         add("opening_overlap", "error",
                             "墙 %s 上门窗 %s 与 %s 重叠" % (wid, a["id"], b["id"]),
-                            "%s/%s" % (a["id"], b["id"]))
-
+                            "%s/%s" % (a["id"], b["id"]),
+                            suggestion="两樘洞口重叠，保留哪樘不明确；请人工调整")
         for r in rooms:
             missing = [w for w in r["walls"] if w not in wall_by_id]
             if missing:
                 add("room_wall_missing", "error",
-                    "房间 %s 的围合墙不存在：%s" % (r["id"], ", ".join(missing)), r["id"])
+                    "房间 %s 的围合墙不存在：%s" % (r["id"], ", ".join(missing)), r["id"],
+                    suggestion="围合墙缺失；请重画墙或重新指定房间边界")
             if not r["pts"]:
                 add("room_no_outline", "warn",
-                    "房间 %s 没有轮廓点（旧版图纸），无法核算面积" % r["id"], r["id"])
+                    "房间 %s 没有轮廓点（旧版图纸），无法核算面积" % r["id"], r["id"],
+                    suggestion="缺轮廓点，无法核算面积；请重画房间")
                 continue
             calc = _poly_area(r["pts"])
             area_tol = max(tol, abs(r["area"]) * 1e-5)
             if abs(calc - r["area"]) > area_tol:
+                can_fix = bool(r["walls"]) and not missing
                 add("room_area", "error",
                     "房间 %s 存储面积 %.2f 与轮廓面积 %.2f 不符（差 %.2f）"
                     % (r["id"], r["area"], calc, calc - r["area"]),
                     r["id"], "stored=%.2f calc=%.2f" % (r["area"], calc),
-                    fixable=bool(r["walls"]) and not missing)
+                    fixable=can_fix,
+                    action=(None if not can_fix else
+                            {"kind": "rebuild_room", "room": r["id"]}))
 
         by_kind: dict[str, int] = {}
         for it in issues:
@@ -5356,6 +5458,7 @@ def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str
             "errors": sum(1 for it in issues if it["level"] == "error"),
             "warnings": sum(1 for it in issues if it["level"] == "warn"),
             "fixable": sum(1 for it in issues if it["fixable"]),
+            "suggestions": [it for it in issues if it["suggestion"]],
             "components": {"walls": len(walls), "openings": len(opens), "rooms": len(rooms)},
         }
 
@@ -5363,45 +5466,77 @@ def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str
     if not fix:
         return {**before, "fixed": [], "rolled_back": False}
 
-    targets = [it for it in before["issues"] if it["kind"] == "room_area" and it["fixable"]]
+    targets = [it for it in before["issues"] if it["action"]]
     if not targets:
         return {**before, "fixed": [], "rolled_back": False}
-
-    # 房间里重建会经 refresh_opening_labels 重排门窗；若门窗/墙体本身有错，
-    # 重建会被 set_opening 拒绝。先如实拦下，不让 fix 半途炸掉整图。
-    blocking = [it for it in before["issues"]
-                if it["kind"].startswith("opening_")
-                or it["kind"] in ("wall_zero_len", "wall_zero_thick", "room_wall_missing")]
-    if blocking:
-        return {**before, "fixed": [], "rolled_back": False,
-                "fix_skipped": "存在门窗/墙体/围合墙错误（%d 条），先修正后再重建房间"
-                              % len(blocking)}
 
     backup = session.path.with_name(session.path.stem + ".reconcile.bak" + session.path.suffix)
     shutil.copy2(session.path, backup)
     fixed: list[dict[str, Any]] = []
+    skipped = ""
     try:
-        rooms = {r["id"]: r for r in room_data(session)}
         for it in targets:
-            r = rooms.get(it["ref"])
-            if not r or not r["walls"]:
+            a = it["action"]
+            kind = a["kind"]
+            if kind == "rebuild_room":
                 continue
-            old = r["area"]
-            delete_component(session, r["block"])
-            res = create_room(session, r["id"], r["walls"], name=r["name"],
-                              show_area=r["show_area"])
-            fixed.append({"room": r["id"], "old_area": old,
-                          "new_area": res["area"], "perimeter": res["perimeter"]})
+            if kind == "delete_wall":
+                if delete_component(session, a["block"]):
+                    fixed.append({"action": kind, "wall": a["wall"]})
+            elif kind == "delete_opening":
+                if delete_component(session, a["block"]):
+                    fixed.append({"action": kind, "opening": a["opening"]})
+            elif kind == "rehost_opening":
+                od = {o["id"]: o for o in opening_data(session)}
+                o = od.get(a["opening"])
+                if not o:
+                    continue
+                delete_component(session, o["block"])
+                create_opening(session, o["id"], a["to"], o["kind"], o["width"], a["pos"],
+                               height=o["height"], sill=o["sill"], frame=o["frame"],
+                               no=o["no"], label_side=o["labelside"])
+                fixed.append({"action": kind, "opening": o["id"],
+                              "from": a["from"], "wall": a["to"], "pos": a["pos"]})
+            elif kind == "move_opening":
+                set_opening(session, a["opening"], pos=a["to"])
+                fixed.append({"action": kind, "opening": a["opening"],
+                              "wall": a["wall"], "old_pos": a["from"],
+                              "new_pos": a["to"]})
+
+        mid = scan()
+        room_targets = [it for it in targets if it["action"]["kind"] == "rebuild_room"]
+        if room_targets:
+            blocking = [it for it in mid["issues"]
+                        if it["kind"].startswith("opening_")
+                        or it["kind"] in ("wall_zero_len", "wall_zero_thick", "room_wall_missing")]
+            if blocking:
+                skipped = "还有 %d 条门窗/墙体/围合墙问题没有明确修法，先不重建房间" % len(blocking)
+            else:
+                rooms = {r["id"]: r for r in room_data(session)}
+                for it in room_targets:
+                    r = rooms.get(it["action"]["room"])
+                    if not r or not r["walls"]:
+                        continue
+                    old = r["area"]
+                    delete_component(session, r["block"])
+                    res = create_room(session, r["id"], r["walls"], name=r["name"],
+                                      show_area=r["show_area"])
+                    fixed.append({"action": "rebuild_room", "room": r["id"],
+                                  "old_area": old, "new_area": res["area"],
+                                  "perimeter": res["perimeter"]})
     except Exception as exc:
         shutil.copy2(backup, session.path)
-        raise CadError("房间面积刷新失败（%s），已整图回滚（原图备份 %s）"
+        raise CadError("自动修复失败（%s），已整图回滚（原图备份 %s）"
                        % (exc, backup.name)) from exc
     finally:
         if backup.exists():
             backup.unlink()
 
     after = scan()
-    return {**after, "fixed": fixed, "rolled_back": False}
+    out = {**after, "fixed": fixed, "rolled_back": False}
+    if skipped:
+        out["fix_skipped"] = skipped
+    return out
 
 
 def sheet_window(session: Session, sheet_id: str) -> list[float]:
