@@ -7371,6 +7371,8 @@ def create_foundation(
         raise CadError("台阶高/台阶宽/垫层厚必须 >0，覆盖/圈梁/垫层外伸不得 <0")
     if bars < 0 or (rebar and bars < 2):
         raise CadError("配筋根数必须 ≥2（不画配筋时可为 0）")
+    if rebar and bars % 2:
+        raise CadError("配筋根数必须为偶数，才能两侧对称布置")
     if D <= n * sh + b + bm + cv:
         raise CadError("埋深必须大于 放脚高 + 垫层 + 圈梁 + 覆盖（现在 %g ≤ %g）"
                        % (D, n * sh + b + bm + cv))

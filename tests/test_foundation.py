@@ -78,6 +78,7 @@ def main() -> int:
         (lambda: create_foundation(s, "FD9", (0.0, 0.0), steps=0), "放脚级数"),
         (lambda: create_foundation(s, "FD9", (0.0, 0.0), depth=500), "埋深"),
         (lambda: create_foundation(s, "FD9", (0.0, 0.0), ratio=0), "比例"),
+        (lambda: create_foundation(s, "FD9", (0.0, 0.0), bars=7), "偶数"),
     ]
     for fn, want in cases:
         try:
