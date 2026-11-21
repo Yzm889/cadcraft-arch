@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.43，已实测跑通）
+## 现状（v1.0.44，已实测跑通）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -61,7 +61,7 @@
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (43 tests)
+python tests/run_all.py     # ALL PASS (44 tests)
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/demo_building.py  # 生成 samples/demo_building.dxf + .png（全套图 A2）
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
@@ -330,14 +330,37 @@ python tools/aa_mcp.py --selftest   # 只看工具表，确认版本与工具数
 
 工具返回的永远是**回读校验后的结构化结果**（`geom_handles`、`area`、`normalized` 等），不是"命令已发送"。校验失败时 MCP 层返回 `isError: true` 且 `content` 里带 `{"ok": false, "error": "..."}`，图纸零残留——这一点由 `tests/test_mcp.py` 断言（含真子进程 stdio 握手）。
 
+## AI 纠错 / 确认面板
+
+`tools/panel_server.py` 是一个只监听 `127.0.0.1` 的本地轻客户端，给"AI 画完、人确认"用，**不是天正式手动画图工具栏**：
+
+- 只读预览（CADCraft 导出的 PNG；可缩放到 320%、开新标签看原图）
+- 构件树：墙 / 门窗 / 房间，点一条看原始属性
+- 问题清单：`reconcile` 数据一致性问题 + `audit` 图面压碰问题，点问题定位构件
+- 只改已有构件属性：墙厚/类型/材质/轴号，门窗中心/宽/高/窗台/编号，房间名；复用 `set_wall` / `set_opening` / `set_room`，失败回滚，改前自动存快照
+- 改动前后对比、快照、字节级回退
+- 不提供画线、偏移、修剪、阵列等第二套绘图逻辑
+
+```bash
+python tools/panel_server.py --dxf samples/demo_building.dxf
+# 浏览器打开 http://127.0.0.1:8765/（默认自动打开；--no-browser 可关）
+```
+
+图纸路径默认限制在仓库内，防止面板被当成任意文件读取器；要打开桌面上其他项目：
+
+```bash
+python tools/panel_server.py --root C:\Users\19891\Desktop\CADcraf --dxf D:\项目\A栋.dxf
+```
+
 ## 目录
 
 ```
 cadcraft-arch/
 ├── docs/     规格（业务规则 + 实现补遗）
 ├── lisp/     几何引擎：aa_core / aa_axis / aa_wall / aa_opening / aa_room
-├── tools/    CLI 驱动：aa_lib.py（会话与校验）、aa_cmd.py（命令行）、aa_mcp.py（MCP 服务）、demo.py
-├── tests/    按功能验收：axis / wall / opening / room / room_auto / room_modify / openings / dim / label / mcp / corner / layers / split / merge / modify
+├── panel/    本地 AI 纠错/确认面板（index.html / style.css / app.js）
+├── tools/    CLI 驱动：aa_lib.py（会话与校验）、aa_cmd.py（命令行）、aa_mcp.py（MCP 服务）、panel_server.py、demo.py
+├── tests/    按功能验收：axis / wall / opening / room / room_auto / room_modify / openings / dim / label / mcp / panel / corner / layers / split / merge / modify
 └── samples/  验收输出（dxf/png）
 ```
 

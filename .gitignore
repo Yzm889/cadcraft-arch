@@ -6,3 +6,4 @@ scratch_*
 samples/*.bak
 .venv/
 .aa_snap/
+.panel_cache/

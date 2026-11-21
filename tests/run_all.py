@@ -7,10 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-TESTS = ["test_axis.py", "test_axis_auto.py", "test_wall.py", "test_column.py", "test_step.py", "test_stair.py", "test_opening.py", "test_openings.py", "test_dim.py", "test_label.py", "test_sheet.py", "test_room.py",
-         "test_corner.py", "test_layers.py", "test_layer_style.py", "test_split.py", "test_merge.py",
-         "test_modify.py", "test_room_auto.py", "test_room_modify.py", "test_symbols.py",
-         "test_symbols2.py", "test_audit.py", "test_floor.py", "test_roof.py", "test_elev.py", "test_sect.py", "test_scale.py", "test_scale_pre.py", "test_link.py", "test_mcp.py", "test_mcp_batch.py"]
+# 自动收集 tests/test_*.py，避免新加测试忘了挂进回归清单。
+TESTS = sorted(p.name for p in ROOT.glob("test_*.py"))
 
 
 def main() -> int:

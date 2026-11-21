@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CADCraft 建筑 · AI 纠错面板</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">AA</span>
+      <div>
+        <h1>CADCraft 建筑</h1>
+        <p>AI 纠错 / 确认面板 <span class="ver" id="version">v—</span></p>
+      </div>
+    </div>
+    <div class="pathbox">
+      <label for="pathInput">图纸</label>
+      <input id="pathInput" spellcheck="false" placeholder="samples/demo_building.dxf">
+      <button id="openBtn" class="btn primary">打开</button>
+    </div>
+    <div class="topmeta">
+      <span class="dot" id="liveDot"></span>
+      <span id="statusText">未载入</span>
+      <span class="badge" id="issueBadge" hidden>0 问题</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="preview-panel">
+      <div class="panel-head">
+        <div>
+          <h2>只读预览</h2>
+          <span id="drawingMeta" class="muted">等待打开图纸</span>
+        </div>
+        <div class="toolbar">
+          <button id="refreshBtn" class="btn" title="重新读取图纸">刷新</button>
+          <span class="sep"></span>
+          <button id="zoomOut" class="btn icon" title="缩小">−</button>
+          <button id="zoomIn" class="btn icon" title="放大">＋</button>
+          <button id="zoomFit" class="btn" title="适应窗口">适应</button>
+          <span class="sep"></span>
+          <button id="openPreviewBtn" class="btn" disabled title="在新标签打开原图">原图</button>
+          <button id="compareToggle" class="btn" disabled title="改动前后对比">对比</button>
+        </div>
+      </div>
+
+      <div class="preview-stage" id="stage">
+        <div class="grid"></div>
+        <div class="preview-scroll" id="previewScroll">
+          <div class="preview-stack" id="previewStack">
+            <img id="previewPrev" class="preview-img prev" alt="改动前预览" hidden>
+            <img id="preview" class="preview-img" alt="图纸预览" hidden>
+          </div>
+        </div>
+        <div class="empty" id="empty">
+          <div class="empty-mark">⌂</div>
+          <strong>打开一张 DXF 开始</strong>
+          <span>默认示例：samples/demo_building.dxf</span>
+        </div>
+        <div class="loading" id="loading" hidden><span class="spinner"></span><span id="loadingText">正在读取图纸…</span></div>
+        <div class="error-banner" id="errorBanner" hidden></div>
+      </div>
+
+      <div class="compare-bar" id="compareBar" hidden>
+        <label for="compareRange">改动前</label>
+        <input id="compareRange" type="range" min="0" max="100" value="50">
+        <label for="compareRange">当前</label>
+        <span class="muted" id="compareHint">拖动滑杆看差异</span>
+      </div>
+
+      <div class="preview-foot">
+        <span id="previewStat">—</span>
+        <span class="muted" id="previewHint">预览由 CADCraft 导出，不可在面板里手动画线</span>
+      </div>
+    </section>
+
+    <aside class="side">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="components" role="tab">构件 <span id="compCount">0</span></button>
+        <button class="tab" data-tab="issues" role="tab">问题 <span id="issueCount">0</span></button>
+        <button class="tab" data-tab="snapshots" role="tab">快照 <span id="snapCount">0</span></button>
+      </nav>
+
+      <div class="tab-pane" id="pane-components">
+        <div class="pane-tools">
+          <input id="compSearch" class="search" spellcheck="false" placeholder="按编号 / 属性筛选">
+        </div>
+        <div class="component-list" id="compList">
+          <div class="placeholder">载入图纸后列出墙、门窗、房间。</div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-issues" hidden>
+        <div class="issue-actions">
+          <button id="runReconcileBtn" class="btn">一致检查</button>
+          <button id="runAuditBtn" class="btn">图面自检</button>
+          <button id="fixReconcileBtn" class="btn warn">修复房间面积</button>
+        </div>
+        <div class="issue-summary" id="issueSummary">—</div>
+        <div class="issue-list" id="issuesList">
+          <div class="placeholder">一致检查：墙/门窗/房间数据是否对得上；图面自检：线、字、尺寸是否压碰。</div>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-snapshots" hidden>
+        <div class="pane-tools">
+          <input id="snapLabel" class="search" spellcheck="false" placeholder="快照标签，如 before-edit">
+          <button id="snapshotBtn" class="btn primary">拍快照</button>
+        </div>
+        <div class="snapshot-list" id="snapshotList">
+          <div class="placeholder">快照存在同目录 .aa_snap/，回退是字节级还原。</div>
+        </div>
+      </div>
+
+      <section class="inspector" id="inspector">
+        <div class="inspector-head">
+          <h2>属性</h2>
+          <span id="selectionTag" class="muted">未选中构件</span>
+        </div>
+        <div class="inspector-body" id="inspectorBody">
+          <div class="placeholder">在构件列表点一条，这里显示可改属性。只改已有构件，不新建、不画线。</div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="console">
+    <div class="console-head">
+      <span>操作记录</span>
+      <button id="clearLog" class="link">清空</button>
+    </div>
+    <div class="log-list" id="logList"></div>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
