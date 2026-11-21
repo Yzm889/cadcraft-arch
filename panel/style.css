@@ -192,6 +192,24 @@ h1, h2, p { margin: 0; }
 }
 #preview { clip-path: inset(0 0 0 var(--split, 50%)); }
 #preview.no-split { clip-path: none; }
+.hl-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.hl-box {
+  position: absolute;
+  border: 2px solid #ffd166;
+  border-radius: 4px;
+  background: rgba(255, 209, 102, .10);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .65), 0 0 18px rgba(255, 209, 102, .45);
+}
+.hl-tag {
+  position: absolute; left: -1px; top: -20px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 209, 102, .65);
+  background: rgba(28, 24, 14, .94);
+  color: #ffe4a3;
+  font-family: var(--mono); font-size: 10px; line-height: 1.2;
+  white-space: nowrap;
+}
 .empty {
   position: absolute; inset: 0;
   display: grid; place-content: center; justify-items: center; gap: 8px;
@@ -382,7 +400,9 @@ h1, h2, p { margin: 0; }
 .diff-row {
   padding: 7px 8px; border: 1px solid var(--line-soft); border-left: 3px solid var(--accent);
   border-radius: 7px; background: #111821;
+  cursor: pointer;
 }
+.diff-row:hover { background: #16212d; border-color: #30445a; }
 .diff-row.added { border-left-color: var(--ok); }
 .diff-row.removed { border-left-color: var(--danger); }
 .diff-line { display: flex; align-items: center; gap: 6px; }

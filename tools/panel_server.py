@@ -54,8 +54,9 @@ CACHE_DIR = ROOT / ".panel_cache"
 PROPOSAL_DIR = CACHE_DIR / "proposals"
 PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
+PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.45"
+VERSION = "1.0.46"
 
 
 def _attrs(geometry: dict[str, Any]) -> dict[str, str]:
@@ -197,6 +198,8 @@ def public_proposal(data: dict[str, Any]) -> dict[str, Any]:
         "new_issues": data.get("new_issues") or [],
         "fixed_issues": data.get("fixed_issues") or [],
         "stale": bool(data.get("stale")),
+        "view": data.get("view"),
+        "geometry": data.get("geometry") or {},
     }
 
 
@@ -239,8 +242,9 @@ def create_proposal(path: Path, title: str, ops: list[dict[str, Any]]) -> dict[s
             raise CadError("变更集第 %d 项 %s 失败：%s"
                            % (int(batch.get("failed_index", 0)), batch.get("failed_tool"),
                               batch.get("error", "未知错误")))
-        after = components_report(Session(case))
-        after_issues = issue_rows(Session(case))
+        s_after = Session(case)
+        after = components_report(s_after)
+        after_issues = issue_rows(s_after)
         changes, counts = _component_changes(before, after)
         new_issues, fixed_issues = _issue_changes(before_issues, after_issues)
         data = {
@@ -256,6 +260,12 @@ def create_proposal(path: Path, title: str, ops: list[dict[str, Any]]) -> dict[s
             "fixed_issues": fixed_issues,
             "preview_path": str(case),
             "preview_mtime": case.stat().st_mtime,
+            "view": {"window": preview_window(s_after), "aspect": PREVIEW_ASPECT},
+            "geometry": {
+                "walls": wall_data(s_after),
+                "openings": opening_data(s_after),
+                "rooms": room_data(s_after),
+            },
         }
         _proposal_file(path).write_text(json.dumps(data, ensure_ascii=False, indent=2),
                                         encoding="utf-8")
@@ -350,8 +360,52 @@ def state_payload(path: Path) -> dict[str, Any]:
         "audit": {k: v for k, v in aud.items() if k != "issues"},
         "issues": issues,
         "snapshots": _snapshots(path),
+        "view": {"window": preview_window(s), "aspect": PREVIEW_ASPECT},
         "proposal": public_proposal(prop) if prop else None,
     }
+
+
+def preview_window(session: Session) -> list[float]:
+    """预览统一取“构件范围外扩 + 补到 1.5:1”的窗口，保证 PNG 不留黑边、坐标可线性映射。
+
+    只按墙/房间的真实几何取范围，避免图纸里的图框、轴号符号等远端对象把主楼压成一小块；
+    外扩 30% 也把基础、尺寸线等贴近主体的内容带进画面。
+    """
+    pts: list[tuple[float, float]] = []
+    try:
+        for w in wall_data(session):
+            pts.append((float(w["p1"][0]), float(w["p1"][1])))
+            pts.append((float(w["p2"][0]), float(w["p2"][1])))
+        for r in room_data(session):
+            for p in r.get("pts") or []:
+                pts.append((float(p[0]), float(p[1])))
+    except (KeyError, TypeError, ValueError):
+        pts = []
+    if pts:
+        x0 = min(p[0] for p in pts)
+        x1 = max(p[0] for p in pts)
+        y0 = min(p[1] for p in pts)
+        y1 = max(p[1] for p in pts)
+    else:
+        try:
+            ext = session.info()["extents"]
+            x0, y0 = float(ext[0][0]), float(ext[0][1])
+            x1, y1 = float(ext[1][0]), float(ext[1][1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            x0, y0, x1, y1 = 0.0, 0.0, 1000.0, 1000.0
+    w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
+    pad = max(0.30 * max(w, h), 500.0)
+    x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+    w, h = x1 - x0, y1 - y0
+    if w / h > PREVIEW_ASPECT:
+        nh = w / PREVIEW_ASPECT
+        cy = (y0 + y1) / 2.0
+        y0, y1 = cy - nh / 2.0, cy + nh / 2.0
+    else:
+        nw = h * PREVIEW_ASPECT
+        cx = (x0 + x1) / 2.0
+        x0, x1 = cx - nw / 2.0, cx + nw / 2.0
+    return [round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)]
 
 
 def preview_png(path: Path) -> bytes:
@@ -359,7 +413,8 @@ def preview_png(path: Path) -> bytes:
     tag = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:8]
     out = CACHE_DIR / ("%s-%s-%s.png" % (path.stem, tag, path.stat().st_mtime_ns))
     if not out.exists() or out.stat().st_size < 2048:
-        export(Session(path), out, None)
+        s = Session(path)
+        export(s, out, preview_window(s), lineweights=False)
     return out.read_bytes()
 
 

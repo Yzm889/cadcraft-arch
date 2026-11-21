@@ -210,6 +210,7 @@
           $("#compareToggle").classList.remove("primary");
         }
         applyCompare();
+        renderOverlay();
         return;
       }
     }
@@ -222,6 +223,7 @@
         S.currentSrc = mainUrl;
         $("#openPreviewBtn").disabled = false;
         applyCompare();
+        renderOverlay();
         resolve();
       };
       img.onerror = () => {
@@ -238,6 +240,7 @@
     renderComponents();
     renderIssues();
     renderProposal();
+    renderOverlay();
     renderSnapshots();
     renderInspector();
   }
@@ -343,14 +346,107 @@
     toast(`没找到构件 ${id}`, "err");
   }
 
-  function selectComponent(kind, id) {
+  function focusComponent(kind, id) {
     S.selected = { kind, id };
-    setTab("components");
     renderComponents();
     renderInspector();
+    renderOverlay();
+  }
+
+  function selectComponent(kind, id) {
+    focusComponent(kind, id);
+    setTab("components");
     const row = Array.from(document.querySelectorAll(".comp-row"))
       .find((el) => el.dataset.kind === kind && el.dataset.id === id);
     if (row) row.scrollIntoView({ block: "nearest" });
+  }
+
+  const KIND_LABEL = { wall: "墙", opening: "门窗", room: "房间", other: "其他" };
+
+  function overlaySource() {
+    const p = S.data && S.data.proposal;
+    return (p && p.geometry) ? p.geometry : (S.data || {});
+  }
+
+  function overlayView() {
+    const p = S.data && S.data.proposal;
+    if (p && p.view && p.view.window) return p.view;
+    return S.data && S.data.view;
+  }
+
+  function worldBox(kind, id, src) {
+    if (!src) return null;
+    if (kind === "wall") {
+      const w = (src.walls || []).find((x) => x.id === id);
+      if (!w) return null;
+      const half = (Number(w.thick) || 0) / 2;
+      const xs = [w.p1[0], w.p2[0]].sort((a, b) => a - b);
+      const ys = [w.p1[1], w.p2[1]].sort((a, b) => a - b);
+      return [xs[0] - half, ys[0] - half, xs[1] + half, ys[1] + half];
+    }
+    if (kind === "opening") {
+      const o = (src.openings || []).find((x) => x.id === id);
+      if (!o) return null;
+      const w = (src.walls || []).find((x) => x.id === o.wallid);
+      if (!w) return null;
+      const dx0 = w.p2[0] - w.p1[0], dy0 = w.p2[1] - w.p1[1];
+      const len = Math.hypot(dx0, dy0) || Number(w.len) || 1;
+      const dx = dx0 / len, dy = dy0 / len;
+      const hw = Number(o.width) / 2, ht = (Number(w.thick) || 120) / 2;
+      const cx = w.p1[0] + dx * Number(o.pos);
+      const cy = w.p1[1] + dy * Number(o.pos);
+      const pts = [
+        [cx + dx * hw - dy * ht, cy + dy * hw + dx * ht],
+        [cx + dx * hw + dy * ht, cy + dy * hw - dx * ht],
+        [cx - dx * hw + dy * ht, cy - dy * hw - dx * ht],
+        [cx - dx * hw - dy * ht, cy - dy * hw + dx * ht],
+      ];
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    }
+    if (kind === "room") {
+      const r = (src.rooms || []).find((x) => x.id === id);
+      if (!r || !r.pts || !r.pts.length) return null;
+      const xs = r.pts.map((p) => p[0]), ys = r.pts.map((p) => p[1]);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    }
+    const c = (S.data && S.data.components || []).find((x) => typeOf(x) === "other" && idOf(x) === id);
+    const v = overlayView();
+    if (!c || !v) return null;
+    const [x0, , x1] = v.window;
+    const half = Math.max(30, (x1 - x0) * 0.012);
+    return [c.at[0] - half, c.at[1] - half, c.at[0] + half, c.at[1] + half];
+  }
+
+  function renderOverlay() {
+    const layer = $("#hlLayer");
+    if (!layer) return;
+    const sel = S.selected;
+    const img = $("#preview");
+    const view = overlayView();
+    if (!sel || !view || !view.window || !S.data || img.hidden) {
+      layer.hidden = true;
+      layer.innerHTML = "";
+      return;
+    }
+    let box = worldBox(sel.kind, sel.id, overlaySource());
+    if (!box) box = worldBox(sel.kind, sel.id, S.data);
+    if (!box) {
+      layer.hidden = true;
+      layer.innerHTML = "";
+      return;
+    }
+    const [x0, y0, x1, y1] = view.window;
+    const left = Math.max(0, Math.min(100, (box[0] - x0) / (x1 - x0) * 100));
+    const right = Math.max(0, Math.min(100, (box[2] - x0) / (x1 - x0) * 100));
+    const top = Math.max(0, Math.min(100, (y1 - box[3]) / (y1 - y0) * 100));
+    const bottom = Math.max(0, Math.min(100, (y1 - box[1]) / (y1 - y0) * 100));
+    const w = Math.max(0.8, right - left);
+    const h = Math.max(0.8, bottom - top);
+    layer.innerHTML = `<div class="hl-box" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%">
+      <span class="hl-tag">${esc(sel.id)} · ${esc(KIND_LABEL[sel.kind] || sel.kind)}</span>
+    </div>`;
+    layer.hidden = false;
   }
 
   function renderInspector() {
@@ -364,6 +460,18 @@
     const { kind, id } = S.selected;
     const c = findComponent(kind, id);
     if (!c) {
+      const p = S.data && S.data.proposal;
+      const ch = p && p.changes ? p.changes.find((x) => x.id === id) : null;
+      if (ch && ch.change === "added") {
+        tag.textContent = "新增构件（预演）";
+        box.innerHTML = `<div class="placeholder">构件 ${esc(id)} 只存在于这次 AI 变更集里，接受后才写进图纸。预览图上的金框就是它的落点。</div>`;
+        return;
+      }
+      if (ch && ch.change === "removed") {
+        tag.textContent = "待删除构件";
+        box.innerHTML = `<div class="placeholder">构件 ${esc(id)} 将在接受变更集后被删除；金框标的是它现在的原位置。</div>`;
+        return;
+      }
       tag.textContent = "构件已不存在";
       box.innerHTML = `<div class="placeholder">构件 ${esc(id)} 已不在当前图纸，刷新后重选。</div>`;
       return;
@@ -521,6 +629,9 @@
     const changesHtml = rows.map((c) => {
       const tag = c.change === "added" ? "新增" : c.change === "removed" ? "删除" : "修改";
       const cls = c.change === "added" || c.change === "removed" ? c.change : "";
+      const kindKey = c.block.startsWith("AA_WALL_") ? "wall" :
+        c.block.startsWith("AA_OPENING_") ? "opening" :
+        c.block.startsWith("AA_ROOM_") ? "room" : "other";
       const fields = (c.fields || []).slice(0, c.change === "changed" ? 8 : 5).map((f) => `
         <div class="diff-field">
           <span class="diff-key">${esc(FIELD_LABEL[f.name] || f.name)}</span>
@@ -531,7 +642,7 @@
       const more = (c.fields || []).length > (c.change === "changed" ? 8 : 5)
         ? `<div class="proposal-more">另有 ${(c.fields || []).length - (c.change === "changed" ? 8 : 5)} 个属性</div>` : "";
       return `
-        <div class="diff-row ${cls}">
+        <div class="diff-row ${cls}" data-kind="${kindKey}" data-id="${esc(c.id)}" title="点击在预览图上定位">
           <div class="diff-line">
             <span class="diff-tag ${cls}">${tag}</span>
             <span class="diff-id">${esc(c.id)}</span>
@@ -573,6 +684,9 @@
     const discard = $("#discardProposal");
     if (accept) accept.addEventListener("click", commitProposal);
     if (discard) discard.addEventListener("click", discardProposal);
+    for (const row of box.querySelectorAll(".diff-row")) {
+      row.addEventListener("click", () => focusComponent(row.dataset.kind, row.dataset.id));
+    }
   }
 
   async function commitProposal() {

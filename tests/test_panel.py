@@ -66,6 +66,9 @@ def main() -> int:
         assert st["ok"] and st["drawing"]["name"] == "case.dxf", st["drawing"]
         assert len(st["walls"]) >= 1 and st["components"], st
         assert "reconcile" in st and "audit" in st, st.keys()
+        win = st["view"]["window"]
+        assert len(win) == 4 and win[2] > win[0] and win[3] > win[1], st["view"]
+        assert st["view"]["aspect"] == panel_server.PREVIEW_ASPECT, st["view"]
 
         # 3) 预览 PNG
         status, png = request(base, "/api/preview?path=" + q, raw=True)
@@ -112,6 +115,8 @@ def main() -> int:
         prop = pv["proposal"]
         assert prop["ops_count"] == 2 and not prop["stale"], prop
         assert prop["summary"]["changed"] >= 2, prop["summary"]
+        assert len(prop["view"]["window"]) == 4 and prop["view"]["aspect"] == panel_server.PREVIEW_ASPECT, prop["view"]
+        assert prop["geometry"]["walls"] and prop["geometry"]["rooms"], prop["geometry"].keys()
         assert any(c["id"] == wall["id"] and any(f["name"] == "thick" for f in c["fields"])
                    for c in prop["changes"]), prop["changes"]
         status, png2 = request(base, "/api/proposal/preview?path=" + q, raw=True)
