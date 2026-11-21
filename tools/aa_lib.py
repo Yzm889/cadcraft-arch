@@ -6739,14 +6739,22 @@ def create_stair_detail(
         for k in range(1, steps):
             yy = k * TRF
             seg(0.0, yy, Wf, yy, lay_stair)
-        # 箭头：中部向上 + 小三角头（头长/半宽按 2.5/1.8mm 纸面，不随梯段放大）
         ax = Wf / 2.0
         hl = ann(5.0)
         hw = ann(1.8)
-        apex = RUNF * 0.85
-        seg(ax, RUNF * 0.12, ax, apex, lay_arrow)
-        seg(ax, apex, ax - hw, apex - hl, lay_arrow)
-        seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+        th = ann(4.0)
+        if level == "TOP":
+            # 顶层只有下行：箭头从头往下，字"下"放在箭头起点
+            seg(ax, RUNF * 0.88, ax, RUNF * 0.12, lay_arrow)
+            seg(ax, RUNF * 0.12, ax - hw, RUNF * 0.12 + hl, lay_arrow)
+            seg(ax, RUNF * 0.12, ax + hw, RUNF * 0.12 + hl, lay_arrow)
+            txt(ax - _text_w("下", th) / 2.0, RUNF * 0.9, "下", th)
+        else:
+            apex = RUNF * 0.85
+            seg(ax, RUNF * 0.12, ax, apex, lay_arrow)
+            seg(ax, apex, ax - hw, apex - hl, lay_arrow)
+            seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+            txt(ax - _text_w("上", th) / 2.0, RUNF * 0.04, "上", th)
     else:
         # 左跑 + 梯井 + 右跑 + 平台带
         rect(0.0, 0.0, WF, DEPF + RUNF, lay_stair)
@@ -6759,17 +6767,29 @@ def create_stair_detail(
             yy = k * TRF
             seg(0.0, yy, Wf, yy, lay_stair)
             seg(Wf + WELLF, yy, WF, yy, lay_stair)
-        ax = Wf / 2.0
         hl = ann(5.0)
         hw = ann(1.8)
-        apex = RUNF * 0.85
-        seg(ax, RUNF * 0.1, ax, apex, lay_arrow)
-        seg(ax, apex, ax - hw, apex - hl, lay_arrow)
-        seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+        th = ann(4.0)
+        # 左跑上行
+        ax = Wf / 2.0
+        apex = RUNF * 0.45
+        if level != "TOP":
+            seg(ax, RUNF * 0.08, ax, apex, lay_arrow)
+            seg(ax, apex, ax - hw, apex - hl, lay_arrow)
+            seg(ax, apex, ax + hw, apex - hl, lay_arrow)
+            txt(ax - _text_w("上", th) / 2.0, RUNF * 0.02, "上", th)
+        # 右跑下行（中层及以下才有下行）
+        bx = Wf + WELLF + Wf / 2.0
+        if level != "FIRST":
+            bot = RUNF * 0.15
+            seg(bx, RUNF * 0.9, bx, bot, lay_arrow)
+            seg(bx, bot, bx - hw, bot + hl, lay_arrow)
+            seg(bx, bot, bx + hw, bot + hl, lay_arrow)
+            txt(bx - _text_w("下", th) / 2.0, RUNF * 0.92, "下", th)
 
     ndim = 0
     if dims:
-        th = ann(2.5)
+        th = ann(3.2)
         tick = ann(2.0)
         # 梯段宽：下方水平一道（x 0..Wf）
         dy = -ann(10.0)
