@@ -26,8 +26,8 @@ def main() -> int:
     s.new_metric()
     set_drawing_scale(s, 100, rescale=False)
     create_foundation(s, "FD1", (0.0, 0.0))
-    create_foundation(s, "FD2", (7000.0, 0.0), wall=200.0, steps=1,
-                      step_h=300.0, step_w=300.0, depth=1200.0, base=200.0)
+    create_foundation(s, "FD2", (7000.0, -300.0), wall=200.0, steps=1,
+                      step_h=300.0, step_w=300.0, depth=1200.0, base=200.0, title="基础大放脚（一级）")
 
     export(s, ROOT / "samples" / "demo_foundation.png",
            window=(-5000.0, -9500.0, 12500.0, 1000.0))

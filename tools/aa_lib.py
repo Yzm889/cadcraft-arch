@@ -7299,6 +7299,7 @@ def create_foundation(
     ratio: float = 20.0,
     factor: float | None = None,
     dims: bool = True,
+    title: str | None = None,
     scale: float | None = None,
 ) -> dict[str, Any]:
     """基础大放脚（1:20）：以墙中心线与**室外地面**交点为 `at`，向下画基础剖面。
@@ -7399,6 +7400,15 @@ def create_foundation(
         txt(-_text_w(label, th) / 2.0, dy - ann(4.0), label, th)
         ndim += 1
 
+    if not title:
+        title = "基础大放脚"
+    ty = -DF - ann(24.0 if dims else 10.0)
+    # aa:title 的图名/比例按 0.9×字高×字符数估宽（图名 500 / 比例 350），整组居中
+    tw = (0.9 * 500.0 * len(str(title)) + 400.0
+          + 0.9 * 350.0 * len("1:%g" % ratio))
+    body.append('(aa:title %.3f %.3f "%s" "1:%g")'
+                % (-tw / 2.0, ty, title.replace('"', "'"), ratio))
+
     before = session.snapshot()
     session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
                  libraries=("aa_core.lisp", "aa_symbol.lisp"))
@@ -7420,6 +7430,7 @@ def create_foundation(
         ("AA_BASEW", "base width", "%.4f" % (w + 2.0 * n * sw)),
         ("AA_FACTOR", "enlarge factor", "%.4f" % f),
         ("AA_RATIO", "detail ratio", "1:%g" % ratio),
+        ("AA_TITLE", "detail title", str(title)),
         ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
         ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
         ("AA_SCALE", "drawing scale 1:n", "%.4g" % sc),
@@ -7432,7 +7443,7 @@ def create_foundation(
     return {"block": block, "handle": handle, "id": item_id, "wall": w,
             "steps": n, "step_h": sh, "step_w": sw, "depth": D, "base": b,
             "base_width": w + 2.0 * n * sw, "factor": f,
-            "ratio": "1:%g" % ratio, "dims": ndim, "bbox": bbox,
+            "ratio": "1:%g" % ratio, "title": title, "dims": ndim, "bbox": bbox,
             "geom_handles": handles}
 
 
@@ -7450,7 +7461,8 @@ def read_foundation(session: Session, item_id: str) -> dict[str, Any]:
             "base": float(attrs.get("AA_BASE") or 0),
             "base_width": float(attrs.get("AA_BASEW") or 0),
             "factor": float(attrs.get("AA_FACTOR") or 0),
-            "ratio": attrs.get("AA_RATIO", "")}
+            "ratio": attrs.get("AA_RATIO", ""),
+            "title": attrs.get("AA_TITLE", "")}
 
 
 # ---------------- 注字：单行文字 / 引线（v1.0.41，B7 收尾） ----------------
