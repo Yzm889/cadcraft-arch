@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aa_lib import (  # noqa: E402
-    CadError, Session, annotate, audit, axis_grids, block_geometry, create_axis_grid,
-    create_opening, create_room_edges, create_sheet, create_stair, create_text,
-    draw_table, drawing_extent, drawing_scale, export, opening_data, reconcile, room_data,
-    refresh_opening_labels, wall_data,
+    CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, block_geometry,
+    create_axis_grid, create_opening, create_room_edges, create_sheet, create_stair,
+    create_text, draw_table, drawing_extent, drawing_scale, export, opening_data, reconcile,
+    refresh_opening_labels, room_data, wall_data,
 )
 
 OUT = Path(__file__).resolve().parent
@@ -546,7 +546,8 @@ def run_1f():
     b.text((49300, 17500), "%.1f m²" % (r19["area"] / 1e6), 2.0)
 
     b.text((47400, 17000), "电梯", 2.0)
-    # 门窗编号已按创建时的侧向落位；末轮全量刷新改为按需调用，避免长时间占内存
+    # 门窗编号已按创建时的侧向落位；房间文字齐了，再统一避让一次
+    label_avoid = avoid_opening_labels(b.s)
 
     sheet = b.finish("一层平面图")
     b.save()
@@ -554,6 +555,7 @@ def run_1f():
     png = b.render(sheet, "01_一层平面图.png")
     snap["png"] = png
     snap["audit"] = audit(Session(b.path), tol=1.0)
+    snap["label_avoid"] = label_avoid
     snap["reconcile"] = reconcile(Session(b.path), fix=False, tol=1.0)
     snap["sheet"] = {"size": sheet["size"], "at": sheet["at"],
                      "outer": sheet["outer_wh"]}
@@ -663,12 +665,16 @@ def run_standard(no: int, special_a: str, special_b: str, theme: str) -> dict:
     b.op(b.nid("D"), "D4", "C3", (31500, 19200), "out")
     b.op(b.nid("D"), "D5", "C4", (37800, 19200), "out")
 
+    # 门窗编号避让：房间文字全部落图后再统一检查一次
+    label_avoid = avoid_opening_labels(b.s)
+
     sheet = b.finish(name, theme)
     b.save()
     snap = b.snapshot_validate(b.path)
     png = b.render(sheet, stem + ".png")
     snap["png"] = png
     snap["audit"] = audit(Session(b.path), tol=1.0)
+    snap["label_avoid"] = label_avoid
     snap["reconcile"] = reconcile(Session(b.path), fix=False, tol=1.0)
     snap["sheet"] = {"size": sheet["size"], "at": sheet["at"],
                      "outer": sheet["outer_wh"]}

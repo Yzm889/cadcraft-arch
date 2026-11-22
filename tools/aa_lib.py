@@ -5242,6 +5242,128 @@ def _pt_seg_dist(p: tuple[float, float], a: tuple[float, float],
     return math.dist(p, (ax + t * dx, ay + t * dy))
 
 
+def _block_text_boxes(session: Session, block: str,
+                      scale: float | None = None) -> list[tuple[str, tuple[float, float, float, float]]]:
+    """块内文字 -> 世界坐标近似框（按 INSERT 的插入点/旋转/缩放变换）。
+
+    `block_geometry` 返回的是块内局部坐标；门窗块插在墙起点且带墙旋转，
+    不能直接把局部框当世界框，否则所有门窗编号都会被误判为重叠。
+    """
+    ref = session.reference(block)
+    if not ref:
+        return []
+    sc = float(scale) if scale else drawing_scale(session)
+    out: list[tuple[str, tuple[float, float, float, float]]] = []
+    for g in block_geometry(session.path, block):
+        if g["type"] not in ("TEXT", "MTEXT") or not g.get("pts"):
+            continue
+        x, y = g["pts"][0]
+        h = float(g.get("h") or 0) or annot_size(2.5, sc)
+        w = _text_w(g.get("text", ""), h)
+        corners = [_insert_tf(p, ref) for p in
+                   ((x, y), (x + w, y), (x, y + h), (x + w, y + h))]
+        xs = [p[0] for p in corners]
+        ys = [p[1] for p in corners]
+        out.append((g.get("text", ""), (min(xs), min(ys), max(xs), max(ys))))
+    return out
+
+
+def _boxes_touch(a: Sequence[float], b: Sequence[float], tol: float = 1.0) -> bool:
+    return (a[0] < b[2] - tol and b[0] < a[2] - tol
+            and a[1] < b[3] - tol and b[1] < a[3] - tol)
+
+
+def _label_collisions(session: Session) -> list[dict[str, Any]]:
+    """门窗编号文字与房间名/面积、楼梯文字、其他门窗编号的碰撞。
+
+    只检查文字框，不改图；结果给 audit 报 warn，也给自动避让挑候选侧向。
+    """
+    sc = drawing_scale(session)
+    rooms = []
+    for r in room_data(session):
+        for text, box in _block_text_boxes(session, r["block"], sc):
+            rooms.append((r["id"], text, box, r["block"]))
+    stairs = []
+    for e in session.components("AA_STAIR_"):
+        block = e["geometry"]["block"]
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in e["geometry"].get("attribs", [])}
+        for text, box in _block_text_boxes(session, block, sc):
+            stairs.append((attrs.get("AA_ID") or block, text, box, block))
+    labels = []
+    for o in opening_data(session):
+        for text, box in _block_text_boxes(session, o["block"], sc):
+            labels.append((o["id"], text, box, o["block"]))
+
+    out: list[dict[str, Any]] = []
+    for oid, text, box, _ in labels:
+        for rid, rtext, rbox, _ in rooms:
+            if _boxes_touch(box, rbox):
+                out.append({"kind": "opening_room_overlap", "openings": [oid],
+                            "labels": [text, rtext], "boxes": [box, rbox],
+                            "detail": "门窗编号 %s「%s」压房间 %s「%s」"
+                                      % (oid, text, rid, rtext)})
+        for sid, stext, sbox, _ in stairs:
+            if _boxes_touch(box, sbox):
+                out.append({"kind": "opening_stair_overlap", "openings": [oid],
+                            "labels": [text, stext], "boxes": [box, sbox],
+                            "detail": "门窗编号 %s「%s」压楼梯 %s「%s」"
+                                      % (oid, text, sid, stext)})
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            a, b = labels[i], labels[j]
+            if _boxes_touch(a[2], b[2]):
+                out.append({"kind": "opening_opening_overlap",
+                            "openings": [a[0], b[0]],
+                            "labels": [a[1], b[1]], "boxes": [a[2], b[2]],
+                            "detail": "门窗编号 %s「%s」与 %s「%s」互压"
+                                      % (a[0], a[1], b[0], b[1])})
+    return out
+
+
+def avoid_opening_labels(session: Session, rounds: int = 2) -> dict[str, Any]:
+    """把互压/压房间/压楼梯的门窗编号换到另一侧；换不动就保留并报告。"""
+    checked = 0
+    changed: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for _ in range(max(1, rounds)):
+        collisions = _label_collisions(session)
+        if not collisions:
+            break
+        targets = sorted({oid for c in collisions for oid in c["openings"]})
+        checked += len(targets)
+        for oid in targets:
+            ops = {o["id"]: o for o in opening_data(session)}
+            o = ops.get(oid)
+            if not o:
+                continue
+            current = (o.get("labelside") or "in")
+            moved = False
+            for side in ("leader", "in", "out"):
+                if side == current:
+                    continue
+                try:
+                    set_opening(session, oid, label_side=side)
+                except Exception:
+                    continue
+                left = [c for c in _label_collisions(session)
+                        if oid in c["openings"]]
+                if not left:
+                    changed.append({"opening": oid, "from": current, "to": side})
+                    moved = True
+                    break
+            if not moved:
+                # 所有候选都失败：恢复原侧，交给 audit 明确报出
+                try:
+                    set_opening(session, oid, label_side=current)
+                except Exception:
+                    pass
+                if oid not in unresolved:
+                    unresolved.append(oid)
+    return {"checked": checked, "changed": changed, "unresolved": unresolved,
+            "collisions": _label_collisions(session)}
+
+
 def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
     """图面自检：把"画完看着不对"的常见问题先挑出来，别等到出图才发现。
 
@@ -5249,6 +5371,7 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
       1. `wall_endpoint` 墙端点没接上任何墙（漏墙/墙没画到）；
       2. `opening_outside` 门窗洞口跑出所属墙段；
       3. `room_text_overlap` 两个房间的名称/面积文字压在一起；
+      3b. `opening_text_overlap` 门窗编号压房间名/楼梯文字/另一个编号；
       4. `dim_over_axis` 尺寸文字压在轴号圈里；
       5. `outside_sheet` 有图幅时，图形外廓超出内框。
     返回 `{issues, count, by_kind, scale}`，issue 里带 `level`（error/warn）与 `handles`/`detail`。
@@ -5315,6 +5438,10 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
                     "房间文字重叠：%s「%s」× %s「%s」"
                     % (room_boxes[i][0], room_boxes[i][2],
                        room_boxes[j][0], room_boxes[j][2]))
+
+    # 3b) 门窗编号压房间名/楼梯/其他编号
+    for c in _label_collisions(session):
+        add("opening_text_overlap", "warn", c["detail"])
 
     # 4) 尺寸文字压轴号圈
     circles = []

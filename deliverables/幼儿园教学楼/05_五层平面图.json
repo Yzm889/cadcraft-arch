@@ -1,6 +1,6 @@
 {
   "floor": 5,
-  "tag": "F2",
+  "tag": "F5",
   "checks": [
     {
       "name": "1 轴网",
@@ -66,169 +66,169 @@
   "errors": [],
   "rooms": [
     {
-      "id": "F2R001",
+      "id": "F5R001",
       "name": "活动室",
       "area": 52.48,
       "expect": null
     },
     {
-      "id": "F2R002",
+      "id": "F5R002",
       "name": "寝室",
       "area": 53.44,
       "expect": null
     },
     {
-      "id": "F2R003",
+      "id": "F5R003",
       "name": "入口过渡",
       "area": 16.53,
       "expect": null
     },
     {
-      "id": "F2R004",
+      "id": "F5R004",
       "name": "卫生间",
       "area": 11.69,
       "expect": null
     },
     {
-      "id": "F2R005",
+      "id": "F5R005",
       "name": "衣帽间",
       "area": 9.97,
       "expect": null
     },
     {
-      "id": "F2R006",
+      "id": "F5R006",
       "name": "贮藏",
       "area": 8.41,
       "expect": null
     },
     {
-      "id": "F2R007",
+      "id": "F5R007",
       "name": "活动室",
       "area": 53.44,
       "expect": null
     },
     {
-      "id": "F2R008",
+      "id": "F5R008",
       "name": "寝室",
       "area": 53.44,
       "expect": null
     },
     {
-      "id": "F2R009",
+      "id": "F5R009",
       "name": "入口过渡",
       "area": 16.96,
       "expect": null
     },
     {
-      "id": "F2R010",
+      "id": "F5R010",
       "name": "卫生间",
       "area": 11.69,
       "expect": null
     },
     {
-      "id": "F2R011",
+      "id": "F5R011",
       "name": "衣帽间",
       "area": 9.97,
       "expect": null
     },
     {
-      "id": "F2R012",
+      "id": "F5R012",
       "name": "贮藏",
       "area": 8.41,
       "expect": null
     },
     {
-      "id": "F2R013",
+      "id": "F5R013",
       "name": "活动室",
       "area": 53.44,
       "expect": null
     },
     {
-      "id": "F2R014",
+      "id": "F5R014",
       "name": "寝室",
       "area": 52.48,
       "expect": null
     },
     {
-      "id": "F2R015",
+      "id": "F5R015",
       "name": "入口过渡",
       "area": 16.96,
       "expect": null
     },
     {
-      "id": "F2R016",
+      "id": "F5R016",
       "name": "卫生间",
       "area": 11.69,
       "expect": null
     },
     {
-      "id": "F2R017",
+      "id": "F5R017",
       "name": "衣帽间",
       "area": 9.97,
       "expect": null
     },
     {
-      "id": "F2R018",
+      "id": "F5R018",
       "name": "贮藏",
       "area": 7.98,
       "expect": null
     },
     {
-      "id": "F2R019",
+      "id": "F5R019",
       "name": "楼梯间1",
       "area": 29.21,
       "expect": null
     },
     {
-      "id": "F2R020",
+      "id": "F5R020",
       "name": "教具储藏",
       "area": 21.91,
       "expect": null
     },
     {
-      "id": "F2R023",
+      "id": "F5R023",
       "name": "教师办公",
       "area": 25.4,
       "expect": null
     },
     {
-      "id": "F2R024",
+      "id": "F5R024",
       "name": "教研室",
       "area": 25.4,
       "expect": null
     },
     {
-      "id": "F2R025",
+      "id": "F5R025",
       "name": "公共卫生间/盥洗",
       "area": 52.07,
       "expect": null
     },
     {
-      "id": "F2R026",
+      "id": "F5R026",
       "name": "楼梯间2",
       "area": 29.53,
       "expect": null
     },
     {
-      "id": "F2R027",
+      "id": "F5R027",
       "name": "电梯厅",
       "area": 5.29,
       "expect": null
     },
     {
-      "id": "F2R028",
+      "id": "F5R028",
       "name": "配电间",
       "area": 6.35,
       "expect": null
     },
     {
-      "id": "F2R021",
+      "id": "F5R021",
       "name": "教师培训室",
       "area": 52.07,
       "expect": null
     },
     {
-      "id": "F2R022",
+      "id": "F5R022",
       "name": "档案资料室",
       "area": 52.07,
       "expect": null
@@ -243,6 +243,12 @@
     "by_kind": {},
     "errors": 0,
     "scale": 100.0
+  },
+  "label_avoid": {
+    "checked": 0,
+    "changed": [],
+    "unresolved": [],
+    "collisions": []
   },
   "reconcile": {
     "issues": [],
@@ -262,7 +268,7 @@
   },
   "png": {
     "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\05_五层平面图.png",
-    "bytes": 167635,
+    "bytes": 167636,
     "thickened": 8,
     "colored": 385,
     "px_per_mm": 2.69,

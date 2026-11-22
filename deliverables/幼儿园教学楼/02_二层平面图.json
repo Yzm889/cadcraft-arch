@@ -255,6 +255,12 @@
     "errors": 0,
     "scale": 100.0
   },
+  "label_avoid": {
+    "checked": 0,
+    "changed": [],
+    "unresolved": [],
+    "collisions": []
+  },
   "reconcile": {
     "issues": [],
     "count": 0,

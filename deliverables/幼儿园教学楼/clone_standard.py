@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """把 02 二层平面图当作标准层模板，复制出 03/04/05 层。
 
-只在复制件上改：两间功能房名称、楼层主题、标高、图签。
+只在复制件上改：两间功能房名称、楼层主题、标高、图签；最后把块名与
+AA_ID / 宿主墙 / 房间围合墙引用统一改成目标层前缀（F3/F4/F5）。
 墙体/门窗/房间/楼梯/轴网/尺寸/图框不重画，因此不会再走一遍几百个构件的生成。
 """
 from __future__ import annotations
@@ -15,8 +16,8 @@ OUT = Path(__file__).resolve().parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 from aa_lib import (  # noqa: E402
-    Session, audit, create_stair, create_text, delete_component, drawing_scale, export,
-    reconcile, room_data, set_room, set_sheet,
+    Session, audit, avoid_opening_labels, create_stair, create_text, delete_component,
+    drawing_scale, export, reconcile, room_data, set_room, set_sheet,
 )
 
 from build_kindergarten import append_png_check, validate_floor  # noqa: E402
@@ -48,6 +49,23 @@ def set_floor_attr(dxf: Path, floor: int) -> None:
                     break
     if changed == 0:
         raise RuntimeError("%s 里没有找到 AA_FLOOR 属性" % dxf.name)
+    dxf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def renumber_ids(dxf: Path, floor: int) -> None:
+    """把复制件里所有 F2 前缀改成目标层（块名、AA_ID、宿主墙/房间引用一起改）。
+
+    复制件是字节级复制，块名 `AA_WALL_F2...` 与属性值 `F2...` 必须同步改；
+    只改 AA_ID 会让 `wall_info("F3B1")` 找不到块 `AA_WALL_F2B1`。
+    """
+    lines = dxf.read_text(encoding="utf-8", errors="surrogateescape").splitlines()
+    changed = 0
+    for i, line in enumerate(lines):
+        if "F2" in line:
+            lines[i] = line.replace("F2", "F%d" % floor)
+            changed += 1
+    if changed == 0:
+        raise RuntimeError("%s 里没有找到 F2 前缀" % dxf.name)
     dxf.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -103,13 +121,17 @@ def clone_floor(no: int) -> dict:
                           rise=150, well=120, landing=1200, angle=90,
                           level="TOP", side="LEFT")
 
+    # 改完房间名/图签后再统一避让一次门窗编号
+    label_avoid = avoid_opening_labels(s)
     s.run([], save=True)
+    renumber_ids(dxf, no)
     set_floor_attr(dxf, no)
 
     # 4) 回读 + 图面自检 + PNG
-    snap = validate_floor(Session(dxf), no, "F2")
+    snap = validate_floor(Session(dxf), no, "F%d" % no)
     a = audit(Session(dxf), tol=1.0)
     snap["audit"] = a
+    snap["label_avoid"] = label_avoid
     snap["reconcile"] = reconcile(Session(dxf), fix=False, tol=1.0)
     png = OUT / (stem + ".png")
     win = (sheet["at"][0], sheet["at"][1],
