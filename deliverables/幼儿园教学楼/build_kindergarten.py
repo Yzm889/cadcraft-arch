@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from aa_lib import (  # noqa: E402
-    CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, block_geometry,
-    create_axis_grid, create_opening, create_room_edges, create_sheet, create_stair,
-    create_text, draw_table, drawing_extent, drawing_scale, export, opening_data, reconcile,
-    refresh_opening_labels, room_data, wall_data,
+    CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, bind_walls_to_axis,
+    block_geometry, create_axis_grid, create_opening, create_room_edges, create_sheet,
+    create_stair, create_text, draw_table, drawing_extent, drawing_scale, export, opening_data,
+    reconcile, refresh_opening_labels, room_data, wall_data,
 )
 
 OUT = Path(__file__).resolve().parent
@@ -70,7 +70,7 @@ class FloorBuilder:
         from aa_lib import create_wall
         wid_full = wid if wid.startswith(self.tag) else self.tag + wid
         res = create_wall(self.s, wid_full, (x1, y1), (x2, y2), thick=thick,
-                          kind=kind, mat="", floor=self.no)
+                          kind=kind, mat="", floor=self.no, bind_axis=False)
         self.walls.append({"id": wid_full, "p1": (x1, y1), "p2": (x2, y2),
                            "thick": float(thick), "kind": kind,
                            "len": float(res["length"])})
@@ -196,6 +196,9 @@ class FloorBuilder:
 
     # ---------- 标注 / 图框 ----------
     def finish(self, title: str, note_title: str = "图纸说明") -> dict:
+        # 建墙时不逐面回填轴号；整层墙齐了一次性 attedit（一次 CLI 事务）
+        if axis_grids(self.s):
+            bind_walls_to_axis(self.s, only_empty=True)
         annotate(self.s, exterior_only=True, envelope_only=True, scale=SCALE)
         # 图框自动排图（A1 横式 1:100）
         sheet = create_sheet(

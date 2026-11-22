@@ -57,7 +57,7 @@ PROPOSAL_TOOLS = frozenset({"aa_set_wall", "aa_set_opening", "aa_set_room"})
 MAX_PROPOSAL_OPS = 100
 PREVIEW_ASPECT = 1.5
 LOCK = threading.Lock()
-VERSION = "1.0.53"
+VERSION = "1.0.54"
 RECENT_FILE = CACHE_DIR / "recent.json"
 MAX_RECENT = 8
 

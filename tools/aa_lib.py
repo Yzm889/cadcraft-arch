@@ -495,6 +495,48 @@ class Session:
         )
         return res.last()
 
+    def insert_block(
+        self,
+        name: str,
+        base: tuple[float, float],
+        handles: Sequence[str],
+        at: tuple[float, float],
+        attribs: dict[str, str],
+        rotation: float = 0.0,
+        layer: str | None = None,
+    ) -> str:
+        """块定义 + 插入（+ 设层）一次 CLI 事务完成。
+
+        2F 标准层有 54 墙 + 52 门窗 + 28 房间；原先每个构件都要
+        `make_block`、`insert`、`properties.set` 各起一次 cadcraft-cli，
+        这里用 run 的顺序执行和 `{last}` 句柄，把 2~3 次调用压成 1 次。
+        返回 INSERT 的 handle；块定义和层属性在同一事务里落盘。
+        """
+        if self.block_exists(name):
+            raise CadError("块定义已存在：%s" % name)
+        params: dict[str, Any] = {
+            "name": name,
+            "at": [float(at[0]), float(at[1])],
+            "rotation": float(rotation),
+            "attribs": {k: str(v) for k, v in attribs.items()},
+        }
+        cmds: list[tuple[str, dict[str, Any]]] = [
+            ("block", {"name": name, "base": list(base),
+                       "handles": list(handles), "keep": "delete"}),
+            ("insert", params),
+        ]
+        if layer:
+            # {last} 指上一条命令返回的 handle；不能先回读再另起进程
+            cmds.append(("properties.set", {"handles": ["{last}"], "layer": layer}))
+        res = self.run(cmds, save=True)
+        handle = None
+        for row in res.data:
+            if row.get("handle"):
+                handle = row["handle"]
+        if not handle:
+            raise CadError("块定义/插入失败：%s" % name)
+        return handle
+
     def insert(
         self,
         block: str,
@@ -509,13 +551,17 @@ class Session:
             "rotation": float(rotation),
             "attribs": {k: str(v) for k, v in attribs.items()},
         }
-        res = self.run([("insert", params)], save=True)
-        handle = res.last().get("handle")
+        cmds: list[tuple[str, dict[str, Any]]] = [("insert", params)]
+        if layer:
+            # 同一次 CLI 事务里设层，不再为 properties.set 单开进程
+            cmds.append(("properties.set", {"handles": ["{last}"], "layer": layer}))
+        res = self.run(cmds, save=True)
+        handle = None
+        for row in res.data:
+            if row.get("handle"):
+                handle = row["handle"]
         if not handle:
             raise CadError("插入块参照失败：%s" % block)
-        if layer:
-            # insert 命令不接受 layer 参数，用 properties.set 回设
-            self.run([("properties.set", {"handles": [handle], "layer": layer})], save=True)
         return handle
 
     # ---------- 回读 ----------
@@ -599,6 +645,24 @@ class Session:
                 diffs.append("%s 期望 %r 实际 %r" % (k, v, got))
         if diffs:
             raise CadError("属性校验不通过：\n  " + "\n  ".join(diffs))
+
+
+def _drawing_bytes(session: Session) -> bytes:
+    """改图前把整张图纸读进内存，作为失败回滚的唯一真源。"""
+    if not session.path.exists():
+        raise CadError("改图前图纸不存在：%s" % session.path)
+    return session.path.read_bytes()
+
+
+def _restore_drawing_bytes(session: Session, data: bytes) -> None:
+    """原子写回改图前字节；不依赖可能被 CLI 崩溃带走的 *.bak.dxf。"""
+    tmp = session.path.with_name(session.path.name + ".restore.tmp")
+    tmp.write_bytes(data)
+    if tmp.stat().st_size != len(data):
+        raise CadError("回滚失败：临时文件字节数不一致（%d != %d）" % (tmp.stat().st_size, len(data)))
+    os.replace(tmp, session.path)
+    if session.path.stat().st_size != len(data):
+        raise CadError("回滚失败：写回后字节数不一致（%d != %d）" % (session.path.stat().st_size, len(data)))
 
 
 # ---------- 常用组合动作 ----------
@@ -980,6 +1044,7 @@ def bind_walls_to_axis(session: Session, grid_id: str | None = None, tol: float 
     if not grids:
         raise CadError("图上没有轴网，无法回填墙轴号")
     updates: list[dict[str, Any]] = []
+    cmds: list[tuple[str, dict[str, Any]]] = []
     for w in wall_data(session):
         ang = float(w["rotation_rad"])
         if abs(math.sin(ang)) <= 1e-3:
@@ -1003,12 +1068,14 @@ def bind_walls_to_axis(session: Session, grid_id: str | None = None, tol: float 
             continue
         if (a1, a2) == (w["ax1"], w["ax2"]):
             continue
-        h = session.component_handle("AA_WALL_", w["id"])
+        h = w.get("handle") or session.component_handle("AA_WALL_", w["id"])
         if not h:
             continue
-        session.run([("attedit", {"handle": h, "values": {"AA_AX1": a1, "AA_AX2": a2}})],
-                    save=True)
+        cmds.append(("attedit", {"handle": h, "values": {"AA_AX1": a1, "AA_AX2": a2}}))
         updates.append({"wall": w["id"], "ax1": a1, "ax2": a2})
+    # 整层墙一起回填：一次 CLI 事务代替每面墙各起一次进程
+    if cmds:
+        session.run(cmds, save=True)
     return {"bound": len(updates), "walls": updates}
 
 
@@ -1627,11 +1694,7 @@ def create_opening(
         ]
     )
 
-    session.make_block(block, (0.0, 0.0), handles + att_handles)
-    handle = session.insert(
-        block,
-        wall["at"],
-        {
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, wall["at"], {
             "AA_TYPE": "OPENING",
             "AA_ID": opening_id,
             "AA_KIND": kind,
@@ -1644,10 +1707,7 @@ def create_opening(
             "AA_NO": no,
             "AA_LABELSIDE": label_side,
             "AA_LABEL_H": "%.4f" % (float(label_h) * sc),
-        },
-        rotation=math.degrees(wall["rotation_rad"]),
-        layer=LAYERS["opening"],
-    )
+        }, rotation=math.degrees(wall["rotation_rad"]), layer=LAYERS["opening"])
     session.expect_attributes(
         block,
         {
@@ -1774,11 +1834,7 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
         ]
     )
 
-    session.make_block(block, (0.0, 0.0), handles + att_handles)
-    handle = session.insert(
-        block,
-        (0.0, 0.0),
-        {
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, (0.0, 0.0), {
             "AA_TYPE": "ROOM",
             "AA_ID": room_id,
             "AA_NAME": name,
@@ -1790,9 +1846,7 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
             "AA_SHOW_NAME": "1" if show_name else "0",
             "AA_NAME_H": "%.4f" % (float(name_h) * sc),
             "AA_AREA_H": "%.4f" % (float(area_h) * sc),
-        },
-        layer=LAYERS["room"],
-    )
+        }, layer=LAYERS["room"])
     session.expect_attributes(
         block,
         {
@@ -2118,9 +2172,9 @@ def create_stair(
     ]
     att_vals = {t: v for t, _p, v in att_defs}
     att_handles = session.define_attributes(att_defs)
-    session.make_block(block, (0.0, 0.0), handles + att_handles)
-    handle = session.insert(block, (float(at[0]), float(at[1])), att_vals,
-                            rotation=angle - 90.0, layer=LAYERS["stair"])
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles,
+                                  (float(at[0]), float(at[1])), att_vals,
+                                  rotation=angle - 90.0, layer=LAYERS["stair"])
     session.expect_attributes(block, {"AA_TYPE": "STAIR", "AA_ID": stair_id,
                                       "AA_KIND": kind_u, "AA_STEPS": str(steps)})
     return {"block": block, "handle": handle, "kind": kind_u, "width": width,
@@ -3213,6 +3267,7 @@ def wall_data(session: Session) -> list[dict[str, Any]]:
             {
                 "id": attrs.get("AA_ID") or g["block"][len("AA_WALL_"):],
                 "block": g["block"],
+                "handle": g.get("handle", ""),
                 "p1": p1,
                 "p2": p2,
                 "len": length,
@@ -4211,11 +4266,13 @@ def create_wall(
     snap_axis: bool = False,
     snap_tol: float = 300.0,
     floor: int = 1,
+    bind_axis: bool = True,
 ) -> dict[str, Any]:
     """墙体：LISP 生成本地几何 -> block -> insert（起点+旋转）-> 回读校验。
 
     snap_axis=True 时先把端点吸附到最近轴线（"先轴后墙"），吸附量在返回值里如实报告；
-    画完若图上有轴网，会自动回填 ax1/ax2（原有的非空值不覆盖）。
+    画完若图上有轴网，会自动回填 ax1/ax2（原有的非空值不覆盖）；批量建墙时
+    可传 bind_axis=False，最后整层调用一次 bind_walls_to_axis，避免每面墙都读全图。
     `floor` 记在 `AA_FLOOR` 上：门窗表要按层统计樘数，平面自身不带层号（v1.0.32）。
     """
     try:
@@ -4277,11 +4334,7 @@ def create_wall(
         ]
     )
 
-    session.make_block(block, (0.0, 0.0), handles + att_handles)
-    handle = session.insert(
-        block,
-        p1,
-        {
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, p1, {
             "AA_TYPE": "WALL",
             "AA_ID": wall_id,
             "AA_THICK": "%.4f" % float(thick),
@@ -4292,10 +4345,7 @@ def create_wall(
             "AA_LEN": "%.4f" % float(length),
             "AA_ROOT": root or wall_id,
             "AA_FLOOR": str(int(floor)),
-        },
-        rotation=float(angle) * 57.29577951308232,
-        layer=LAYERS["wall"],
-    )
+        }, rotation=float(angle) * 57.29577951308232, layer=LAYERS["wall"])
     session.expect_attributes(
         block,
         {
@@ -4306,7 +4356,8 @@ def create_wall(
             "AA_KIND": kind,
         },
     )
-    bound = bind_walls_to_axis(session, tol=50.0, only_empty=True) if axis_grids(session) else None
+    bound = (bind_walls_to_axis(session, tol=50.0, only_empty=True)
+             if bind_axis and axis_grids(session) else None)
     res = {
         "block": block,
         "handle": handle,
@@ -6582,19 +6633,19 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
     _validate_opening_slot(session, wall["length"], new_pos, new_width, o["wallid"],
                            exclude=opening_id, tol=tol)
 
-    backup = session.path.with_name(session.path.stem + ".bak" + session.path.suffix)
-    shutil.copy2(session.path, backup)
+    backup = _drawing_bytes(session)
     try:
         delete_component(session, o["block"])
         create_opening(session, opening_id, o["wallid"], new_kind, new_width, new_pos,
                        height=new_height, sill=new_sill, frame=new_frame, no=new_no,
                        label_side=new_side, label_h=new_label_h)
-    except Exception:
-        shutil.copy2(backup, session.path)
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError("门窗修改失败且回滚失败：%s；原错误：%s"
+                           % (restore_error, exc)) from exc
         raise
-    finally:
-        if backup.exists():
-            backup.unlink()
 
     attrs = session.attributes("AA_OPENING_" + opening_id)
     if abs(float(attrs["AA_POS"]) - new_pos) > 1e-4:
@@ -6618,7 +6669,8 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
     """改房间名称并重绘名称文字。
 
     房间几何只有一个名称 TEXT，属性改不了它，所以走"整体重建"：
-    校验 → 备份 → 摘除旧参照与块定义 → 用已存的 AA_PTS 轮廓重画 → 回读断言 → 删备份。
+    校验 → 内存字节快照 → 摘除旧参照与块定义 → 用已存的 AA_PTS 轮廓重画 →
+    回读断言；任何异常按内存快照原子写回，不依赖 .bak。
     AA_PTS 是房间创建时存下的净空轮廓点串（"x,y;x,y;..."），因此改名不必重算墙环。
     """
     rooms = {r["id"]: r for r in room_data(session)}
@@ -6634,8 +6686,7 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
         raise CadError("拒绝修改：房间 %s 缺少轮廓数据（旧版图纸），请用 room/room --auto 重建"
                        % room_id)
 
-    backup = session.path.with_name(session.path.stem + ".bak" + session.path.suffix)
-    shutil.copy2(session.path, backup)
+    backup = _drawing_bytes(session)
     try:
         delete_component(session, r["block"])
         res = _store_room(session, room_id, list(r["pts"]), r["area"], r["walls"], new_name,
@@ -6646,12 +6697,13 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
                           area_h=(r.get("area_h") / drawing_scale(session)
                                   if r.get("area_h") else 2.0),
                           refresh=False)
-    except Exception:
-        shutil.copy2(backup, session.path)
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError("房间修改失败且回滚失败：%s；原错误：%s"
+                           % (restore_error, exc)) from exc
         raise
-    finally:
-        if backup.exists():
-            backup.unlink()
 
     attrs = session.attributes("AA_ROOM_" + room_id)
     if attrs.get("AA_NAME") != new_name:
