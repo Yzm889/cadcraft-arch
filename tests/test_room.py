@@ -53,7 +53,7 @@ def main() -> int:
     geom = block_geometry(path, "AA_ROOM_R001") if path.exists() else []
     texts = [g["text"] for g in geom if g["type"] in ("TEXT", "MTEXT")]
     assert texts and texts[0] == "客厅", texts
-    assert texts[1] in ("15.32㎡", "15.32 m²", "15.32"), texts
+    assert texts[1] in ("15.3 m²", "15.3㎡", "15.3"), texts
 
     # 2) 墙环断裂必须拒绝（把 W003 换成不存在的方向）
     expect_error(

@@ -108,6 +108,33 @@ def _csv(text: str) -> list[str]:
     return [x.strip() for x in text.split(",") if x.strip()]
 
 
+def _axis_space_arg(count: int, scalar, csv_text: str, axis: str):
+    """轴网间距参数：scalar 或逗号分隔的逐段间距，二选一。"""
+    if count < 1:
+        raise CadError("%s 轴数必须 ≥1（收到 %s）" % (axis, count))
+    if csv_text:
+        try:
+            spaces = [float(x) for x in _csv(csv_text)]
+        except ValueError:
+            raise CadError("%s 间距列表不是数字：%s" % (axis, csv_text)) from None
+        if len(spaces) != count - 1:
+            raise CadError(
+                "%s 间距列表需要 %d 段（轴数 %d - 1），收到 %d 段"
+                % (axis, count - 1, count, len(spaces))
+            )
+        if any(v <= 0 for v in spaces):
+            raise CadError("%s 间距必须为正实数：%s" % (axis, csv_text))
+        return spaces
+    if count == 1:
+        return []
+    if scalar is None:
+        raise CadError("%s 轴数 %d 需要 --%sspace 或 --%sspaces"
+                       % (axis, count, axis.lower(), axis.lower()))
+    if scalar <= 0:
+        raise CadError("%s 间距必须为正实数（收到 %s）" % (axis, scalar))
+    return float(scalar)
+
+
 def emit(obj) -> None:
     print(json.dumps(obj, ensure_ascii=False))
 
@@ -145,16 +172,20 @@ def main(argv: list[str] | None = None) -> int:
     p_scale.add_argument("--set", type=float, default=None, help="设为新比例（已有注记默认整批重画）")
     p_scale.add_argument("--no-rescale", action="store_true", help="只改标记，不重画已有注记")
 
-    p_axis = sub.add_parser("axis", help="生成轴网")
+    p_axis = sub.add_parser("axis", help="生成轴网（等距或每段间距独立）")
     p_axis.add_argument("path")
     p_axis.add_argument("id")
     p_axis.add_argument("--xcount", type=int, required=True)
-    p_axis.add_argument("--xspace", type=float, required=True)
+    p_axis.add_argument("--xspace", type=float, default=None, help="X 向统一间距")
+    p_axis.add_argument("--xspaces", default="", help="X 向逐段间距，逗号分隔，如 8400,8400,8400")
     p_axis.add_argument("--ycount", type=int, required=True)
-    p_axis.add_argument("--yspace", type=float, required=True)
+    p_axis.add_argument("--yspace", type=float, default=None, help="Y 向统一间距")
+    p_axis.add_argument("--yspaces", default="", help="Y 向逐段间距，逗号分隔，如 9600,3000,6600")
     p_axis.add_argument("--xstart", type=float, default=0.0)
     p_axis.add_argument("--ystart", type=float, default=0.0)
     p_axis.add_argument("--ext", type=float, default=1000.0)
+    p_axis.add_argument("--axis-h", type=float, default=3.0,
+                        help="轴号出图字高 mm（1:100 时 4.0 => 模型 400），默认 3.0")
 
     p_axis_auto = sub.add_parser("axis-auto", help="按现有墙段自动生成轴网（竖轴 1/2/3、横轴 A/B/C）")
     p_axis_auto.add_argument("path")
@@ -387,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
     p_op.add_argument("--no", default="", help="门窗编号，缺省按尺寸自动生成（M0921 / C1215）")
     p_op.add_argument("--label-side", default="in", choices=["in", "out", "auto", "leader"],
                       help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
+    p_op.add_argument("--label-h", type=float, default=1.8,
+                      help="门窗编号出图字高 mm（1:100 时 2.5 => 模型 250），默认 1.8")
 
     p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
     p_room.add_argument("path")
@@ -397,6 +430,10 @@ def main(argv: list[str] | None = None) -> int:
     p_room.add_argument("--auto", action="store_true", help="自动枚举闭合墙环并逐个建房间")
     p_room.add_argument("--prefix", default="R", help="自动编号前缀，默认 R")
     p_room.add_argument("--min-area", type=float, default=1.0, help="自动搜环时忽略的最小面积 mm²")
+    p_room.add_argument("--name-h", type=float, default=2.5,
+                        help="房间名出图字高 mm（1:100 时 3.5 => 模型 350）")
+    p_room.add_argument("--area-h", type=float, default=2.0,
+                        help="面积出图字高 mm（1:100 时 2.5 => 模型 250）")
 
     p_show = sub.add_parser("show", help="列出全部 AA_ 构件与属性")
     p_show.add_argument("path")
@@ -423,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     p_seto.add_argument("--no", default=None)
     p_seto.add_argument("--label-side", default=None, choices=["in", "out", "auto", "leader"],
                         help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
+    p_seto.add_argument("--label-h", type=float, default=None, help="编号出图字高 mm")
 
     p_openings = sub.add_parser("openings", help="门窗表：按编号汇总尺寸与数量，可导出 CSV / 图上表格")
     p_openings.add_argument("path")
@@ -684,9 +722,12 @@ def main(argv: list[str] | None = None) -> int:
             raise CadError("图纸不存在：%s" % session.path)
 
         if args.cmd == "axis":
+            xs = _axis_space_arg(args.xcount, args.xspace, args.xspaces, "X")
+            ys = _axis_space_arg(args.ycount, args.yspace, args.yspaces, "Y")
             emit({"ok": True, **create_axis_grid(
-                session, args.id, args.xcount, args.xspace,
-                args.ycount, args.yspace, args.xstart, args.ystart, args.ext)})
+                session, args.id, args.xcount, xs,
+                args.ycount, ys, args.xstart, args.ystart, args.ext,
+                text_h=args.axis_h)})
         elif args.cmd == "layers":
             if args.fix:
                 got = session.ensure_layers()
@@ -885,17 +926,19 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_opening(
                 session, args.id, args.wall, args.kind,
                 args.width, args.pos, args.height, args.sill,
-                args.frame, args.no, args.label_side)})
+                args.frame, args.no, args.label_side, label_h=args.label_h)})
         elif args.cmd == "room":
             if args.auto:
                 emit({"ok": True, **auto_rooms(
-                    session, args.prefix, args.name, args.min_area)})
+                    session, args.prefix, args.name, args.min_area,
+                    name_h=args.name_h, area_h=args.area_h)})
             else:
                 if not args.id or not args.walls:
                     raise CadError("room 需要给出房间编号与 --walls，或用 --auto 自动搜环")
                 emit({"ok": True, **create_room(
                     session, args.id, _csv(args.walls), args.name,
-                    show_area=not args.no_area)})
+                    show_area=not args.no_area,
+                    name_h=args.name_h, area_h=args.area_h)})
         elif args.cmd == "split":
             emit({"ok": True, **split_at_intersections(session)})
         elif args.cmd == "set-wall":
@@ -905,7 +948,7 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **set_opening(
                 session, args.id, args.pos, args.width,
                 args.height, args.sill, args.kind, args.frame, args.no,
-                args.label_side)})
+                args.label_side, label_h=args.label_h)})
         elif args.cmd == "merge":
             emit({"ok": True, **merge_walls(
                 session, _csv(args.walls) or None)})

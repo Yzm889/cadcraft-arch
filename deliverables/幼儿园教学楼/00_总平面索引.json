@@ -1,0 +1,52 @@
+{
+  "floor": 0,
+  "checks": [
+    {
+      "name": "00-1 图幅",
+      "ok": true,
+      "detail": "A1 横式 1:100"
+    },
+    {
+      "name": "00-2 图纸目录",
+      "ok": true,
+      "detail": "目录 6 行（01–05 + 本图）"
+    },
+    {
+      "name": "00-3 PNG",
+      "ok": true,
+      "detail": "PNG (2400, 1600)"
+    },
+    {
+      "name": "00-4 图面自检",
+      "ok": true,
+      "detail": "图面 0 问题；无"
+    }
+  ],
+  "audit": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "scale": 100.0
+  },
+  "errors": [],
+  "png": {
+    "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\00_总平面索引.png",
+    "bytes": 81631,
+    "thickened": 8,
+    "colored": 0,
+    "px_per_mm": 2.69,
+    "size": [
+      2400,
+      1600
+    ]
+  },
+  "sheet": {
+    "size": "A1",
+    "at": -15000.0,
+    "outer": [
+      84100.0,
+      59400.0
+    ]
+  }
+}

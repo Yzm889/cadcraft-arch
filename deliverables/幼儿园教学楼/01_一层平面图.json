@@ -1,0 +1,231 @@
+{
+  "floor": 1,
+  "tag": "F1",
+  "checks": [
+    {
+      "name": "1 轴网",
+      "ok": true,
+      "detail": "纵轴 7 根/横轴 4 根；X 偏差 0.000，Y 偏差 0.000"
+    },
+    {
+      "name": "2 外墙闭合",
+      "ok": true,
+      "detail": "A/D 全长覆盖、1/7 轴全长覆盖"
+    },
+    {
+      "name": "3 墙段/总长/墙厚",
+      "ok": true,
+      "detail": "墙 48 段，总长 378000 mm，墙厚异常 无"
+    },
+    {
+      "name": "4 门窗",
+      "ok": true,
+      "detail": "门窗 26 樘；宿主异常 无；越界 无；重叠 无"
+    },
+    {
+      "name": "5 房间闭合",
+      "ok": true,
+      "detail": "房间 19 个；闭合/墙环异常 无"
+    },
+    {
+      "name": "6 面积=鞋带",
+      "ok": true,
+      "detail": "房间 19 个；偏差>0.5m²：无"
+    },
+    {
+      "name": "7 AA_ID 唯一",
+      "ok": true,
+      "detail": "构件 ID 114 个；重复 无"
+    },
+    {
+      "name": "8 图层/属性前缀",
+      "ok": true,
+      "detail": "非 AA- 图层 无；非 AA_ 属性 无"
+    },
+    {
+      "name": "9 块参照缩放=1",
+      "ok": true,
+      "detail": "异常缩放 无"
+    },
+    {
+      "name": "10 保存后重开",
+      "ok": true,
+      "detail": "本节 1–9 项均在重新打开已保存 DXF 后执行"
+    },
+    {
+      "name": "11 合规声明",
+      "ok": true,
+      "detail": "说明含方案图/层数论证/3层"
+    },
+    {
+      "name": "12 图面/PNG 自检",
+      "ok": true,
+      "detail": "图面自检 0 问题；PNG 2400×1600"
+    }
+  ],
+  "errors": [],
+  "rooms": [
+    {
+      "id": "F1R001",
+      "name": "多功能活动室",
+      "area": 155.21,
+      "expect": null
+    },
+    {
+      "id": "F1R002",
+      "name": "接待室",
+      "area": 26.56,
+      "expect": null
+    },
+    {
+      "id": "F1R003",
+      "name": "门厅",
+      "area": 53.76,
+      "expect": null
+    },
+    {
+      "id": "F1R004",
+      "name": "晨检区",
+      "area": 26.56,
+      "expect": null
+    },
+    {
+      "id": "F1R005",
+      "name": "等候区",
+      "area": 47.59,
+      "expect": null
+    },
+    {
+      "id": "F1R006",
+      "name": "厨房",
+      "area": 37.76,
+      "expect": null
+    },
+    {
+      "id": "F1R007",
+      "name": "备餐间",
+      "area": 30.08,
+      "expect": null
+    },
+    {
+      "id": "F1R008",
+      "name": "库房",
+      "area": 54.23,
+      "expect": null
+    },
+    {
+      "id": "F1R009",
+      "name": "货运通道",
+      "area": 30.5,
+      "expect": null
+    },
+    {
+      "id": "F1R010",
+      "name": "楼梯间1",
+      "area": 29.21,
+      "expect": null
+    },
+    {
+      "id": "F1R011",
+      "name": "值班门卫",
+      "area": 22.23,
+      "expect": null
+    },
+    {
+      "id": "F1R012",
+      "name": "保健室",
+      "area": 26.04,
+      "expect": null
+    },
+    {
+      "id": "F1R013",
+      "name": "隔离室",
+      "area": 26.04,
+      "expect": null
+    },
+    {
+      "id": "F1R014",
+      "name": "教师办公室",
+      "area": 52.7,
+      "expect": null
+    },
+    {
+      "id": "F1R015",
+      "name": "会议室",
+      "area": 52.7,
+      "expect": null
+    },
+    {
+      "id": "F1R016",
+      "name": "公共卫生间/盥洗",
+      "area": 52.7,
+      "expect": null
+    },
+    {
+      "id": "F1R017",
+      "name": "楼梯间2",
+      "area": 29.84,
+      "expect": null
+    },
+    {
+      "id": "F1R018",
+      "name": "电梯厅",
+      "area": 5.17,
+      "expect": null
+    },
+    {
+      "id": "F1R019",
+      "name": "配电间",
+      "area": 6.35,
+      "expect": null
+    }
+  ],
+  "gross": 967.68,
+  "wall_total": 378000.0,
+  "openings": 26,
+  "png": {
+    "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\01_一层平面图.png",
+    "bytes": 147267,
+    "thickened": 8,
+    "colored": 182,
+    "px_per_mm": 2.69,
+    "size": [
+      2400,
+      1600
+    ]
+  },
+  "audit": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "scale": 100.0
+  },
+  "reconcile": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "warnings": 0,
+    "fixable": 0,
+    "suggestions": [],
+    "components": {
+      "walls": 48,
+      "openings": 26,
+      "rooms": 19
+    },
+    "fixed": [],
+    "rolled_back": false
+  },
+  "sheet": {
+    "size": "A1",
+    "at": [
+      -18000.0,
+      -19700.0
+    ],
+    "outer": [
+      84100.0,
+      59400.0
+    ]
+  }
+}

@@ -27,7 +27,7 @@
   (setq area (aa:polyarea pts)
         per (aa:polyperim pts)
         c (aa:centroid pts)
-        area_txt (strcat (rtos (/ area 1000000.0) 2 2) "㎡"))
+        area_txt (strcat (rtos (/ area 1000000.0) 2 1) " m²"))
   (if (> (strlen name) 0)
     (aa:mktext (list (aa:px c) (+ (aa:py c) (* 0.75 aa:*room-h*)) 0.0)
                name aa:*lay-room* aa:*room-h*))

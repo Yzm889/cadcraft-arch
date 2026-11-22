@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from aa_lib import Session, block_geometry, create_axis_grid  # noqa: E402
+from aa_lib import Session, block_geometry, create_axis_grid, axis_grids  # noqa: E402
 
 OUT = ROOT / "samples"
 OUT.mkdir(exist_ok=True)
@@ -92,10 +93,45 @@ def main() -> int:
     assert abs(y1 - 11800.0) < 60, ext                      # 顶部轴号圆圈
     print("extents ok:", ext)
 
-    # 5) DWG 往返：存 DWG -> 转回 DXF -> 属性仍一致
+    # 5) 非等距轴网：Y 向 9600 / 3000 / 6600，CLI 逐段参数必须能画并回读
+    custom = OUT / "test_axis_custom.dxf"
+    if custom.exists():
+        custom.unlink()
+    subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "aa_cmd.py"), "new", str(custom),
+         "--scale", "100"],
+        check=True, capture_output=True, text=True, encoding="utf-8",
+    )
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "aa_cmd.py"), "axis", str(custom), "AXF",
+         "--xcount", "7", "--xspace", "8400",
+         "--ycount", "4", "--yspaces", "9600,3000,6600", "--ext", "2400"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    s3 = Session(custom)
+    attrs3 = s3.attributes("AA_AXGRID_AXF")
+    assert attrs3.get("AA_MODE") == "CUSTOM", attrs3
+    assert attrs3.get("AA_YSPACE") == "VARIABLE", attrs3
+    assert attrs3.get("AA_YSPACES") == "9600.0000;3000.0000;6600.0000", attrs3
+    g3 = [g for g in axis_grids(s3) if g["id"] == "AXF"][0]
+    assert g3["xpos"] == [0, 8400, 16800, 25200, 33600, 42000, 50400], g3
+    assert g3["ypos"] == [0, 9600, 12600, 19200], g3
+    assert g3["ver"] == ["1", "2", "3", "4", "5", "6", "7"], g3
+    assert g3["hor"] == ["A", "B", "C", "D"], g3
+    print("custom axis ok:", g3["xpos"], g3["ypos"])
+
+    bad = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "aa_cmd.py"), "axis", str(custom), "AXBAD",
+         "--xcount", "7", "--xspace", "8400", "--ycount", "4", "--yspaces", "9600,3000"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert bad.returncode != 0 and "需要 3 段" in (bad.stdout + bad.stderr), (bad.stdout, bad.stderr)
+    print("custom axis reject ok")
+
+    # 6) DWG 往返：存 DWG -> 转回 DXF -> 属性仍一致
     dwg = OUT / "test_axis.dwg"
     s.run([], save=False)  # noop，仅确认会话可用
-    import subprocess
     subprocess.run([s.cli, "convert", str(path), str(dwg)], check=True,
                    capture_output=True, text=True, encoding="utf-8")
     back = OUT / "test_axis_roundtrip.dxf"

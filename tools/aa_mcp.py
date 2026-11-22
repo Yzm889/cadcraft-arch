@@ -97,7 +97,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.51"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.52"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -154,21 +154,29 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "aa_axis",
-        "description": "生成轴网：xcount 道纵轴（间距 xspace）+ ycount 道横轴（间距 yspace），含轴号。",
+        "description": "生成轴网：xcount 道纵轴、ycount 道横轴。间距可统一给 xspace/yspace，"
+                       "也可用 xspaces/yspaces 给每一段独立间距（如 Y 向 9600,3000,6600）。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "图纸绝对路径"},
                 "id": {"type": "string", "description": "轴网编号，如 AX001"},
                 "xcount": {"type": "integer", "description": "纵轴根数（≥1）"},
-                "xspace": {"type": "number", "description": "纵轴间距 mm"},
+                "xspace": {"type": "number", "description": "纵轴统一间距 mm；与 xspaces 二选一"},
+                "xspaces": {"type": "array", "items": {"type": "number"},
+                            "description": "纵轴逐段间距 mm，长度 = xcount-1"},
                 "ycount": {"type": "integer", "description": "横轴根数（≥1）"},
-                "yspace": {"type": "number", "description": "横轴间距 mm"},
+                "yspace": {"type": "number", "description": "横轴统一间距 mm；与 yspaces 二选一"},
+                "yspaces": {"type": "array", "items": {"type": "number"},
+                            "description": "横轴逐段间距 mm，长度 = ycount-1"},
                 "xstart": {"type": "number", "description": "纵轴起点 x", "default": 0},
                 "ystart": {"type": "number", "description": "横轴起点 y", "default": 0},
                 "ext": {"type": "number", "description": "轴线两端出头长度 mm", "default": 1000},
+                "axis_h": {"type": "number",
+                           "description": "轴号出图字高 mm（1:100 时 4.0 => 模型 400）",
+                           "default": 3.0},
             },
-            "required": ["path", "id", "xcount", "xspace", "ycount", "yspace"],
+            "required": ["path", "id", "xcount", "ycount"],
         },
     },
     {
@@ -314,6 +322,9 @@ TOOLS: list[dict[str, Any]] = [
                 "label_side": {"type": "string", "enum": ["in", "out", "auto", "leader"],
                                "description": "编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为",
                                "default": "in"},
+                "label_h": {"type": "number",
+                            "description": "门窗编号出图字高 mm（1:100 时 2.5 => 模型 250）",
+                            "default": 1.8},
             },
             "required": ["path", "id", "wall", "width", "pos"],
         },
@@ -331,6 +342,12 @@ TOOLS: list[dict[str, Any]] = [
                 "name": {"type": "string", "description": "房间名称（可空）", "default": ""},
                 "show_area": {"type": "boolean",
                               "description": "名称下方是否注面积（天正默认注）", "default": True},
+                "name_h": {"type": "number",
+                           "description": "房间名出图字高 mm（1:100 时 3.5 => 模型 350）",
+                           "default": 2.5},
+                "area_h": {"type": "number",
+                           "description": "面积出图字高 mm（1:100 时 2.5 => 模型 250）",
+                           "default": 2.0},
             },
             "required": ["path", "id", "walls"],
         },
@@ -345,6 +362,8 @@ TOOLS: list[dict[str, Any]] = [
                 "prefix": {"type": "string", "description": "编号前缀", "default": "R"},
                 "name": {"type": "string", "description": "统一名称（留空则用编号）", "default": ""},
                 "min_area": {"type": "number", "description": "忽略的最小净面积 mm²", "default": 1.0},
+                "name_h": {"type": "number", "description": "房间名出图字高 mm", "default": 2.5},
+                "area_h": {"type": "number", "description": "面积出图字高 mm", "default": 2.0},
             },
             "required": ["path"],
         },
@@ -1561,11 +1580,17 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("ext", 2400), "ext"), _num(a.get("min_len", 0), "min_len"))}
 
     if name == "aa_axis":
+        xsp = a.get("xspaces") if a.get("xspaces") is not None else a.get("xspace")
+        ysp = a.get("yspaces") if a.get("yspaces") is not None else a.get("yspace")
+        if xsp is not None and not isinstance(xsp, (int, float, list)):
+            raise CadError("xspaces/xspace 必须是数字或数字数组")
+        if ysp is not None and not isinstance(ysp, (int, float, list)):
+            raise CadError("yspaces/yspace 必须是数字或数字数组")
         return {"ok": True, **create_axis_grid(
-            s, a["id"], int(a["xcount"]), _num(a["xspace"], "xspace"),
-            int(a["ycount"]), _num(a["yspace"], "yspace"),
+            s, a["id"], int(a["xcount"]), xsp,
+            int(a["ycount"]), ysp,
             _num(a.get("xstart", 0), "xstart"), _num(a.get("ystart", 0), "ystart"),
-            _num(a.get("ext", 1000), "ext"))}
+            _num(a.get("ext", 1000), "ext"), text_h=_num(a.get("axis_h", 3.0), "axis_h"))}
 
     if name == "aa_axis_bind":
         return {"ok": True, **bind_walls_to_axis(
@@ -1644,7 +1669,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a["width"], "width"), _num(a["pos"], "pos"),
             _opt(a.get("height")), _num(a.get("sill", 0), "sill"),
             _num(a.get("frame", 60), "frame"), a.get("no", "") or "",
-            a.get("label_side", "in") or "in")}
+            a.get("label_side", "in") or "in",
+            label_h=_num(a.get("label_h", 1.8), "label_h"))}
 
     if name == "aa_openings":
         at = a.get("table_at")
@@ -1666,12 +1692,16 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         if isinstance(walls, str):
             walls = [x for x in walls.split(",") if x]
         return {"ok": True, **create_room(s, a["id"], list(walls), a.get("name", ""),
-                                          show_area=bool(a.get("show_area", True)))}
+                                          show_area=bool(a.get("show_area", True)),
+                                          name_h=_num(a.get("name_h", 2.5), "name_h"),
+                                          area_h=_num(a.get("area_h", 2.0), "area_h"))}
 
     if name == "aa_room_auto":
         return {"ok": True, **auto_rooms(
             s, a.get("prefix", "R"), a.get("name", ""),
-            _num(a.get("min_area", 1.0), "min_area"))}
+            _num(a.get("min_area", 1.0), "min_area"),
+            name_h=_num(a.get("name_h", 2.5), "name_h"),
+            area_h=_num(a.get("area_h", 2.0), "area_h"))}
 
     if name == "aa_split":
         return {"ok": True, **split_at_intersections(s)}

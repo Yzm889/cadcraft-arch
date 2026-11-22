@@ -1,0 +1,286 @@
+{
+  "floor": 3,
+  "tag": "F2",
+  "checks": [
+    {
+      "name": "1 轴网",
+      "ok": true,
+      "detail": "纵轴 7 根/横轴 4 根；X 偏差 0.000，Y 偏差 0.000"
+    },
+    {
+      "name": "2 外墙闭合",
+      "ok": true,
+      "detail": "A/D 全长覆盖、1/7 轴全长覆盖"
+    },
+    {
+      "name": "3 墙段/总长/墙厚",
+      "ok": true,
+      "detail": "墙 54 段，总长 396600 mm，墙厚异常 无"
+    },
+    {
+      "name": "4 门窗",
+      "ok": true,
+      "detail": "门窗 52 樘；宿主异常 无；越界 无；重叠 无"
+    },
+    {
+      "name": "5 房间闭合",
+      "ok": true,
+      "detail": "房间 28 个；闭合/墙环异常 无"
+    },
+    {
+      "name": "6 面积=鞋带",
+      "ok": true,
+      "detail": "房间 28 个；偏差>0.5m²：无"
+    },
+    {
+      "name": "7 AA_ID 唯一",
+      "ok": true,
+      "detail": "构件 ID 156 个；重复 无"
+    },
+    {
+      "name": "8 图层/属性前缀",
+      "ok": true,
+      "detail": "非 AA- 图层 无；非 AA_ 属性 无"
+    },
+    {
+      "name": "9 块参照缩放=1",
+      "ok": true,
+      "detail": "异常缩放 无"
+    },
+    {
+      "name": "10 保存后重开",
+      "ok": true,
+      "detail": "本节 1–9 项均在重新打开已保存 DXF 后执行"
+    },
+    {
+      "name": "11 合规声明",
+      "ok": true,
+      "detail": "说明含方案图/层数论证/3层"
+    },
+    {
+      "name": "12 图面/PNG 自检",
+      "ok": true,
+      "detail": "图面自检 0 问题；PNG 2400×1600"
+    }
+  ],
+  "errors": [],
+  "rooms": [
+    {
+      "id": "F2R001",
+      "name": "活动室",
+      "area": 52.48,
+      "expect": null
+    },
+    {
+      "id": "F2R002",
+      "name": "寝室",
+      "area": 53.44,
+      "expect": null
+    },
+    {
+      "id": "F2R003",
+      "name": "入口过渡",
+      "area": 16.53,
+      "expect": null
+    },
+    {
+      "id": "F2R004",
+      "name": "卫生间",
+      "area": 11.69,
+      "expect": null
+    },
+    {
+      "id": "F2R005",
+      "name": "衣帽间",
+      "area": 9.97,
+      "expect": null
+    },
+    {
+      "id": "F2R006",
+      "name": "贮藏",
+      "area": 8.41,
+      "expect": null
+    },
+    {
+      "id": "F2R007",
+      "name": "活动室",
+      "area": 53.44,
+      "expect": null
+    },
+    {
+      "id": "F2R008",
+      "name": "寝室",
+      "area": 53.44,
+      "expect": null
+    },
+    {
+      "id": "F2R009",
+      "name": "入口过渡",
+      "area": 16.96,
+      "expect": null
+    },
+    {
+      "id": "F2R010",
+      "name": "卫生间",
+      "area": 11.69,
+      "expect": null
+    },
+    {
+      "id": "F2R011",
+      "name": "衣帽间",
+      "area": 9.97,
+      "expect": null
+    },
+    {
+      "id": "F2R012",
+      "name": "贮藏",
+      "area": 8.41,
+      "expect": null
+    },
+    {
+      "id": "F2R013",
+      "name": "活动室",
+      "area": 53.44,
+      "expect": null
+    },
+    {
+      "id": "F2R014",
+      "name": "寝室",
+      "area": 52.48,
+      "expect": null
+    },
+    {
+      "id": "F2R015",
+      "name": "入口过渡",
+      "area": 16.96,
+      "expect": null
+    },
+    {
+      "id": "F2R016",
+      "name": "卫生间",
+      "area": 11.69,
+      "expect": null
+    },
+    {
+      "id": "F2R017",
+      "name": "衣帽间",
+      "area": 9.97,
+      "expect": null
+    },
+    {
+      "id": "F2R018",
+      "name": "贮藏",
+      "area": 7.98,
+      "expect": null
+    },
+    {
+      "id": "F2R019",
+      "name": "楼梯间1",
+      "area": 29.21,
+      "expect": null
+    },
+    {
+      "id": "F2R020",
+      "name": "教具储藏",
+      "area": 21.91,
+      "expect": null
+    },
+    {
+      "id": "F2R023",
+      "name": "教师办公",
+      "area": 25.4,
+      "expect": null
+    },
+    {
+      "id": "F2R024",
+      "name": "教研室",
+      "area": 25.4,
+      "expect": null
+    },
+    {
+      "id": "F2R025",
+      "name": "公共卫生间/盥洗",
+      "area": 52.07,
+      "expect": null
+    },
+    {
+      "id": "F2R026",
+      "name": "楼梯间2",
+      "area": 29.53,
+      "expect": null
+    },
+    {
+      "id": "F2R027",
+      "name": "电梯厅",
+      "area": 5.29,
+      "expect": null
+    },
+    {
+      "id": "F2R028",
+      "name": "配电间",
+      "area": 6.35,
+      "expect": null
+    },
+    {
+      "id": "F2R021",
+      "name": "图书阅览室",
+      "area": 52.07,
+      "expect": null
+    },
+    {
+      "id": "F2R022",
+      "name": "建构游戏室",
+      "area": 52.07,
+      "expect": null
+    }
+  ],
+  "gross": 967.68,
+  "wall_total": 396600.0,
+  "openings": 52,
+  "audit": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "scale": 100.0
+  },
+  "reconcile": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "warnings": 0,
+    "fixable": 0,
+    "suggestions": [],
+    "components": {
+      "walls": 54,
+      "openings": 52,
+      "rooms": 28
+    },
+    "fixed": [],
+    "rolled_back": false
+  },
+  "png": {
+    "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\03_三层平面图.png",
+    "bytes": 168898,
+    "thickened": 8,
+    "colored": 387,
+    "px_per_mm": 2.69,
+    "size": [
+      2400,
+      1600
+    ]
+  },
+  "sheet": {
+    "size": "A1",
+    "at": [
+      -18000.0,
+      -19700.0
+    ],
+    "outer": [
+      84100.0,
+      59400.0
+    ]
+  },
+  "source": "02_二层平面图.dxf"
+}

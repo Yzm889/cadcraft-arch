@@ -6,7 +6,7 @@
   "opening": {"name": "AA-OPENING", "color": "青", "linetype": "Continuous", "lineweight": 0.18},
   "room": {"name": "AA-ROOM", "color": "白", "linetype": "Continuous", "lineweight": 0.18},
   "dim": {"name": "AA-DIM", "color": "绿", "linetype": "Continuous", "lineweight": 0.15},
-  "sheet": {"name": "AA-SHEET", "color": "白", "linetype": "Continuous", "lineweight": 0.70},
+  "sheet": {"name": "AA-FRAME", "color": "白", "linetype": "Continuous", "lineweight": 0.70},
   "title": {"name": "AA-TITLE", "color": "白", "linetype": "Continuous", "lineweight": 0.25},
   "table": {"name": "AA-TABLE", "color": "白", "linetype": "Continuous", "lineweight": 0.18},
   "border": {"name": "AA-BORDER", "color": "白", "linetype": "Continuous", "lineweight": 0.15},

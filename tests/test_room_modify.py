@@ -67,7 +67,7 @@ def main() -> int:
     geom = block_geometry(path, "AA_ROOM_R001")
     texts = [g["text"] for g in geom if g["type"] in ("TEXT", "MTEXT")]
     print("room block texts:", texts)
-    assert texts[0] == "客厅A" and texts[1].endswith("㎡"), texts
+    assert texts[0] == "客厅A" and texts[1].endswith("m²"), texts
 
     # 2) 幂等：同名再改一次不写盘
     digest = sha(path)

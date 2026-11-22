@@ -38,7 +38,7 @@ DEFAULT_LAYERS = {
     "room": "AA-ROOM",
     "dim": "AA-DIM",
     "border": "AA-BORDER",
-    "sheet": "AA-SHEET",
+    "sheet": "AA-FRAME",
     "title": "AA-TITLE",
     "table": "AA-TABLE",
     "name": "AA-NAME",
@@ -214,7 +214,8 @@ def _write_cfg_scale(session, scale: float) -> str:
         return ref["handle"]
     att = session.define_attributes([("AA_SCALE", "drawing scale 1:n", sc)])[0]
     session.make_block(CFG_BLOCK, (0.0, 0.0), [att])
-    return session.insert(CFG_BLOCK, (0.0, 0.0), {"AA_SCALE": sc})
+    return session.insert(CFG_BLOCK, (0.0, 0.0), {"AA_SCALE": sc},
+                          layer=LAYERS["axistext"])
 
 
 def set_drawing_scale(session, scale: float, rescale: bool = True) -> dict[str, Any]:
@@ -603,85 +604,169 @@ class Session:
 # ---------- 常用组合动作 ----------
 
 
+def _axis_positions(count: int, space: float | Sequence[float] | None,
+                    start: float, axis: str) -> tuple[list[float], list[float]]:
+    """把统一间距或逐段间距展开成绝对轴位，返回 (轴位, 逐段间距)。"""
+    if count < 1:
+        raise CadError("%s 轴数必须 ≥1（收到 %s）" % (axis, count))
+    if isinstance(space, (list, tuple)):
+        try:
+            spaces = [float(v) for v in space]
+        except (TypeError, ValueError):
+            raise CadError("%s 间距不是数字列表" % axis) from None
+        if len(spaces) != count - 1:
+            raise CadError("%s 间距列表需要 %d 段（轴数 %d - 1），收到 %d 段"
+                           % (axis, count - 1, count, len(spaces)))
+    else:
+        if count == 1:
+            spaces = []
+        elif space is None:
+            raise CadError("%s 轴数 %d 需要统一间距或逐段间距" % (axis, count))
+        else:
+            spaces = [float(space)] * (count - 1)
+    if any((not math.isfinite(v)) or v <= 0 for v in spaces):
+        raise CadError("%s 间距必须为正实数：%s" % (axis, spaces))
+    pos = [float(start)]
+    for v in spaces:
+        pos.append(pos[-1] + v)
+    return pos, spaces
+
+
 def create_axis_grid(
     session: Session,
     grid_id: str,
     xcount: int,
-    xspace: float,
+    xspace: float | Sequence[float] | None,
     ycount: int,
-    yspace: float,
+    yspace: float | Sequence[float] | None,
     xstart: float = 0.0,
     ystart: float = 0.0,
     ext: float | None = None,
     scale: float | None = None,
+    text_h: float = 3.0,
 ) -> dict[str, Any]:
-    """轴网：LISP 生成几何 -> block 归集 -> insert 带属性 -> 回读校验。
+    """轴网：支持统一间距，也支持 X/Y 每一段间距独立给（如 9600,3000,6600）。
 
-    轴号圈直径 8mm、字高 3mm、轴线外伸 24mm，按出图比例换算（1:100 => 800/300/2400）。
+    轴号圈直径 8mm、轴线外伸 24mm，按出图比例换算（1:100 => 800/2400）。
+    text_h 为出图字高 mm（1:100 时 4.0 => 模型 400），默认 3.0 保持旧图一致。
     """
     block = "AA_AXGRID_" + grid_id
+    if session.block_exists(block):
+        raise CadError("轴网 %s 已存在，请换编号（不会覆盖已有轴网）" % grid_id)
     sc = float(scale) if scale else drawing_scale(session)
     if ext is None:
         ext = annot_size(24.0, sc)
+    xs, xspaces = _axis_positions(int(xcount), xspace, float(xstart), "X")
+    ys, yspaces = _axis_positions(int(ycount), yspace, float(ystart), "Y")
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    ver = [str(i + 1) for i in range(len(xs))]
+    hor = _axis_letters(len(ys))
+    gap = annot_size(4.0, sc)
+    uniq = lambda vals: len({round(v, 4) for v in vals}) <= 1
+    mode = "EVEN" if uniq(xspaces) and uniq(yspaces) else "CUSTOM"
+
     session.ensure_layers([LAYERS["axis"], LAYERS["axistext"]])
     session.ensure_linetypes()          # 轴线用 CENTER 点划线，先确保图档里有这个线型
 
     before = session.snapshot()
-    value = session.lisp(
-        "(progn (setq aa:*axis-r* %.4f) (setq aa:*axis-h* %.4f)"
-        " (aa:axis \"%s\" %d %s %d %s %s %s %s))"
-        % (annot_size(4.0, sc), annot_size(3.0, sc),
-           grid_id, xcount, xspace, ycount, yspace, xstart, ystart, ext),
+    body: list[str] = []
+    for x, lab in zip(xs, ver):
+        body.append('(aa:mkline-lt (list %.4f %.4f) (list %.4f %.4f) "%s" "CENTER")'
+                    % (x, y0 - float(ext), x, y1 + float(ext), LAYERS["axis"]))
+        body.append('(aa:axistag %.4f %.4f "%s")' % (x, y1 + float(ext) + gap, lab))
+    for y, lab in zip(ys, hor):
+        body.append('(aa:mkline-lt (list %.4f %.4f) (list %.4f %.4f) "%s" "CENTER")'
+                    % (x0 - float(ext), y, x1 + float(ext), y, LAYERS["axis"]))
+        body.append('(aa:axistag %.4f %.4f "%s")' % (x0 - float(ext) - gap, y, lab))
+    session.lisp(
+        "(progn (setq aa:*axis-r* %.4f) (setq aa:*axis-h* %.4f) %s (princ \"ok\"))"
+        % (annot_size(4.0, sc), annot_size(float(text_h), sc), " ".join(body)),
         libraries=("aa_core.lisp", "aa_axis.lisp"),
     )
     handles = session.new_handles(before)
-    ver, hor = value.split("#")
+    value = ";".join(ver) + "#" + ";".join(hor)
+    ver_s, hor_s = value.split("#")
 
+    def fmt_spaces(vals: Sequence[float]) -> str:
+        return ";".join("%.4f" % v for v in vals)
+
+    def fmt_pos(vals: Sequence[float]) -> str:
+        return ";".join("%.2f" % v for v in vals)
+
+    x_uniform = "%.4f" % xspaces[0] if xspaces and uniq(xspaces) else "VARIABLE"
+    y_uniform = "%.4f" % yspaces[0] if yspaces and uniq(yspaces) else "VARIABLE"
+    att_vals = {
+        "AA_TYPE": "AXGRID",
+        "AA_ID": grid_id,
+        "AA_MODE": mode,
+        "AA_XCOUNT": str(len(xs)),
+        "AA_YCOUNT": str(len(ys)),
+        "AA_XSPACE": x_uniform,
+        "AA_YSPACE": y_uniform,
+        "AA_XSPACES": fmt_spaces(xspaces),
+        "AA_YSPACES": fmt_spaces(yspaces),
+        "AA_XPOS": fmt_pos(xs),
+        "AA_YPOS": fmt_pos(ys),
+        "AA_XSTART": "%.4f" % float(xstart),
+        "AA_YSTART": "%.4f" % float(ystart),
+        "AA_TEXT_H": "%.4f" % (float(text_h) * sc),
+        "AA_VER": ver_s,
+        "AA_HOR": hor_s,
+    }
     att_handles = session.define_attributes(
         [
             ("AA_TYPE", "component type", "AXGRID"),
             ("AA_ID", "component id", grid_id),
-            ("AA_XCOUNT", "x axis count", str(xcount)),
-            ("AA_YCOUNT", "y axis count", str(ycount)),
-            ("AA_XSPACE", "x axis spacing", "%.4f" % float(xspace)),
-            ("AA_YSPACE", "y axis spacing", "%.4f" % float(yspace)),
+            ("AA_MODE", "grid mode", mode),
+            ("AA_XCOUNT", "x axis count", str(len(xs))),
+            ("AA_YCOUNT", "y axis count", str(len(ys))),
+            ("AA_XSPACE", "x axis spacing", x_uniform),
+            ("AA_YSPACE", "y axis spacing", y_uniform),
+            ("AA_XSPACES", "x axis segment spacings", fmt_spaces(xspaces)),
+            ("AA_YSPACES", "y axis segment spacings", fmt_spaces(yspaces)),
+            ("AA_XPOS", "vertical axis positions", fmt_pos(xs)),
+            ("AA_YPOS", "horizontal axis positions", fmt_pos(ys)),
             ("AA_XSTART", "x origin", "%.4f" % float(xstart)),
             ("AA_YSTART", "y origin", "%.4f" % float(ystart)),
-            ("AA_VER", "vertical labels", ver),
-            ("AA_HOR", "horizontal labels", hor),
+            ("AA_TEXT_H", "axis text height", "%.4f" % (float(text_h) * sc)),
+            ("AA_VER", "vertical labels", ver_s),
+            ("AA_HOR", "horizontal labels", hor_s),
         ]
     )
 
     session.make_block(block, (0.0, 0.0), handles + att_handles)
-    handle = session.insert(
-        block,
-        (0.0, 0.0),
-        {
-            "AA_TYPE": "AXGRID",
-            "AA_ID": grid_id,
-            "AA_XCOUNT": str(xcount),
-            "AA_YCOUNT": str(ycount),
-            "AA_XSPACE": "%.4f" % float(xspace),
-            "AA_YSPACE": "%.4f" % float(yspace),
-            "AA_XSTART": "%.4f" % float(xstart),
-            "AA_YSTART": "%.4f" % float(ystart),
-            "AA_VER": ver,
-            "AA_HOR": hor,
-        },
-        layer=LAYERS["axis"],
-    )
+    handle = session.insert(block, (0.0, 0.0), att_vals, layer=LAYERS["axis"])
     session.expect_attributes(
         block,
         {
             "AA_ID": grid_id,
             "AA_TYPE": "AXGRID",
-            "AA_XCOUNT": str(xcount),
-            "AA_YCOUNT": str(ycount),
-            "AA_VER": ver,
-            "AA_HOR": hor,
+            "AA_XCOUNT": str(len(xs)),
+            "AA_YCOUNT": str(len(ys)),
+            "AA_VER": ver_s,
+            "AA_HOR": hor_s,
         },
     )
-    return {"block": block, "handle": handle, "ver": ver, "hor": hor, "geom_handles": handles}
+
+    # 回读：线数 / 圈数 / 轴号文字必须与轴位推理一致
+    geom = block_geometry(session.path, block)
+    n_line = sum(1 for g in geom if g["type"] == "LINE")
+    n_circ = sum(1 for g in geom if g["type"] == "CIRCLE")
+    texts = [g["text"] for g in geom if g["type"] == "TEXT"]
+    if n_line != len(xs) + len(ys) or n_circ != len(xs) + len(ys):
+        raise CadError("轴网回读不符：线 %d / 圈 %d，期望 %d"
+                       % (n_line, n_circ, len(xs) + len(ys)))
+    if sorted(texts) != sorted(ver + hor):
+        raise CadError("轴号回读不符：%s，期望 %s" % (texts, ver + hor))
+    if not all(g["lt"] == "CENTER" for g in geom if g["type"] == "LINE"):
+        raise CadError("轴线线型回读不符：应全部为 CENTER")
+
+    return {"block": block, "handle": handle, "ver": ver_s, "hor": hor_s,
+            "xpos": [round(v, 3) for v in xs], "ypos": [round(v, 3) for v in ys],
+            "xspaces": [round(v, 3) for v in xspaces],
+            "yspaces": [round(v, 3) for v in yspaces],
+            "mode": mode, "geom_handles": handles}
 
 
 def _axis_letters(n: int) -> list[str]:
@@ -1461,6 +1546,7 @@ def create_opening(
     no: str = "",
     label_side: str = "in",
     tol: float = 1e-6,
+    label_h: float = 1.8,
 ) -> dict[str, Any]:
     """门窗：校验 -> LISP 生成符号 -> block -> insert（贴墙）-> 回读校验。
 
@@ -1472,7 +1558,7 @@ def create_opening(
     任一规则不满足 => 拒绝写入并报告原因。
 
     frame = 窗框厚（构造尺寸，默认 60，可逐樘给定）；no = 门窗编号，
-    留空则按尺寸自动生成（见 opening_no）。
+    留空则按尺寸自动生成（见 opening_no）；label_h = 编号出图字高 mm。
     """
     wall = wall_info(session, wall_id)
     wlen, thick = wall["length"], wall["thick"]
@@ -1515,7 +1601,7 @@ def create_opening(
     sc = drawing_scale(session)
     value = session.lisp(
         '(progn (setq aa:*label-h* %.4f) (aa:opening %s %s %s "%s" %s "%s" %s %s %d))'
-        % (annot_size(1.8, sc), pos, width, thick, kind, frame, no, label_rot, side,
+        % (annot_size(float(label_h), sc), pos, width, thick, kind, frame, no, label_rot, side,
            leader_flag),
         libraries=("aa_core.lisp", "aa_opening.lisp"),
     )
@@ -1537,6 +1623,7 @@ def create_opening(
             ("AA_FRAME", "window frame thickness", "%.4f" % float(frame)),
             ("AA_NO", "opening mark", no),
             ("AA_LABELSIDE", "label side", label_side),
+            ("AA_LABEL_H", "label text height", "%.4f" % (float(label_h) * sc)),
         ]
     )
 
@@ -1556,6 +1643,7 @@ def create_opening(
             "AA_FRAME": "%.4f" % float(frame),
             "AA_NO": no,
             "AA_LABELSIDE": label_side,
+            "AA_LABEL_H": "%.4f" % (float(label_h) * sc),
         },
         rotation=math.degrees(wall["rotation_rad"]),
         layer=LAYERS["opening"],
@@ -1649,7 +1737,9 @@ def _room_inner(edges: list[tuple[tuple[float, float], tuple[float, float], str]
 
 def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]],
                 area: float, wall_ids: Sequence[str], name: str,
-                scale: float | None = None, show_area: bool = True) -> dict[str, Any]:
+                scale: float | None = None, show_area: bool = True,
+                name_h: float = 2.5, area_h: float = 2.0,
+                refresh: bool = True, show_name: bool = True) -> dict[str, Any]:
     """把算好的房间轮廓落图：LISP 画名称/面积 -> block -> insert -> 回读校验。"""
     block = "AA_ROOM_" + room_id
     session.ensure_layers([LAYERS["room"]])
@@ -1660,8 +1750,8 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
     value = session.lisp(
         '(progn (setq aa:*room-h* %.4f) (setq aa:*room-area-h* %.4f)'
         " (setq aa:*room-show-area* %d) (aa:room (list %s) \"%s\"))"
-        % (annot_size(2.5, sc), annot_size(2.0, sc), 1 if show_area else 0,
-           pts_lisp, name),
+        % (annot_size(float(name_h), sc), annot_size(float(area_h), sc),
+           1 if show_area else 0, pts_lisp, name if show_name else ""),
         libraries=("aa_core.lisp", "aa_room.lisp"),
     )
     handles = session.new_handles(before)
@@ -1678,6 +1768,9 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
             ("AA_WALLS", "enclosing walls", ";".join(wall_ids)),
             ("AA_PTS", "inner outline", pts_str),
             ("AA_AREA_SHOW", "show area text", "1" if show_area else "0"),
+            ("AA_SHOW_NAME", "show room name", "1" if show_name else "0"),
+            ("AA_NAME_H", "name text height", "%.4f" % (float(name_h) * sc)),
+            ("AA_AREA_H", "area text height", "%.4f" % (float(area_h) * sc)),
         ]
     )
 
@@ -1694,6 +1787,9 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
             "AA_WALLS": ";".join(wall_ids),
             "AA_PTS": pts_str,
             "AA_AREA_SHOW": "1" if show_area else "0",
+            "AA_SHOW_NAME": "1" if show_name else "0",
+            "AA_NAME_H": "%.4f" % (float(name_h) * sc),
+            "AA_AREA_H": "%.4f" % (float(area_h) * sc),
         },
         layer=LAYERS["room"],
     )
@@ -1707,7 +1803,8 @@ def _store_room(session: Session, room_id: str, inner: list[tuple[float, float]]
         },
     )
     # 房间出现后，室内/室外才可判定：把该房间墙上的门窗编号重画到正确一侧
-    refresh_opening_labels(session, wall_ids)
+    if refresh:
+        refresh_opening_labels(session, wall_ids)
     return {
         "block": block,
         "handle": handle,
@@ -3005,6 +3102,10 @@ def create_room(
     name: str = "",
     tol: float = 1e-6,
     show_area: bool = True,
+    name_h: float = 2.5,
+    area_h: float = 2.0,
+    refresh: bool = True,
+    show_name: bool = True,
 ) -> dict[str, Any]:
     """房间：闭合墙环校验 -> 内偏移轮廓 -> block -> insert -> 回读校验。
 
@@ -3058,14 +3159,18 @@ def create_room(
 
     inner, area = _room_inner(edges, thick, tol)
     return _store_room(session, room_id, inner, area, wall_ids, name,
-                       show_area=show_area)
+                       show_area=show_area, name_h=name_h, area_h=area_h,
+                       refresh=refresh, show_name=show_name)
 
 
 def create_room_edges(session: Session, room_id: str,
                       edges: list[tuple[tuple[float, float], tuple[float, float], str]],
-                      name: str = "", tol: float = 1e-6) -> dict[str, Any]:
+                      name: str = "", tol: float = 1e-6,
+                      name_h: float = 2.5, area_h: float = 2.0,
+                      refresh: bool = True, show_name: bool = True,
+                      show_area: bool = True) -> dict[str, Any]:
     """由任意有序边界边建房间（自动搜环用：房间边界可能落在某堵墙的中段）。"""
-    walls = [e[2] for e in edges]
+    walls = [e[2] for e in edges if e[2]]
     unique: list[str] = []
     for w in walls:
         if not unique or unique[-1] != w:
@@ -3074,7 +3179,9 @@ def create_room_edges(session: Session, room_id: str,
     for w in unique:
         thick[w] = wall_info(session, w)["thick"]
     inner, area = _room_inner(edges, thick, tol)
-    return _store_room(session, room_id, inner, area, unique, name)
+    return _store_room(session, room_id, inner, area, unique, name,
+                       name_h=name_h, area_h=area_h, refresh=refresh,
+                       show_name=show_name, show_area=show_area)
 
 
 def delete_component(session: Session, block: str) -> bool:
@@ -3150,6 +3257,7 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "frame": float(attrs.get("AA_FRAME", "0") or 0),
                 "no": attrs.get("AA_NO", ""),
                 "labelside": attrs.get("AA_LABELSIDE", "in") or "in",
+                "label_h": float(attrs.get("AA_LABEL_H", "0") or 0),
                 "floor": wall_floor.get(attrs.get("AA_WALLID", ""), 1),
             }
         )
@@ -3506,7 +3614,8 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
 def annotate(session: Session, opening_off: float | None = None,
              wall_off: float | None = None, total_off: float | None = None,
              total: bool = True, clear: bool = True,
-             exterior_only: bool = True, scale: float | None = None) -> dict[str, Any]:
+             exterior_only: bool = True, scale: float | None = None,
+             envelope_only: bool = False) -> dict[str, Any]:
     """给外墙标尺寸：洞口宽在内层、墙段（轴线）在中层、总尺寸在最外层。
 
     - 外侧判断：取所有墙中点均值作为"建筑内部参考点"，
@@ -3516,6 +3625,8 @@ def annotate(session: Session, opening_off: float | None = None,
     - 三道尺寸线分别离墙中心线 9 / 16 / 22mm，轴号圈从 24mm 起，
       所以最外道总尺寸与轴号不压线（GB/T 50001 三道尺寸顺序：洞口→轴线→总尺寸）。
     - 总尺寸按"同一条外墙线"归组，每组只注一条全长（矩形平面即四边各一条）。
+    - envelope_only=True 时只标建筑外廓四条边（按墙中心线落在总包围盒边界判断），
+      避免电梯井、配电间这类贴边小房间的内墙被误判为外墙后生成一圈碎尺寸。
     - 标注统一落在 AA-DIM 层，样式 AA-DIM（字高 250 / 箭头 150）。
     - 默认先清掉 AA-DIM 层上已有的标注，重跑幂等，不会叠出一堆重影。
     """
@@ -3531,6 +3642,17 @@ def annotate(session: Session, opening_off: float | None = None,
         total_off = annot_size(22.0, sc)       # 外层总尺寸离墙 22mm
     if exterior_only:
         walls = [w for w in walls if _is_exterior(session, w)]
+    if envelope_only and walls:
+        xmin = min(min(w["p1"][0], w["p2"][0]) for w in walls)
+        xmax = max(max(w["p1"][0], w["p2"][0]) for w in walls)
+        ymin = min(min(w["p1"][1], w["p2"][1]) for w in walls)
+        ymax = max(max(w["p1"][1], w["p2"][1]) for w in walls)
+        tol = 1.0
+        walls = [w for w in walls
+                 if ((abs(w["p1"][1] - ymin) <= tol and abs(w["p2"][1] - ymin) <= tol)
+                     or (abs(w["p1"][1] - ymax) <= tol and abs(w["p2"][1] - ymax) <= tol)
+                     or (abs(w["p1"][0] - xmin) <= tol and abs(w["p2"][0] - xmin) <= tol)
+                     or (abs(w["p1"][0] - xmax) <= tol and abs(w["p2"][0] - xmax) <= tol))]
     if not walls:
         raise CadError("拒绝标注：没找到可标注的外墙")
 
@@ -4546,6 +4668,9 @@ def room_data(session: Session) -> list[dict[str, Any]]:
                 "perimeter": float(attrs.get("AA_PERIMETER", "0") or 0),
                 "walls": [x for x in (attrs.get("AA_WALLS", "") or "").split(";") if x],
                 "show_area": attrs.get("AA_AREA_SHOW", "1") != "0",
+                "show_name": attrs.get("AA_SHOW_NAME", "1") != "0",
+                "name_h": float(attrs.get("AA_NAME_H", "0") or 0),
+                "area_h": float(attrs.get("AA_AREA_H", "0") or 0),
                 "pts": [
                     (float(p.split(",")[0]), float(p.split(",")[1]))
                     for p in (attrs.get("AA_PTS", "") or "").split(";")
@@ -4557,7 +4682,8 @@ def room_data(session: Session) -> list[dict[str, Any]]:
 
 
 def auto_rooms(session: Session, prefix: str = "R", name: str = "",
-               min_area: float = 1.0) -> dict[str, Any]:
+               min_area: float = 1.0, name_h: float = 2.5,
+               area_h: float = 2.0) -> dict[str, Any]:
     """自动搜房间：枚举墙环 -> 跳过已建过的同一墙环 -> 逐个 create_room。
 
     跳过判据是"墙编号集合完全一致"，因此重复执行不会生成重复房间。
@@ -4576,7 +4702,8 @@ def auto_rooms(session: Session, prefix: str = "R", name: str = "",
         while "%s%03d" % (prefix, n) in used_ids:
             n += 1
         rid = "%s%03d" % (prefix, n)
-        res = create_room_edges(session, rid, ring["edges"], name=name or rid)
+        res = create_room_edges(session, rid, ring["edges"], name=name or rid,
+                                name_h=name_h, area_h=area_h)
         used_ids.add(rid)
         taken.add(key)
         created.append({
@@ -6303,6 +6430,7 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
                 sill: float | None = None, kind: str | None = None,
                 frame: float | None = None, no: str | None = None,
                 label_side: str | None = None,
+                label_h: float | None = None,
                 tol: float = 1e-6) -> dict[str, Any]:
     """改门窗位置/宽度/类型/窗框厚/编号/编号侧向后重绘：符号重画，所属墙洞口同步重排。"""
     od = {o["id"]: o for o in opening_data(session)}
@@ -6319,6 +6447,9 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
     new_frame = (o.get("frame") or 60.0) if frame is None else float(frame)
     new_no = (o.get("no") or "") if no is None else no
     new_side = (o.get("labelside") or "in") if label_side is None else label_side
+    sc = drawing_scale(session)
+    stored_h = float(o.get("label_h") or 0)
+    new_label_h = (stored_h / sc if stored_h > 0 else 1.8) if label_h is None else float(label_h)
 
     # 先校验，校验不过就一个字节都不动
     _validate_opening_slot(session, wall["length"], new_pos, new_width, o["wallid"],
@@ -6330,7 +6461,7 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
         delete_component(session, o["block"])
         create_opening(session, opening_id, o["wallid"], new_kind, new_width, new_pos,
                        height=new_height, sill=new_sill, frame=new_frame, no=new_no,
-                       label_side=new_side)
+                       label_side=new_side, label_h=new_label_h)
     except Exception:
         shutil.copy2(backup, session.path)
         raise
@@ -6381,7 +6512,12 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
     try:
         delete_component(session, r["block"])
         res = _store_room(session, room_id, list(r["pts"]), r["area"], r["walls"], new_name,
-                          show_area=r.get("show_area", True))
+                          show_area=r.get("show_area", True),
+                          show_name=r.get("show_name", True),
+                          name_h=(r.get("name_h") / drawing_scale(session)
+                                  if r.get("name_h") else 2.5),
+                          area_h=(r.get("area_h") / drawing_scale(session)
+                                  if r.get("area_h") else 2.0))
     except Exception:
         shutil.copy2(backup, session.path)
         raise
