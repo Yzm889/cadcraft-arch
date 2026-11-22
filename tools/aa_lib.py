@@ -6517,7 +6517,8 @@ def set_room(session: Session, room_id: str, name: str | None = None) -> dict[st
                           name_h=(r.get("name_h") / drawing_scale(session)
                                   if r.get("name_h") else 2.5),
                           area_h=(r.get("area_h") / drawing_scale(session)
-                                  if r.get("area_h") else 2.0))
+                                  if r.get("area_h") else 2.0),
+                          refresh=False)
     except Exception:
         shutil.copy2(backup, session.path)
         raise
