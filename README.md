@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.59，门窗/楼梯图例补齐）
+## 现状（v1.0.60，M-VERT 电梯/坡道/阳台完成）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -65,12 +65,12 @@
 | **构件一致性检查** | `reconcile` | 完成（B8-1，v1.0.48 自动收尾） | 只查数据是否自洽：墙长/墙厚为 0、门窗宿主墙缺失或越出墙段/同墙重叠、房间存储面积与轮廓鞋带面积不符；`--fix` 只做无歧义修复：删零长空墙、删零宽洞口、唯一可匹配的悬空门窗重挂、放得下的越界洞口夹回墙内、重建房间面积；墙厚 0、重叠、多候选、洞口比墙长等只给 `suggestion`；整图先备份 `<stem>.reconcile.bak.dxf`，任一动作失败整图回滚；房间仍受门窗/墙体遗留错误保护（`fix_skipped`） |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，59 个原子工具与 CLI 一一对应（含 `aa_site` / `aa_roof_detail` / `aa_place` / `aa_elevator` / `aa_ramp` / `aa_balcony`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 62 个；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，共 **62 个**工具 = 59 个原子工具（与 CLI 一一对应，含 `aa_site` / `aa_roof_detail` / `aa_place` / `aa_elevator` / `aa_ramp` / `aa_balcony`）+ 3 个事务编排工具（batch / checkpoint / restore，仅 MCP 暴露）；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # 51 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/run_all.py     # 55 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
 python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
 python tests/test_roof_detail.py  # 屋面分格/天沟/坡度注字单项验收
 python tests/test_quality_audit.py  # 图面质量门禁（图签压线/幅面利用率/施工说明术语）
