@@ -53,6 +53,7 @@ DEFAULT_LAYERS = {
     "roofarrow": "AA-ROOF-ARROW",
     "elev": "AA-ELEV",
     "elevdetail": "AA-ELEV-DETAIL",
+    "elevator": "AA-ELEVATOR",
 }
 LAYERS = dict(DEFAULT_LAYERS)
 
@@ -83,6 +84,7 @@ DEFAULT_LAYER_STYLES: dict[str, dict[str, Any]] = {
     "roofarrow": {"color": 3, "linetype": "Continuous", "lineweight": 0.18},
     "elev":     {"color": 7, "linetype": "Continuous", "lineweight": 0.35},
     "elevdetail": {"color": 7, "linetype": "Continuous", "lineweight": 0.18},
+    "elevator": {"color": 2, "linetype": "Continuous", "lineweight": 0.18},
 }
 LAYER_STYLES: dict[str, dict[str, Any]] = {
     k: dict(v) for k, v in DEFAULT_LAYER_STYLES.items()
@@ -339,7 +341,8 @@ class Session:
         sets = "".join(
             '(setq aa:*lay-%s* "%s")' % (k, LAYERS[k])
             for k in ("axis", "axistext", "wall", "opening", "room", "column", "step", "stair",
-                      "stairarrow", "stairtext", "stairbreak", "roof", "roofarrow", "elev", "elevdetail", "sheet", "title", "table")
+                      "stairarrow", "stairtext", "stairbreak", "roof", "roofarrow", "elev", "elevdetail",
+                      "elevator", "sheet", "title", "table")
         )
         payload = loads + sets + code
         res = self.run([("lisp", {"code": payload})], save=True)
