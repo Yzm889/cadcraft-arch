@@ -102,7 +102,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.58"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.59"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -353,6 +353,15 @@ TOOLS: list[dict[str, Any]] = [
                 "label_h": {"type": "number",
                             "description": "门窗编号出图字高 mm（1:100 时 2.5 => 模型 250）",
                             "default": 1.8},
+                "hinge": {"type": "integer", "enum": [1, -1],
+                          "description": "铰点位置：1=洞口左端（默认）/ -1=右端", "default": 1},
+                "swing": {"type": "integer", "enum": [1, -1],
+                          "description": "开启方向：1=本地 +Y（默认）/ -1=-Y", "default": 1},
+                "leaves": {"type": "integer", "enum": [0, 1, 2],
+                           "description": "平开门扇数：0=自动（>=1200 双扇，默认）/ 1 单扇 / 2 双扇",
+                           "default": 0},
+                "doorpart": {"type": "number",
+                             "description": "门连窗里门扇宽度 mm（0=取洞口一半）", "default": 0},
             },
             "required": ["path", "id", "wall", "width", "pos"],
         },
@@ -452,6 +461,13 @@ TOOLS: list[dict[str, Any]] = [
                 "no": {"type": "string", "description": "门窗编号（空串表示按尺寸重算）"},
                 "label_side": {"type": "string", "enum": ["in", "out", "auto", "leader"],
                                "description": "编号所在侧：in / out / auto"},
+                "hinge": {"type": "integer", "enum": [1, -1],
+                          "description": "铰点位置：1=洞口左端 / -1=右端"},
+                "swing": {"type": "integer", "enum": [1, -1],
+                          "description": "开启方向：1=本地 +Y / -1=-Y"},
+                "leaves": {"type": "integer", "enum": [0, 1, 2],
+                           "description": "平开门扇数：0=按宽度自动 / 1 单扇 / 2 双扇"},
+                "doorpart": {"type": "number", "description": "门连窗里门扇宽度 mm"},
             },
             "required": ["path", "id"],
         },
@@ -1780,7 +1796,9 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _opt(a.get("height")), _num(a.get("sill", 0), "sill"),
             _num(a.get("frame", 60), "frame"), a.get("no", "") or "",
             a.get("label_side", "in") or "in",
-            label_h=_num(a.get("label_h", 1.8), "label_h"))}
+            label_h=_num(a.get("label_h", 1.8), "label_h"),
+            hinge=int(a.get("hinge", 1)), swing=int(a.get("swing", 1)),
+            leaves=int(a.get("leaves", 0)), doorpart=float(a.get("doorpart", 0) or 0))}
 
     if name == "aa_openings":
         at = a.get("table_at")
@@ -1833,7 +1851,11 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             s, a["id"],
             _opt(a.get("pos")), _opt(a.get("width")),
             _opt(a.get("height")), _opt(a.get("sill")), a.get("kind"),
-            _opt(a.get("frame")), a.get("no"), a.get("label_side"))}
+            _opt(a.get("frame")), a.get("no"), a.get("label_side"),
+            hinge=(None if a.get("hinge") is None else int(a["hinge"])),
+            swing=(None if a.get("swing") is None else int(a["swing"])),
+            leaves=(None if a.get("leaves") is None else int(a["leaves"])),
+            doorpart=_opt(a.get("doorpart")))}
 
     if name == "aa_sheet":
         s = _session(path)

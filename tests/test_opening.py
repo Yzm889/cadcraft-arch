@@ -50,11 +50,16 @@ def main() -> int:
     assert attrs["AA_HEIGHT"] == "2100.0000", attrs
     # 门窗编号按尺寸自动生成：门 1800x2100 => M1821
     assert attrs["AA_NO"] == "M1821", attrs
-    # 门符号：2 条洞口边线 + 门扇线 + 弧 = 4
-    assert len(d1["geom_handles"]) == 5, d1["geom_handles"]
+    # 平开门 1800 >= 1200 => 双扇：2 条洞口边线 + 2 条门扇线 + 2 段开启弧 + 编号 = 7
+    assert d1["leaves"] == 2, d1
+    assert len(d1["geom_handles"]) == 7, d1["geom_handles"]
     door_texts = [g["text"] for g in block_geometry(path, "AA_OPENING_D001")
                   if g["type"] == "TEXT"]
     assert door_texts == ["M1821"], door_texts
+    # 双扇门的每扇弧半径 = 洞宽/2，两个铰点分别落在洞口两端
+    arcs = sorted((round(g["r"], 4), round(g["cen"][0], 4))
+                  for g in block_geometry(path, "AA_OPENING_D001") if g["type"] == "ARC")
+    assert arcs == [(900.0, 0.0), (900.0, 1800.0)], arcs
 
     # 2) 同一墙上的窗：中心 2700，宽 1200 => 洞口 [2100, 3300]，不与门重叠
     w1 = create_opening(s, "C001", "W001", "WINDOW", width=1200.0, pos=2700.0)
@@ -132,9 +137,66 @@ def main() -> int:
         "必须为正",
     )
 
-    # 7) 图上一共 5 个参照（2 墙 + 3 门窗），失败调用没有留下任何实体
+    # 7) 图例参数：铰点 / 开向 / 扇数 / 门连窗门扇宽
+    create_wall(s, "W004", (0.0, 4000.0), (3600.0, 4000.0), thick=240.0)
+    # 7a) 900 平开门默认单扇：铰点、开向可逐樘指定（右铰 + 向 -Y 开 => 弧 180°→270°）
+    d3 = create_opening(s, "D010", "W004", "DOOR", width=900.0, pos=900.0,
+                        hinge=-1, swing=-1, no="M0921")
+    assert d3["leaves"] == 1, d3
+    assert len(d3["geom_handles"]) == 5, d3["geom_handles"]
+    arcs3 = [g for g in block_geometry(path, "AA_OPENING_D010") if g["type"] == "ARC"]
+    assert len(arcs3) == 1, arcs3
+    assert (round(arcs3[0]["cen"][0], 4), round(arcs3[0]["r"], 4)) == (1350.0, 900.0), arcs3
+    assert (round(arcs3[0]["a1"]), round(arcs3[0]["a2"])) == (180, 270), arcs3
+    assert s.attributes("AA_OPENING_D010")["AA_HINGE"] == "-1"
+    assert s.attributes("AA_OPENING_D010")["AA_SWING"] == "-1"
+    leaf3 = [g for g in block_geometry(path, "AA_OPENING_D010") if g["type"] == "LINE"]
+    # 门扇线必须往 -Y 侧长出去 900（从 -120 到 -1020），不能穿墙
+    assert any(abs(g["pts"][0][0] - 1350.0) < 1e-6 and
+               sorted(p[1] for p in g["pts"]) == [-1020.0, -120.0] for g in leaf3), leaf3
+
+    # 7b) 双扇可以强制为单扇（leaves=1）
+    d4 = create_opening(s, "D011", "W004", "DOOR", width=1500.0, pos=2200.0,
+                        leaves=1, no="M1521")
+    assert d4["leaves"] == 1, d4
+    arcs4 = [g for g in block_geometry(path, "AA_OPENING_D011") if g["type"] == "ARC"]
+    assert len(arcs4) == 1 and abs(arcs4[0]["r"] - 1500.0) < 1e-6, arcs4
+
+    # 7c) 门连窗：门扇带弧 + 窗四线 + 中梃；门扇宽可指定
+    create_wall(s, "W005", (0.0, 6000.0), (3600.0, 6000.0), thick=240.0)
+    dw = create_opening(s, "MC001", "W005", "DOORWIN", width=2400.0, pos=1800.0,
+                        height=2400.0, doorpart=900.0)
+    assert dw["no"] == "MC2424", dw
+    geo = block_geometry(path, "AA_OPENING_MC001")
+    # 2 洞口边线 + 1 门扇线 + 1 弧 + 4 窗线 + 1 中梃 + 1 编号 = 10
+    assert len(dw["geom_handles"]) == 10, dw["geom_handles"]
+    assert len([g for g in geo if g["type"] == "ARC"]) == 1, geo
+    # 中梃落在洞口左端 + 门扇宽 = 600 + 900 = 1500 处
+    mullion = [g for g in geo if g["type"] == "LINE"
+               and abs(g["pts"][0][0] - g["pts"][1][0]) < 1e-6
+               and abs(g["pts"][0][0] - 1500.0) < 1e-6]
+    assert len(mullion) == 1, geo
+    # 窗段只剩洞口右侧 900 宽：四条平行线只跨 [1500, 3000]
+    horiz = [g for g in geo if g["type"] == "LINE"
+             and abs(g["pts"][0][1] - g["pts"][1][1]) < 1e-6]
+    assert len(horiz) == 4, horiz
+    assert all(min(p[0] for p in g["pts"]) >= 1500.0 - 1e-6 for g in horiz), horiz
+
+    # 7d) 非法参数必须拒绝
+    expect_error(
+        lambda: create_opening(s, "D012", "W004", "DOOR", width=900.0, pos=3000.0,
+                               leaves=3),
+        "leaves",
+    )
+    expect_error(
+        lambda: create_opening(s, "D013", "W004", "DOOR", width=900.0, pos=3000.0,
+                               doorpart=1200.0),
+        "门扇宽",
+    )
+
+    # 8) 图上一共 12 个参照（5 墙 + 7 门窗），失败调用没有留下任何实体
     info = s.info()
-    assert info["counts"].get("Block Reference") == 7, info["counts"]
+    assert info["counts"].get("Block Reference") == 12, info["counts"]
     print("PASS test_opening")
     return 0
 

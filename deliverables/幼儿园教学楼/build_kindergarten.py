@@ -76,7 +76,9 @@ class FloorBuilder:
                            "len": float(res["length"])})
 
     def op(self, oid: str, wall_id: str, typ: str, at_xy: tuple[float, float],
-           label_side: str = "in") -> None:
+           label_side: str = "in", swing: int = 1) -> None:
+        """swing = ±1 门扇开向（本地 +Y / -Y）；楼梯间的门要朝走道开（-1），
+        不能朝梯段开——1800 的双扇弧会直接盖住踏步和"上"字。"""
         w, h, sill = M[typ]
         wall = next(w for w in self.walls
                     if w["id"] == wall_id or w["id"] == self.tag + wall_id)
@@ -87,7 +89,7 @@ class FloorBuilder:
         kind = "WINDOW" if typ.startswith("C") else "DOOR"
         res = create_opening(self.s, oid, wall_ref, kind, w, pos,
                              height=h, sill=sill, frame=60, no=typ,
-                             label_side=label_side, label_h=2.5)
+                             label_side=label_side, label_h=2.5, swing=swing)
         self.opens.append({"id": oid, "no": typ, "wall": wall_ref,
                            "width": w, "height": h, "sill": sill, "pos": pos,
                            "kind": kind})
@@ -224,8 +226,6 @@ class FloorBuilder:
         s = SCALE
         x = ax + 30 * s
         y0 = ay + 13 * s
-        # 说明标题跟着行数走：写死 6.0 的话，说明一加行就压到第一行字上
-        self.text((x, y0 + (len(notes) + 1) * 4.8 * s), note_title, 3.2)
         notes = [
             "1. 合规声明：按 JGJ 39-2016《托儿所、幼儿园建筑设计规范》，幼儿园建筑层数不宜超过3层。",
             "   本图为5层假设性方案，层数与消防需专项论证；标注“方案图”，不直接作为报建施工图。",
@@ -234,6 +234,8 @@ class FloorBuilder:
             "4. 门窗：M6 为乙级防火门，M7 为甲级防火门；洞口定位及编号见门窗表与平面标注。",
             "5. 本图为方案阶段建筑平面图；尺寸以毫米计，面积以平方米计，最终以审定施工图为准。",
         ]
+        # 说明标题跟着行数走：写死 6.0 的话，说明一加行就压到第一行字上
+        self.text((x, y0 + (len(notes) + 1) * 4.8 * s), note_title, 3.2)
         for i, line in enumerate(notes):
             self.text((x, y0 + (len(notes) - i) * 4.8 * s), line, 2.2)
         # 本层标高/主题：放在说明区右端那一行，**不能**往图签上方塞——
@@ -505,7 +507,7 @@ def run_1f():
     b.op(b.nid("D"), "A5", "C3", (36000, 0), "out")
     b.op(b.nid("D"), "A6", "C3", (45600, 0), "out")
     # 北区 1-2 楼梯/门卫
-    b.op(b.nid("D"), "C1", "M6", (2400, 12600), "in")
+    b.op(b.nid("D"), "C1", "M6", (2400, 12600), "in", swing=-1)   # 楼梯间1：朝走道开
     b.op(b.nid("D"), "C1", "M3", (6600, 12600), "in")
     # 2-3 保健/隔离
     b.op(b.nid("D"), "C2", "M3", (10500, 12600), "in")
@@ -520,7 +522,7 @@ def run_1f():
     b.op(b.nid("D"), "C5", "M4", (37800, 12600), "in")
     b.op(b.nid("D"), "D5", "C4", (37800, 19200), "out")
     # 6-7 楼梯2/电梯/配电
-    b.op(b.nid("D"), "C6", "M6", (44400, 12600), "in")
+    b.op(b.nid("D"), "C6", "M6", (44400, 12600), "in", swing=-1)  # 楼梯间2：朝走道开
     b.op(b.nid("D"), "C6", "M7", (49800, 12600), "in")
     b.op(b.nid("D"), "P18", "EL", (48000, 15000), "in")
     # 修正电梯门洞尺寸：create_opening 用 M 表，这里单独重设宽度
@@ -653,14 +655,14 @@ def run_standard(no: int, special_a: str, special_b: str, theme: str) -> dict:
     b.text((47400, 17000), "电梯", 2.0)
 
     # 北区走廊侧门
-    b.op(b.nid("D"), "C1", "M6", (2400, 12600), "in")
+    b.op(b.nid("D"), "C1", "M6", (2400, 12600), "in", swing=-1)   # 楼梯间1：朝走道开
     b.op(b.nid("D"), "C1", "M5", (6600, 12600), "in")
     b.op(b.nid("D"), "C2", "M3", (12600, 12600), "in")
     b.op(b.nid("D"), "C3", "M3", (21000, 12600), "in")
     b.op(b.nid("D"), "C4", "M3", (27300, 12600), "in")
     b.op(b.nid("D"), "C4", "M4", (31500, 12600), "in")
     b.op(b.nid("D"), "C5", "M4", (37800, 12600), "in")
-    b.op(b.nid("D"), "C6", "M6", (44400, 12600), "in")
+    b.op(b.nid("D"), "C6", "M6", (44400, 12600), "in", swing=-1)  # 楼梯间2：朝走道开
     b.op(b.nid("D"), "C6", "M4", (48000, 12600), "in")
     b.op(b.nid("D"), "C6", "M7", (49800, 12600), "in")
     # 北立面窗

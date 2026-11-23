@@ -35,7 +35,7 @@
     {
       "name": "7 AA_ID 唯一",
       "ok": true,
-      "detail": "构件 ID 114 个；重复 无"
+      "detail": "构件 ID 117 个；重复 无"
     },
     {
       "name": "8 图层/属性前缀",
@@ -185,10 +185,9 @@
   "openings": 26,
   "png": {
     "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\01_一层平面图.png",
-    "bytes": 147267,
-    "thickened": 8,
-    "colored": 182,
-    "px_per_mm": 2.69,
+    "bytes": 250551,
+    "thickened": 0,
+    "skipped": "no-pillow",
     "size": [
       2400,
       1600
@@ -199,7 +198,14 @@
     "count": 0,
     "by_kind": {},
     "errors": 0,
-    "scale": 100.0
+    "scale": 100.0,
+    "warnings": [],
+    "warning_count": 0,
+    "quality": {
+      "checks": 3,
+      "occupancy": 0.383,
+      "jargon": 0
+    }
   },
   "label_avoid": {
     "checked": 0,

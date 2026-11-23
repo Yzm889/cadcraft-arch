@@ -512,6 +512,14 @@ def main(argv: list[str] | None = None) -> int:
                       help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
     p_op.add_argument("--label-h", type=float, default=1.8,
                       help="门窗编号出图字高 mm（1:100 时 2.5 => 模型 250），默认 1.8")
+    p_op.add_argument("--hinge", type=int, default=1, choices=[1, -1],
+                      help="铰点位置：1=洞口左端（默认）/ -1=右端")
+    p_op.add_argument("--swing", type=int, default=1, choices=[1, -1, 0],
+                      help="开启方向：1=本地 +Y（默认）/ -1=-Y / 0=按室内外自动")
+    p_op.add_argument("--leaves", type=int, default=0, choices=[0, 1, 2],
+                      help="平开门扇数：0=按宽度自动（>=1200 双扇，默认）/ 1 单扇 / 2 双扇")
+    p_op.add_argument("--doorpart", type=float, default=0.0,
+                      help="门连窗里门扇宽度 mm（0=取洞口一半）")
 
     p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
     p_room.add_argument("path")
@@ -553,6 +561,14 @@ def main(argv: list[str] | None = None) -> int:
     p_seto.add_argument("--label-side", default=None, choices=["in", "out", "auto", "leader"],
                         help="编号所在侧：in=室内（默认）/ out=室外 / auto=沿用旧行为")
     p_seto.add_argument("--label-h", type=float, default=None, help="编号出图字高 mm")
+    p_seto.add_argument("--hinge", type=int, default=None, choices=[1, -1],
+                        help="铰点位置：1=洞口左端 / -1=右端")
+    p_seto.add_argument("--swing", type=int, default=None, choices=[-1, 0, 1],
+                        help="开启方向：1=本地 +Y / -1=-Y / 0=按室内外自动")
+    p_seto.add_argument("--leaves", type=int, default=None, choices=[0, 1, 2],
+                        help="平开门扇数：0=按宽度自动 / 1 单扇 / 2 双扇")
+    p_seto.add_argument("--doorpart", type=float, default=None,
+                        help="门连窗里门扇宽度 mm")
 
     p_openings = sub.add_parser("openings", help="门窗表：按编号汇总尺寸与数量，可导出 CSV / 图上表格")
     p_openings.add_argument("path")
@@ -1062,7 +1078,9 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_opening(
                 session, args.id, args.wall, args.kind,
                 args.width, args.pos, args.height, args.sill,
-                args.frame, args.no, args.label_side, label_h=args.label_h)})
+                args.frame, args.no, args.label_side, label_h=args.label_h,
+                hinge=args.hinge, swing=args.swing, leaves=args.leaves,
+                doorpart=args.doorpart)})
         elif args.cmd == "room":
             if args.auto:
                 emit({"ok": True, **auto_rooms(
@@ -1084,7 +1102,9 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **set_opening(
                 session, args.id, args.pos, args.width,
                 args.height, args.sill, args.kind, args.frame, args.no,
-                args.label_side, label_h=args.label_h)})
+                args.label_side, label_h=args.label_h,
+                hinge=args.hinge, swing=args.swing, leaves=args.leaves,
+                doorpart=args.doorpart)})
         elif args.cmd == "merge":
             emit({"ok": True, **merge_walls(
                 session, _csv(args.walls) or None)})

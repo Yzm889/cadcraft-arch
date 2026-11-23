@@ -72,23 +72,38 @@ def main() -> int:
         LAYERS["stair"], LAYERS["stairarrow"], LAYERS["stairtext"],
         LAYERS["stairbreak"]}  # 中层有红剖断线
 
-    # 2b. 首层：只画第一跑 + 45° 剖断，无箭头
+    # 2b. 首层：只画第一跑，踏步按 45° 剖断线裁剪，箭头止在剖断处
     fs = create_stair(s, "LT3", (12000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
                       well=120.0, landing=1200.0, angle=0.0, level="FIRST", side="RIGHT")
     g3 = block_geometry(path, "AA_STAIR_LT3")
-    assert len([x for x in g3 if x["type"] == "LINE"]) == 10, [x["type"] for x in g3]  # 2 边 + 3 踏步 + 4 折断 + 1 杆（w=1200）
+    lines3 = [x for x in g3 if x["type"] == "LINE"]
+    # 2 边 + 6 踏步（run 2520，剖断在 756~1956，只到 1900 一级）+ 4 折断 + 1 箭头杆
+    assert len(lines3) == 13, (len(lines3), [x["type"] for x in g3])
     assert len([x for x in g3 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g3]  # 只有上行箭头
     assert s.attributes("AA_STAIR_LT3")["AA_UPSIDE"] == "RIGHT"
     assert abs(fs["depth"] - 3720.0) < 1e-6, fs
+    # 剖断线必须是 45°（外框 bbox 长宽相等），不能斜跨半个楼梯间
+    br = [x for x in lines3 if x["layer"] == LAYERS["stairbreak"]]
+    assert len(br) == 4, br
+    bxs = [p[0] for x in br for p in x["pts"]]
+    bys = [p[1] for x in br for p in x["pts"]]
+    assert abs((max(bxs) - min(bxs)) - (max(bys) - min(bys))) < 1e-6, (bxs, bys)
+    # 首层只占上行第一跑那一半，第二跑位置必须是空的（side=RIGHT => 上行跑在 +X 半边）
+    allpts3 = [p for x in g3 if x.get("pts") for p in x["pts"]]
+    assert min(p[0] for p in allpts3) >= -60.0 - 1e-6, sorted(p[0] for p in allpts3)[:5]
+    assert max(p[0] for p in allpts3) <= 1260.0 + 112.0 + 1e-6, max(p[0] for p in allpts3)
 
-    # 2c. 顶层：两跑全画，只有"下"
+    # 2c. 顶层：两跑全画，只有沿第二跑的"下"，没有剖断线
     tp = create_stair(s, "LT4", (18000.0, 0.0), "DOGLEG", 1200.0, 9, 280.0, 150.0,
                       well=120.0, landing=1200.0, angle=0.0, level="TOP")
     g4 = block_geometry(path, "AA_STAIR_LT4")
-    assert len([x for x in g4 if x["type"] == "LINE"]) == 26, [x["type"] for x in g4]  # 5 外框+平台 + 18 踏步 + 3 段箭头（梯井多段线另计）
+    # 5 外框+平台 + 18 踏步 + 1 段箭头（梯井多段线另计）
+    assert len([x for x in g4 if x["type"] == "LINE"]) == 24, [x["type"] for x in g4]
     assert len([x for x in g4 if x["type"] == "SOLID"]) == 1, [x["type"] for x in g4]
     texts4 = [x["text"] for x in g4 if x["type"] == "TEXT"]
     assert texts4 == ["下"], texts4
+    assert LAYERS["stairbreak"] not in layer_of_block(path, "AA_STAIR_LT4"), \
+        layer_of_block(path, "AA_STAIR_LT4")
     assert s.attributes("AA_STAIR_LT4")["AA_LEVEL"] == "TOP"
     assert abs(tp["depth"] - 3720.0) < 1e-6, tp
 

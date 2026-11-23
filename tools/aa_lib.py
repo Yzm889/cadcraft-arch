@@ -1435,7 +1435,9 @@ def rescale_annotations(session: Session, scale: float,
             delete_component(session, o["block"])
             create_opening(session, o["id"], o["wallid"], o["kind"],
                            o["width"], o["pos"], o["height"], o["sill"],
-                           o["frame"], o["no"], o["labelside"])
+                           o["frame"], o["no"], o["labelside"],
+                           hinge=o.get("hinge", 1), swing=o.get("swing", 1),
+                           leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
 
         rooms = room_data(session)
         for r in rooms:
@@ -1601,6 +1603,10 @@ def _label_side_sign(session: Session, wall: dict[str, Any], pos: float,
     return 1.0 if (plus_y_indoor == want_inside) else -1.0
 
 
+# 平开门宽度到这个值就按双扇画（建筑惯例：>=1200 的门不做单扇）
+DOOR_DOUBLE_MIN = 1200.0
+
+
 def create_opening(
     session: Session,
     opening_id: str,
@@ -1615,6 +1621,10 @@ def create_opening(
     label_side: str = "in",
     tol: float = 1e-6,
     label_h: float = 1.8,
+    hinge: int = 1,
+    swing: int = 1,
+    leaves: int = 0,
+    doorpart: float = 0.0,
 ) -> dict[str, Any]:
     """门窗：校验 -> LISP 生成符号 -> block -> insert（贴墙）-> 回读校验。
 
@@ -1627,6 +1637,13 @@ def create_opening(
 
     frame = 窗框厚（构造尺寸，默认 60，可逐樘给定）；no = 门窗编号，
     留空则按尺寸自动生成（见 opening_no）；label_h = 编号出图字高 mm。
+
+    平面图例参数（本地坐标 +X 沿墙、+Y 为墙法向）：
+      · hinge    = ±1，铰点落在洞口左端（+1）/ 右端（-1）
+      · swing    = ±1，门扇向本地 +Y / -Y 开
+      · leaves   = 0 自动（平开门 >=1200 双扇，否则单扇）/ 1 单扇 / 2 双扇
+      · doorpart = 门连窗里门扇占的宽度，0 表示取洞口一半
+    窗与门连窗的窗段固定画四线；门连窗中间自动补中梃。
     """
     wall = wall_info(session, wall_id)
     wlen, thick = wall["length"], wall["thick"]
@@ -1635,6 +1652,19 @@ def create_opening(
         raise CadError("拒绝写入：洞口宽度必须为正实数（收到 %s）" % width)
     if frame <= 0:
         raise CadError("拒绝写入：窗框厚必须为正实数（收到 %s）" % frame)
+    hinge = 1 if int(hinge) >= 0 else -1
+    swing_req = int(swing)
+    if swing_req not in (-1, 0, 1):
+        raise CadError("拒绝写入：swing 只能是 -1 / 0 / 1（收到 %s）" % swing)
+    swing = 1 if swing_req == 0 else swing_req     # 0=自动，等编号侧算出来再解析
+    if int(leaves) not in (0, 1, 2):
+        raise CadError("拒绝写入：leaves 只能是 0 / 1 / 2（收到 %s）" % leaves)
+    doorpart = float(doorpart)
+    if doorpart < 0:
+        raise CadError("拒绝写入：门连窗门扇宽不能为负（收到 %s）" % doorpart)
+    if doorpart > width:
+        raise CadError("拒绝写入：门连窗门扇宽 %.1f 超过洞口宽 %.1f"
+                       % (doorpart, width))
     lo, hi = pos - width / 2.0, pos + width / 2.0
     if lo < -tol or hi > wlen + tol:
         raise CadError(
@@ -1652,6 +1682,13 @@ def create_opening(
     if height is None:
         height = {"DOOR": 2100.0, "WINDOW": 1500.0, "DOORWIN": 2100.0}.get(kind, 2100.0)
     no = no or opening_no(kind, width, height)
+    # 扇数只对平开门有意义：窗与门连窗固定单扇，平开门 >=1200 自动改双扇
+    if kind == "DOOR":
+        leaves = int(leaves) or (2 if float(width) >= DOOR_DOUBLE_MIN else 1)
+    else:
+        leaves = 1
+    if doorpart <= 0.0:
+        doorpart = float(width) / 2.0
     if label_side not in ("in", "out", "auto", "leader"):
         raise CadError("拒绝写入：label_side 只能是 in / out / auto / leader（收到 %s）" % label_side)
     # 墙块若转了 180°（墙从右往左画），块内编号会倒着看；给文字补 180° 抵消。
@@ -1661,6 +1698,20 @@ def create_opening(
     side = _label_side_sign(session, wall, pos,
                             "in" if label_side == "leader" else label_side)
     leader_flag = 1 if label_side == "leader" else 0
+    if swing_req == 0:
+        # 自动定开向：外门朝室外（疏散方向）、内门朝房间。
+        # "_label_side_sign" 已经探过房间，+Y 是室内还是室外可以直接反推。
+        # 房间还没建时判不出来（side 恒为 -1），AA_SWING 仍存 0，
+        # 等 refresh_opening_labels / set_opening 重画时再解析一次。
+        is_ext = str(wall["attrs"].get("AA_KIND") or "").upper() == "EXTERNAL"
+        if label_side in ("in", "leader"):
+            plus_y_out = -1 if side > 0 else 1      # side>0 => +Y 是室内
+        elif label_side == "out":
+            plus_y_out = 1 if side > 0 else -1
+        else:
+            plus_y_out = 0                          # auto：侧向不可判，按"本地 +Y"兜底
+        # "+Y 是室外"与"这扇门要朝室外开"同真同假 => 向 +Y 开
+        swing = 1 if ((plus_y_out > 0) == is_ext) else -1
 
     block = "AA_OPENING_" + opening_id
     session.ensure_layers([LAYERS["opening"]])
@@ -1668,9 +1719,10 @@ def create_opening(
     before = session.snapshot()
     sc = drawing_scale(session)
     value = session.lisp(
-        '(progn (setq aa:*label-h* %.4f) (aa:opening %s %s %s "%s" %s "%s" %s %s %d))'
+        '(progn (setq aa:*label-h* %.4f)'
+        ' (aa:opening %s %s %s "%s" %s "%s" %s %s %d %d %d %s %d))'
         % (annot_size(float(label_h), sc), pos, width, thick, kind, frame, no, label_rot, side,
-           leader_flag),
+           leader_flag, hinge, swing, doorpart, leaves),
         libraries=("aa_core.lisp", "aa_opening.lisp"),
     )
     handles = session.new_handles(before)
@@ -1692,6 +1744,10 @@ def create_opening(
             ("AA_NO", "opening mark", no),
             ("AA_LABELSIDE", "label side", label_side),
             ("AA_LABEL_H", "label text height", "%.4f" % (float(label_h) * sc)),
+            ("AA_HINGE", "hinge side", str(hinge)),
+            ("AA_SWING", "swing direction (0=auto)", str(swing_req)),
+            ("AA_LEAVES", "leaf count", str(leaves)),
+            ("AA_DOORPART", "doorwin door width", "%.4f" % doorpart),
         ]
     )
 
@@ -1708,6 +1764,10 @@ def create_opening(
             "AA_NO": no,
             "AA_LABELSIDE": label_side,
             "AA_LABEL_H": "%.4f" % (float(label_h) * sc),
+            "AA_HINGE": str(hinge),
+            "AA_SWING": str(swing_req),
+            "AA_LEAVES": str(leaves),
+            "AA_DOORPART": "%.4f" % doorpart,
         }, rotation=math.degrees(wall["rotation_rad"]), layer=LAYERS["opening"])
     session.expect_attributes(
         block,
@@ -1734,6 +1794,10 @@ def create_opening(
         "frame": float(frame),
         "no": no,
         "label_side": label_side,
+        "hinge": hinge,
+        "swing": swing,
+        "leaves": leaves,
+        "doorpart": doorpart,
         "geom_handles": handles,
     }
 
@@ -3802,6 +3866,11 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "no": attrs.get("AA_NO", ""),
                 "labelside": attrs.get("AA_LABELSIDE", "in") or "in",
                 "label_h": float(attrs.get("AA_LABEL_H", "0") or 0),
+                # 图例参数：老图（v1.0.58 之前）没有这几个属性，按单扇/左铰/+Y 兜底
+                "hinge": int(float(attrs.get("AA_HINGE", "1") or 1)),
+                "swing": int(float(attrs.get("AA_SWING", "1") or 1)),
+                "leaves": int(float(attrs.get("AA_LEAVES", "1") or 1)),
+                "doorpart": float(attrs.get("AA_DOORPART", "0") or 0),
                 "floor": wall_floor.get(attrs.get("AA_WALLID", ""), 1),
             }
         )
@@ -4553,11 +4622,15 @@ def _apply_layout(session, walls, final, sides_by_id, openings_plan):
                 sides=sides_by_id.get(seg["id"]),
                 floor=seg.get("floor", 1),
             )
-        # 4) 门窗跟随新墙位回图
+        # 4) 门窗跟随新墙位回图（框厚/编号/编号侧/图例参数全部原样带过去，
+        #    否则拆分合并一次，门窗编号就被"按尺寸重算"覆盖掉）
         for o in openings_plan:
             create_opening(
                 session, o["id"], o["host"], o["kind"], o["width"], o["new_pos"],
-                height=o["height"], sill=o["sill"],
+                height=o["height"], sill=o["sill"], frame=o.get("frame", 60.0),
+                no=o.get("no", ""), label_side=o.get("labelside", "in"),
+                hinge=o.get("hinge", 1), swing=o.get("swing", 1),
+                leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0),
             )
             moved.append({"id": o["id"], "from": o["wallid"], "to": o["host"],
                           "pos": round(o["new_pos"], 4)})
@@ -4973,7 +5046,8 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                     cur_name, cur_ents, ent = None, None, None
                 elif cur_ents is not None:
                     ent = {"type": val, "pts": [], "lt": None, "layer": None, "txt": None, "r": None,
-                           "sx": None, "sy": None, "ex": None, "ey": None, "sol": {}}
+                           "sx": None, "sy": None, "ex": None, "ey": None,
+                           "a1": None, "a2": None, "sol": {}}
                     cur_ents.append(ent)
             continue
         if code_n == 2:
@@ -5015,6 +5089,10 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
             ent["txt"] = val
         elif code_n == 40:
             ent["r"] = float(val)
+        elif code_n == 50:
+            ent["a1"] = float(val)
+        elif code_n == 51:
+            ent["a2"] = float(val)
 
     out = []
     for e in blocks.get(block_name, []):
@@ -5030,6 +5108,11 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                         "pts": [at] if at else [], "h": e["r"]})
         elif e["type"] == "CIRCLE" and None not in (e["sx"], e["sy"], e["r"]):
             out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"], "pts": [(e["sx"], e["sy"])]})
+        elif e["type"] == "ARC" and None not in (e["sx"], e["sy"], e["r"]):
+            out.append({"type": "ARC", "r": e["r"], "layer": e["layer"],
+                        "pts": [(e["sx"], e["sy"])],
+                        "cen": (e["sx"], e["sy"]),
+                        "a1": e.get("a1") or 0.0, "a2": e.get("a2") or 0.0})
         elif e["type"] == "SOLID":
             sol = e["sol"]
             pts = []
@@ -7272,7 +7355,9 @@ def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str
                 delete_component(session, o["block"])
                 create_opening(session, o["id"], a["to"], o["kind"], o["width"], a["pos"],
                                height=o["height"], sill=o["sill"], frame=o["frame"],
-                               no=o["no"], label_side=o["labelside"])
+                               no=o["no"], label_side=o["labelside"],
+                               hinge=o.get("hinge", 1), swing=o.get("swing", 1),
+                               leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
                 fixed.append({"action": kind, "opening": o["id"],
                               "from": a["from"], "wall": a["to"], "pos": a["pos"]})
             elif kind == "move_opening":
@@ -7396,7 +7481,9 @@ def copy_floor(session: Session, src_floor: int, dst_floor: int,
         nid = new_id(o["id"])
         create_opening(session, nid, host, o["kind"], o["width"], o["pos"],
                        height=o["height"], sill=o["sill"], frame=o["frame"],
-                       no=o["no"], label_side=o["labelside"])
+                       no=o["no"], label_side=o["labelside"],
+                       hinge=o.get("hinge", 1), swing=o.get("swing", 1),
+                       leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
         made_ops.append(nid)
 
     src_rooms = [r for r in room_data(session)
@@ -7714,8 +7801,13 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
                 frame: float | None = None, no: str | None = None,
                 label_side: str | None = None,
                 label_h: float | None = None,
+                hinge: int | None = None, swing: int | None = None,
+                leaves: int | None = None, doorpart: float | None = None,
                 tol: float = 1e-6) -> dict[str, Any]:
-    """改门窗位置/宽度/类型/窗框厚/编号/编号侧向后重绘：符号重画，所属墙洞口同步重排。"""
+    """改门窗位置/宽度/类型/窗框厚/编号/编号侧/铰点开向/扇数后重绘。
+
+    符号重画，所属墙洞口同步重排；`leaves=0` 表示按洞口宽度重新自动判定扇数。
+    """
     od = {o["id"]: o for o in opening_data(session)}
     o = od.get(opening_id)
     if not o:
@@ -7730,6 +7822,10 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
     new_frame = (o.get("frame") or 60.0) if frame is None else float(frame)
     new_no = (o.get("no") or "") if no is None else no
     new_side = (o.get("labelside") or "in") if label_side is None else label_side
+    new_hinge = int(o.get("hinge", 1)) if hinge is None else int(hinge)
+    new_swing = int(o.get("swing", 1)) if swing is None else int(swing)
+    new_leaves = int(o.get("leaves", 0)) if leaves is None else int(leaves)
+    new_doorpart = float(o.get("doorpart", 0.0)) if doorpart is None else float(doorpart)
     sc = drawing_scale(session)
     stored_h = float(o.get("label_h") or 0)
     new_label_h = (stored_h / sc if stored_h > 0 else 1.8) if label_h is None else float(label_h)
@@ -7743,7 +7839,9 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
         delete_component(session, o["block"])
         create_opening(session, opening_id, o["wallid"], new_kind, new_width, new_pos,
                        height=new_height, sill=new_sill, frame=new_frame, no=new_no,
-                       label_side=new_side, label_h=new_label_h)
+                       label_side=new_side, label_h=new_label_h,
+                       hinge=new_hinge, swing=new_swing, leaves=new_leaves,
+                       doorpart=new_doorpart)
     except Exception as exc:
         try:
             _restore_drawing_bytes(session, backup)
@@ -7767,6 +7865,10 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
         "height": new_height,
         "frame": new_frame,
         "no": new_no,
+        "hinge": new_hinge,
+        "swing": new_swing,
+        "leaves": int(session.attributes("AA_OPENING_" + opening_id)["AA_LEAVES"]),
+        "doorpart": new_doorpart,
     }
 
 
