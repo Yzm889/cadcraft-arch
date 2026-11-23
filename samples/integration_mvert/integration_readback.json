@@ -1,0 +1,112 @@
+{
+  "dxf": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\samples\\integration_mvert\\integration_plan.dxf",
+  "png": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\samples\\integration_mvert\\integration_plan.png",
+  "png_bytes": 98543,
+  "sheet": {
+    "block": "AA_SHEET_SH001",
+    "handle": "164D",
+    "size": "A4",
+    "scale": 100.0,
+    "at": [
+      -7000.0,
+      -8000.0
+    ],
+    "inner": [
+      26700.0,
+      20000.0
+    ],
+    "outer_wh": [
+      29700.0,
+      21000.0
+    ],
+    "lines": 18,
+    "texts": 14,
+    "extent": [
+      -4200.0,
+      -2200.0,
+      21400.0,
+      10350.625
+    ],
+    "drawing_scale": 100.0,
+    "promoted": null
+  },
+  "dims": {
+    "dims": 10,
+    "walls": 4,
+    "openings": 2,
+    "totals": 4,
+    "layer": "AA-DIM",
+    "style": "AA-DIM"
+  },
+  "counts": {
+    "walls": 9,
+    "openings": 3,
+    "rooms": 1
+  },
+  "elevator": {
+    "AA_TYPE": "ELEVATOR",
+    "AA_ID": "EL001",
+    "AA_W": "2200.0000",
+    "AA_D": "2200.0000",
+    "AA_CAR_W": "1600.0000",
+    "AA_CAR_D": "1400.0000",
+    "AA_DOOR": "1100.0000",
+    "AA_HEIGHT": "2100.0000",
+    "AA_DOOR_SIDE": "S",
+    "AA_CW_SIDE": "N",
+    "AA_CW_W": "1280.0000",
+    "AA_CW_D": "182.0000",
+    "AA_GAP": "100.0000",
+    "AA_CW_GAP": "50.0000",
+    "AA_DOOR_WALL": "W101",
+    "AA_POS": "1220.0000",
+    "AA_ANGLE": "180.0000",
+    "AA_ATX": "9600.0000",
+    "AA_ATY": "1700.0000",
+    "AA_FLOOR": "1"
+  },
+  "ramp": {
+    "AA_TYPE": "RAMP",
+    "AA_ID": "RP001",
+    "AA_W": "1500.0000",
+    "AA_LEN": "4080.0000",
+    "AA_SLOPE": "12.0000",
+    "AA_ANGLE": "0.0000",
+    "AA_RAIL": "1",
+    "AA_ARROW": "UP",
+    "AA_LABEL": "i=1:12",
+    "AA_ATX": "-4200.0000",
+    "AA_ATY": "3000.0000",
+    "AA_FLOOR": "1"
+  },
+  "balcony": {
+    "AA_TYPE": "BALCONY",
+    "AA_ID": "BA001",
+    "AA_WALLID": "W001",
+    "AA_POS": "9000.0000",
+    "AA_W": "3000.0000",
+    "AA_D": "1200.0000",
+    "AA_RAIL": "100.0000",
+    "AA_LABEL": "阳台",
+    "AA_ANGLE": "180.0000",
+    "AA_ATX": "9000.0000",
+    "AA_ATY": "-120.0000",
+    "AA_FLOOR": "1"
+  },
+  "audit": {
+    "issues": [],
+    "count": 0,
+    "by_kind": {},
+    "errors": 0,
+    "scale": 100.0,
+    "warnings": [],
+    "warning_count": 0,
+    "quality": {
+      "checks": 3,
+      "occupancy": 0.352,
+      "jargon": 0,
+      "corner_gap": 0
+    },
+    "corner_gap": 0
+  }
+}
