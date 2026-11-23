@@ -4993,6 +4993,27 @@ def normalize_around(session: Session, wall_id: str) -> int:
     return len(target)
 
 
+def normalize_all_walls(session: Session) -> int:
+    """一次性规整整张图全部墙段：只读一次墙/洞口，算一次 sides，统一重建。
+
+    批量建墙（FloorBuilder / 集成样板）应先用 create_wall(normalize=False)
+    快速落墙，最后调用本函数一次，避免每堵墙都重算一圈邻墙。
+    """
+    walls = wall_data(session)
+    if not walls:
+        return 0
+    openings = opening_data(session)
+    final = [{**w, "root": w["root"] or w["id"]} for w in walls]
+    sides: dict[str, list[tuple[float, float, float, float]]] = {}
+    for w in walls:
+        others = [x for x in walls if x["id"] != w["id"]]
+        sides[w["id"]] = wall_sides(
+            w, others, holes=_hole_spans(openings, w["id"], w["len"])
+        )
+    _apply_layout(session, walls, final, sides, [])
+    return len(walls)
+
+
 def _next_free_wall_id(session: Session, reserved: set[str]) -> str:
     mx = 0
     for e in session.references():
@@ -5179,6 +5200,12 @@ def _apply_layout(session, walls, final, sides_by_id, openings_plan):
         # 2) 拆掉原有墙体
         for w in walls:
             delete_component(session, w["block"])
+        # 2b) 兜底：若块参照已删但块定义仍残留（连续重建时偶发），强制 purge，
+        #     否则下一步 create_wall 会报“块定义已存在”。
+        for w in walls:
+            if session.block_exists(w["block"]):
+                session.run([("purge", {"type": "blocks", "names": w["block"]})],
+                            save=True)
         # 3) 按最终段表重建（含裁剪后的墙线）
         for seg in final:
             create_wall(
@@ -5186,7 +5213,7 @@ def _apply_layout(session, walls, final, sides_by_id, openings_plan):
                 thick=seg["thick"], kind=seg["kind"] or "INTERNAL", mat=seg["mat"],
                 ax1=seg["ax1"], ax2=seg["ax2"], root=seg["root"],
                 sides=sides_by_id.get(seg["id"]),
-                floor=seg.get("floor", 1),
+                floor=seg.get("floor", 1), normalize=False, bind_axis=False,
             )
         # 4) 门窗跟随新墙位回图（框厚/编号/编号侧/图例参数全部原样带过去，
         #    否则拆分合并一次，门窗编号就被"按尺寸重算"覆盖掉）
@@ -5395,12 +5422,15 @@ def create_wall(
     snap_tol: float = 300.0,
     floor: int = 1,
     bind_axis: bool = True,
+    normalize: bool = True,
 ) -> dict[str, Any]:
     """墙体：LISP 生成本地几何 -> block -> insert（起点+旋转）-> 回读校验。
 
     snap_axis=True 时先把端点吸附到最近轴线（"先轴后墙"），吸附量在返回值里如实报告；
     画完若图上有轴网，会自动回填 ax1/ax2（原有的非空值不覆盖）；批量建墙时
     可传 bind_axis=False，最后整层调用一次 bind_walls_to_axis，避免每面墙都读全图。
+    `normalize=True`（默认）画完立即规整当前墙及相邻墙的裁剪/合角；批量建墙时
+    传 normalize=False，最后由 normalize_all_walls 一次规整全图。
     `floor` 记在 `AA_FLOOR` 上：门窗表要按层统计樘数，平面自身不带层号（v1.0.32）。
     """
     try:
@@ -5484,6 +5514,14 @@ def create_wall(
             "AA_KIND": kind,
         },
     )
+    normalized = 0
+    if normalize and sides is None:
+        # 单墙/CLI 默认路径：画完立即规整当前墙及相邻墙，避免四角留半墙厚缺口。
+        # _apply_layout 内部重建墙时必须传 normalize=False，否则会递归。
+        normalized = normalize_around(session, wall_id)
+        ref = session.reference(block)
+        if ref:
+            handle = ref.get("handle", handle)
     bound = (bind_walls_to_axis(session, tol=50.0, only_empty=True)
              if bind_axis and axis_grids(session) else None)
     res = {
@@ -5492,6 +5530,7 @@ def create_wall(
         "length": float(length),
         "angle_deg": float(angle) * 57.29577951308232,
         "geom_handles": handles,
+        "normalized": normalized,
     }
     if snapped:
         res["snapped"] = snapped
@@ -7106,6 +7145,86 @@ def place_schedules(session: Session, sheet_id: str | None = None, *,
             "occupancy_after": round(after, 3)}
 
 
+def _wall_line_spans(path) -> dict[str, list[tuple[float, float]]]:
+    """一次解析 DXF，返回 {墙块名: [(x_min,x_max), ...]}；只读 LINE。
+
+    专供 corner_gap 检查，避免逐墙调用 block_geometry 反复解析整份 DXF。
+    """
+    lines_in = [ln.strip() for ln in Path(path).read_text(
+        encoding="utf-8", errors="replace").splitlines()]
+    blocks: dict[str, list[tuple[float, float]]] = {}
+    section = None
+    cur_name = None
+    cur: list[dict[str, Any]] | None = None
+    ent: dict[str, Any] | None = None
+    i = 0
+    while i + 1 < len(lines_in):
+        code, val = lines_in[i], lines_in[i + 1]
+        i += 2
+        if code == "0":
+            if val == "SECTION":
+                section, cur_name, cur, ent = None, None, None, None
+            elif val == "ENDSEC":
+                section, cur_name, cur, ent = None, None, None, None
+            elif section == "BLOCKS":
+                if val == "BLOCK":
+                    cur_name, cur, ent = None, [], None
+                elif val == "ENDBLK":
+                    if cur_name and cur is not None:
+                        blocks[cur_name] = [
+                            (min(e["sx"], e["ex"]), max(e["sx"], e["ex"]))
+                            for e in cur
+                            if e["type"] == "LINE" and None not in
+                            (e["sx"], e["sy"], e["ex"], e["ey"])
+                        ]
+                    cur_name, cur, ent = None, None, None
+                elif cur is not None:
+                    ent = {"type": val, "sx": None, "sy": None,
+                           "ex": None, "ey": None}
+                    cur.append(ent)
+            continue
+        if code == "2":
+            if section is None:
+                section = val
+            elif section == "BLOCKS" and cur_name is None:
+                cur_name = val
+            continue
+        if section != "BLOCKS" or ent is None or ent["type"] != "LINE":
+            continue
+        if code == "10":
+            ent["sx"] = float(val)
+        elif code == "20":
+            ent["sy"] = float(val)
+        elif code == "11":
+            ent["ex"] = float(val)
+        elif code == "21":
+            ent["ey"] = float(val)
+    return blocks
+
+
+def corner_gap_count(session: Session, tol: float = 0.1) -> int:
+    """统计未按合角重建的墙块数；0 表示所有墙侧线跨度与 wall_sides 期望一致。"""
+    walls = wall_data(session)
+    if not walls:
+        return 0
+    openings = opening_data(session)
+    actual = _wall_line_spans(session.path)
+    bad = 0
+    for w in walls:
+        others = [x for x in walls if x["id"] != w["id"]]
+        expected = {
+            (round(min(s[0], s[2]) / tol) * tol, round(max(s[0], s[2]) / tol) * tol)
+            for s in wall_sides(w, others, holes=_hole_spans(openings, w["id"], w["len"]))
+        }
+        got = {
+            (round(a / tol) * tol, round(b / tol) * tol)
+            for a, b in actual.get(w["block"], [])
+        }
+        if expected != got:
+            bad += 1
+    return bad
+
+
 def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
     """图面自检：把"画完看着不对"的常见问题先挑出来，别等到出图才发现。
 
@@ -7316,9 +7435,12 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
     by_kind: dict[str, int] = {}
     for it in issues:
         by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+    gap = corner_gap_count(session)
+    quality["corner_gap"] = gap
     return {"issues": issues, "count": len(issues), "by_kind": by_kind,
             "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc,
-            "warnings": warnings, "warning_count": len(warnings), "quality": quality}
+            "warnings": warnings, "warning_count": len(warnings), "quality": quality,
+            "corner_gap": gap}
 
 
 def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:

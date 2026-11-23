@@ -23,7 +23,8 @@ from aa_lib import (  # noqa: E402
     CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, bind_walls_to_axis,
     block_geometry, create_axis_grid, create_opening, create_room_edges, create_sheet,
     create_stair, create_text, draw_table, drawing_extent, drawing_scale, export, opening_data,
-    place_schedules, png_size, reconcile, refresh_opening_labels, room_data, wall_data,
+    normalize_all_walls, place_schedules, png_size, reconcile, refresh_opening_labels,
+    room_data, wall_data,
 )
 
 OUT = Path(__file__).resolve().parent
@@ -69,8 +70,10 @@ class FloorBuilder:
              thick: float, kind: str) -> None:
         from aa_lib import create_wall
         wid_full = wid if wid.startswith(self.tag) else self.tag + wid
+        # 批量建墙不逐面规整；finish() 里 normalize_all_walls 一次算完。
         res = create_wall(self.s, wid_full, (x1, y1), (x2, y2), thick=thick,
-                          kind=kind, mat="", floor=self.no, bind_axis=False)
+                          kind=kind, mat="", floor=self.no, bind_axis=False,
+                          normalize=False)
         self.walls.append({"id": wid_full, "p1": (x1, y1), "p2": (x2, y2),
                            "thick": float(thick), "kind": kind,
                            "len": float(res["length"])})
@@ -198,6 +201,8 @@ class FloorBuilder:
 
     # ---------- 标注 / 图框 ----------
     def finish(self, title: str, note_title: str = "图纸说明") -> dict:
+        # 批量建墙时 create_wall(normalize=False)；墙齐后一次算完全部裁剪/合角。
+        normalize_all_walls(self.s)
         # 建墙时不逐面回填轴号；整层墙齐了一次性 attedit（一次 CLI 事务）
         if axis_grids(self.s):
             bind_walls_to_axis(self.s, only_empty=True)

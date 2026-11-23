@@ -70,7 +70,7 @@
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # 55 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/run_all.py     # 56 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
 python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
 python tests/test_roof_detail.py  # 屋面分格/天沟/坡度注字单项验收
 python tests/test_quality_audit.py  # 图面质量门禁（图签压线/幅面利用率/施工说明术语）
@@ -271,7 +271,7 @@ python tools/aa_cmd.py show out.dxf
 - **窗框厚是构造尺寸，可逐樘改**：默认 60（240 墙即 ±60，370 墙为 ±125），`--frame` 可覆盖（40 => 内侧 ±80），**不随墙厚等比缩放**。
 - **门窗编号可放室内或室外**：编号按尺寸自动生成（`M0921` / `C1215` / 门连窗 `MC…`，类型 + 宽高各两位分米），`--no` 可覆盖；`--label-side in|out|auto|leader` 决定编号落在室内侧还是室外侧（`leader` 再加一条 45° 引线指向洞口右端）（默认 `in`，`auto` 沿用旧的"-Y 侧"行为），离墙面 250、沿墙居中、字高 180，墙块转 180° 时补 180° 旋转避免倒字。房间建好（或后建）会自动重画到正确一侧——室内外要靠房间轮廓才判得出来。
 - **尺寸两道、只标外墙**：洞口宽在内层（离墙面 900）、墙段长度在外层（离墙面 2000），字高 250 / 箭头 150；内墙两侧都是房间，标注会压在房间名和门扇上，所以自动跳过（`--all-walls` 可强制全标）。轴号圈在墙外 2400 起，不与尺寸线叠。
-- 画完一堵墙会立即规整"它 + 它碰到的邻墙"（`normalize_around`），保证新墙与旧墙的裁剪/合角一致。
+- **单墙** `create_wall` 默认画完立即规整“当前墙 + 它碰到的邻墙”（`normalize_around`）；**批量建墙**（`FloorBuilder` / 集成样板）先 `normalize=False`，最后 `normalize_all_walls` 一次算完全部墙的裁剪/合角，避免每堵墙都重算一圈邻墙。
 
 ## 房间自动搜环规则（`room --auto`）
 
