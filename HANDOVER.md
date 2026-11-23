@@ -12,7 +12,7 @@
 
 1. **这是自研项目，不是天正二次开发**：只实现建筑绘图通用行为，不读取/复刻天正私有对象、ARX/BRX、菜单或模板。
 2. **当前生产入口是 CLI + MCP，不是 GUI**：`tools/aa_cmd.py` 55+ 子命令，`tools/aa_mcp.py` 62 个 MCP 工具；图形界面只有本地确认面板。
-3. **M-VERT（电梯/坡道/阳台）已完成，M-DIM 尚未开始**：下一步建议按 `ROADMAP.md` 做尺寸标注补齐，先写测试再写实现。
+3. **M-VERT（电梯/坡道/阳台）与 M-DIM（尺寸标注补齐）都已完成**：下一步建议按 `ROADMAP.md` 做 M-OPEN 高级门窗，先写测试再写实现。
 
 ---
 
@@ -20,14 +20,14 @@
 
 | 项 | 值 |
 |---|---|
-| README 版本 | **v1.0.60**（M-VERT 完成） |
-| MCP `SERVER_INFO` 版本 | **1.0.60**（2026-11-24 已与 README 对齐；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
-| 测试文件 | **56 个**（`tests/test_*.py`） |
+| README 版本 | **v1.0.61**（M-DIM 尺寸标注补齐） |
+| MCP `SERVER_INFO` 版本 | **1.0.61**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
+| 测试文件 | **59 个**（`tests/test_*.py`） |
 | MCP 工具 | **62 个** = 59 原子 + 3 事务编排（batch/checkpoint/restore） |
 | 标准图层 | **22 个**（新增电梯层 `AA-ELEVATOR`） |
 | CADCraft | 0.20.1（`cadcraft-cli`） |
 | Python | 3.11.9，仅标准库（无第三方依赖） |
-| 最近提交 | `cb251c2 sample: add M-VERT integration plan` / `c0a2e2c fix: auto-normalize new walls and audit corner gap` |
+| 最近提交 | `git log --oneline -8`（2026-11-24：交接债务处理 2 笔 + M-DIM 实现/文档） |
 | 交付图 | `deliverables/幼儿园教学楼/00–05`（受保护，当前 `git status` 干净） |
 
 已完成的大块：
@@ -114,7 +114,7 @@ cadcraft-arch/
 │  ├─ aa_elevator.lisp   # 电梯 10 LINE
 │  ├─ aa_ramp.lisp       # 坡道 6/8 LINE + 箭头 + 注字
 │  └─ aa_balcony.lisp    # 阳台 6 LINE
-├─ tests/                # 56 个逐文件验收（先测试后实现的产物）
+├─ tests/                # 59 个逐文件验收（先测试后实现的产物）
 ├─ docs/
 │  ├─ spec-M-VERT-电梯坡道阳台.md   # M-VERT 规格（§13 C1 定稿）
 │  ├─ T30-M-VERT-1-电梯实测记录.md  # T30 行为证据
@@ -237,7 +237,7 @@ python tools/build_integration.py
 
 ### 8.1 测试规模
 
-56 个文件，覆盖：轴网/墙/门窗/房间/标注/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
+59 个文件，覆盖：轴网/墙/门窗/房间/标注/尺寸标注补齐（M-DIM）/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
 
 ### 8.2 推荐跑法
 
@@ -282,19 +282,32 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 | 9 | `_apply_layout` 连续重建偶发块定义残留 | 已有 purge 兜底；若再遇 `块定义已存在`，先查 purge 流程 |
 | 10 | 00–05 是在自动合角修复前生成的 | 按约定**不重生成**；若将来重生成，哈希会变，需所有权人批准 |
 | 11 | 无 package/tag、无远程 push；CI 只有轻量版 | **已加 `.github/workflows/ci.yml`（2026-11-24）**：compileall + MCP selftest + 版本一致性；56 个测试依赖本机 CLI，不在云端跑；push 后才生效 |
-| 12 | M-DIM 未开始 | 下一功能建议，先测试后实现；不要先做 M-OPEN 高级门窗 |
+| 12 | ~~M-DIM 未开始~~ **已完成（2026-11-24，v1.0.61）** | `dim --locate / --thickness / --coords`（MCP `aa_dim` 同名布尔参数）；选项记在 `AA_CFG_DIM`，`rescale` 按原选项重画。下一功能：M-OPEN 高级门窗 |
+| 13 | **既有缺陷（M-DIM 开发中发现，未修）**：带 T 接内墙的图上 `rescale` 会失败 | `rescale_annotations` 用整墙版 `create_room` 重建房间，拼不上含 T 接内墙的环：`拒绝写入：墙环断裂，墙 W005 的端点与上一个终点不重合`。改动前（HEAD b902223）同样复现，与 M-DIM 无关；修法是改用 `create_room_edges` 按子段重建。M-DIM 的三个测试因此都另起一张没有内墙的图验 rescale |
+| 14 | 中间轴线的轴号圈会压住总尺寸文字（`audit` 报 `dim_over_axis`） | 轴线外伸 1600 + 圈半径 400 = 2000，正好落在 22mm 总尺寸线（2200）的文字上；与 M-DIM 开关无关（关掉同样报，M-DIM 开发中实测）。规避：轴网 `ext` 给到 ≥ 2400，或用 `dim --opening-off/--wall-off` 把尺寸线调开 |
 
 ---
 
 ## 10. 下一步路线
 
-### 10.1 建议下一功能：M-DIM 尺寸标注补齐
+### 10.1 M-DIM 尺寸标注补齐（已完成，v1.0.61）
 
-范围（按对施工图规范性收益排序）：
-1. 墙厚标注
-2. 门窗定位（沿墙定位尺寸）
-3. 洞口尺寸
-4. 坐标标注
+全部是 `annotate()` 的可选参数，默认行为不变（`test_dim.py` 的 10 条断言原样通过）：
+
+| 项 | 用法 | 口径 |
+|---|---|---|
+| 门窗定位 | `dim --locate` / `locate:true` | 第一道尺寸线补成完整链 墙端→洞口边→…→墙端，合计 = 墙长；洞口宽沿用原洞口尺寸不重复画 |
+| 墙厚 | `dim --thickness` / `thickness:true` | 每道墙在墙端外延处一道；墙端是 T 接/共线延续/落点进房间则换端，都不行跳过并报 `thickness_skipped` |
+| 坐标 | `dim --coords` / `coords:true` | 外廓各墙角（墙中心线交点）两行 `X=`（北，图面 y）/`Y=`（东，图面 x），单位 m |
+| 洞口尺寸 | （已含在上面） | 即第一道链里的洞口宽，不另注“宽×高” |
+
+`verify` 把墙厚尺寸识别出来不进尺寸链分组（`stats.thickness_dims`）。原始设想清单（按对施工图规范性收益排序）：
+
+
+1. 墙厚标注 —— `thickness`
+2. 门窗定位（沿墙定位尺寸）—— `locate`
+3. 洞口尺寸 —— 第一道链里的洞口宽（`annotate` 原有）
+4. 坐标标注 —— `coords`
 
 要求：先写 `tests/test_dim_*`，再实现 CLI/MCP；沿用 `AA-DIM` 图层、`annotate` 现有两道尺寸体系；不得破坏 `test_dim.py` 现有 10 条标注断言。
 
@@ -343,7 +356,7 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 - [ ] 确认 `git status --short -- deliverables` 为空
 - [ ] 确认无 `.bak` / `.restore.tmp`
 - [ ] 决定是否 push 本地 12 个提交（默认不 push）
-- [ ] 若要继续开发，先做 M-DIM，不要先开 M-OPEN 高级门窗
+- [x] 若要继续开发：M-DIM 已完成，下一个功能按 ROADMAP 做 M-OPEN 高级门窗
 
 ---
 
@@ -363,6 +376,7 @@ python tools\aa_cmd.py balcony out.dxf BA001 --wall W001 --pos 9000 --width 3000
 
 # 检查/出图
 python tools\aa_cmd.py dim out.dxf
+python tools\aa_cmd.py dim out.dxf --locate --thickness --coords   # M-DIM：定位链 / 墙厚 / 墙角坐标
 python tools\aa_cmd.py sheet out.dxf SH001 --size A3 --project 示例
 python tools\aa_cmd.py audit out.dxf
 python tools\aa_cmd.py export out.dxf out.png --sheet SH001
