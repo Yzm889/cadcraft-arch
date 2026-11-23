@@ -6015,6 +6015,12 @@ def _dxf_all_blocks(path: str | Path) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
+# 块定义里这些"看不见的"东西不能算图面占用：
+# ATTDEF/ATTRIB 是属性定义，坐标留在块定义原点附近（不是插入点），
+# 跟着 INSERT 做变换会得到一堆凭空出现的框，把幅面利用率和空位搜索全带偏。
+_NON_GRAPHIC_TYPES = frozenset({"ATTDEF", "ATTRIB", "SEQEND"})
+
+
 def _quality_pieces(session: Session) -> list[dict[str, Any]]:
     """图面上所有非图幅图元的世界坐标片段（用于图签压线与幅面利用率）。"""
     blocks = _dxf_all_blocks(session.path)
@@ -6026,6 +6032,8 @@ def _quality_pieces(session: Session) -> list[dict[str, Any]]:
             continue
         is_frame = block.startswith("AA_SHEET_")
         for gi in blocks.get(block, []):
+            if gi["type"] in _NON_GRAPHIC_TYPES:
+                continue
             pts = [_insert_tf(p, ref) for p in gi["pts"]]
             pieces.append({"type": gi["type"], "layer": gi["layer"], "pts": pts,
                            "text": gi["text"], "h": gi["h"], "r": gi["r"],
@@ -6067,9 +6075,19 @@ def _quality_pieces(session: Session) -> list[dict[str, Any]]:
 
 
 def _piece_box(piece: dict[str, Any]) -> tuple[float, float, float, float]:
-    xs = [p[0] for p in piece["pts"]]
-    ys = [p[1] for p in piece["pts"]]
+    pts = piece["pts"]
     r = float(piece.get("r") or 0)
+    # 文字不能按"插入点 ± 半径"算：那样外包退化成零面积，图签压线/空位搜索都看不见它。
+    # 这里按 插入点(左下) + 估算字宽 + 字高 还原成真实占位框。
+    # 注意 DXF 的 TEXT 还带第二个对齐点（11/21），那个不是框角，必须忽略。
+    if piece.get("type") in ("TEXT", "MTEXT") and pts:
+        x, y = pts[0]
+        h = float(piece.get("h") or 0)
+        txt = str(piece.get("text") or "")
+        w = _text_w(txt, h) if (h > 0 and txt) else 0.0
+        return (x, y, x + max(w, r), y + (h if h > 0 else r))
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
     return (min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r)
 
 
@@ -6092,6 +6110,351 @@ def _sheet_occupancy(pieces: Sequence[dict[str, Any]],
             for cc in range(c0, c1 + 1):
                 hit[rr][cc] = True
     return sum(1 for row in hit for v in row if v) / float(cols * rows)
+
+
+# ---------------- 图面空位搜索 + 附表自动排布（v1.0.58） ----------------
+
+def sheet_frame_boxes(session: Session, sheet_id: str,
+                      pieces: Sequence[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """读图幅的内框 / 图签框 / 已被图元占用的外包框（只读，供智能排图用）。
+
+    占用框取自 `_quality_pieces`（块参照按插入变换展开后逐图元算外包），
+    但**剔除图幅自身的框线**——`AA_SHEET_*` 块的图元也算占用的话，
+    整个内框就全被占满，空位搜索永远失败。
+    图签单独补一条，因为图签是禁止压线的硬边界。
+    """
+    block = "AA_SHEET_" + sheet_id
+    ref = session.reference(block)
+    if not ref:
+        raise CadError("找不到图幅 %s" % sheet_id)
+    g = ref.get("geometry") or {}
+    attrs = {a["tag"]: a.get("text", {}).get("value", "")
+             for a in g.get("attribs", [])}
+    size = (attrs.get("AA_SIZE") or "A3").upper()
+    sc = float(attrs.get("AA_SCALE") or drawing_scale(session) or 100.0)
+    lay = sheet_layout(size, sc)
+    ip = g.get("insert") or {}
+    ox, oy = float(ip.get("x", 0.0)), float(ip.get("y", 0.0))
+    ix, iy = lay["inner_org"]
+    inner = (ox + ix, oy + iy, ox + ix + lay["inner_w"], oy + iy + lay["inner_h"])
+    title = (inner[2] - lay["title_w"], inner[1],
+             inner[2], inner[1] + lay["title_h"])
+    occupied: list[tuple[float, float, float, float]] = []
+    if pieces is None:
+        pieces = _quality_pieces(session)
+    for p in pieces:
+        if p.get("frame"):
+            continue
+        occupied.append(_piece_box(p))
+    occupied.append(title)
+    return {"sheet": sheet_id, "size": size, "scale": sc,
+            "inner": inner, "title": title, "occupied": occupied,
+            "pieces": len(pieces)}
+
+
+def find_free_rect(inner: Sequence[float],
+                   occupied: Sequence[Sequence[float]],
+                   w: float, h: float,
+                   cell: float | None = None,
+                   prefer: str = "top-left",
+                   margin: float = 0.0,
+                   search: Sequence[float] | None = None) -> tuple[float, float] | None:
+    """在内框里找一块 w×h 的空矩形，返回其**左上角**；放不下返回 None。
+
+    `prefer` 为 `top-left` / `top-right` / `bottom-left` / `bottom-right`，
+    决定扫描方向（"top" 指模型坐标 y 大的一侧）。
+
+    实现用积分图（2D 前缀和）把"这块矩形有没有被占用"压成 O(1)，
+    所以整张 A1 按 2mm 网格扫一遍也只有十万级常数查询，不会卡。
+    `margin` 同时用于内框内缩和占用框外扩，保证表格与图元、图框之间留缝。
+    `search` 给一个更小的搜索区（必须落在 `inner` 内），用来"只许放这一带"。
+    """
+    x0, y0, x1, y1 = (float(v) for v in (search or inner))
+    margin = max(0.0, float(margin))
+    if w <= 0 or h <= 0:
+        return None
+    ix0, iy0, ix1, iy1 = x0 + margin, y0 + margin, x1 - margin, y1 - margin
+    if w > (ix1 - ix0) or h > (iy1 - iy0):
+        return None
+
+    if cell is None:
+        cell = max(w, h) / 120.0  # 自适应：长边切 120 格，够细又不慢
+    cell = max(float(cell), 1e-6)
+    nx = max(1, int(math.ceil((ix1 - ix0) / cell)))
+    ny = max(1, int(math.ceil((iy1 - iy0) / cell)))
+    wc = max(1, int(math.ceil(w / cell)))
+    hc = max(1, int(math.ceil(h / cell)))
+    if wc > nx or hc > ny:
+        return None
+
+    occ = bytearray(nx * ny)
+    for b in occupied:
+        bx0, by0, bx1, by1 = (float(v) for v in b)
+        # 网格按半开区间取：点 p 落在第 floor((p-origin)/cell) 格，
+        # 所以 [a,b] 覆盖 floor(a)..ceil(b)-1。用 floor(b) 会把"恰好贴边"
+        # 的框多算一格——图签顶正好等于横带底，多算的这一行就把紧贴图签的位置挡死了。
+        eps = 1e-6 * cell      # 抵消 119.9999… 这类浮点误差，贴边才能稳定判成"在框外"
+        c0 = max(0, int(math.floor((bx0 - margin - ix0 + eps) / cell)))
+        c1 = min(nx - 1, int(math.ceil((bx1 + margin - ix0 - eps) / cell)) - 1)
+        r0 = max(0, int(math.floor((by0 - margin - iy0 + eps) / cell)))
+        r1 = min(ny - 1, int(math.ceil((by1 + margin - iy0 - eps) / cell)) - 1)
+        if c1 < c0 or r1 < r0:
+            continue
+        for r in range(r0, r1 + 1):
+            base = r * nx
+            for c in range(c0, c1 + 1):
+                occ[base + c] = 1
+
+    stride = nx + 1
+    pre = [0] * (stride * (ny + 1))
+    for r in range(ny):
+        acc = 0
+        base = r * nx
+        prev = r * stride
+        cur = (r + 1) * stride
+        for c in range(nx):
+            acc += occ[base + c]
+            pre[cur + c + 1] = pre[prev + c + 1] + acc
+
+    def rect_sum(c0: int, r0: int, c1: int, r1: int) -> int:
+        return (pre[(r1 + 1) * stride + (c1 + 1)] - pre[r0 * stride + (c1 + 1)]
+                - pre[(r1 + 1) * stride + c0] + pre[r0 * stride + c0])
+
+    r_hi = ny - hc
+    c_hi = nx - wc
+    rows = range(r_hi, -1, -1) if prefer.startswith("top") else range(0, r_hi + 1)
+    cols = range(0, c_hi + 1) if prefer.endswith("left") else range(c_hi, -1, -1)
+    for r in rows:
+        for c in cols:
+            if rect_sum(c, r, c + wc - 1, r + hc - 1) == 0:
+                return (ix0 + c * cell, iy0 + (r + hc) * cell)
+    return None
+
+
+def _only_sheet_id(session: Session) -> str:
+    """图上只有一张图幅时直接返回它的编号，省得用户记 SF1/SF2。"""
+    ids = [c["geometry"]["block"][len("AA_SHEET_"):]
+           for c in session.components("AA_SHEET_")]
+    if len(ids) == 1:
+        return ids[0]
+    if not ids:
+        raise CadError("图上没有图幅，先 `sheet` 建图框")
+    raise CadError("图上有 %d 张图幅（%s），请用 --sheet 指定"
+                   % (len(ids), "、".join(ids)))
+
+
+def clear_schedules(session: Session, *, north: bool = True,
+                     opening_table: bool = True,
+                     room_table: bool = True) -> list[str]:
+    """删掉图上的指北针 / 门窗表 / 房间面积表，供 `place --replace` 重排前清场。
+
+    只认 `AA_TITLE`/`AA_KIND` 属性里的名字，别的一概不动——
+    图上可能有别的表（图纸目录、楼层表），不能跟着一起删。
+    """
+    titles = set()
+    if opening_table:
+        titles.add("门窗表")
+    if room_table:
+        titles.add("房间面积表")
+    victims: list[str] = []
+    for c in session.components("AA_TABLE_"):
+        a = {x["tag"]: x.get("text", {}).get("value", "")
+             for x in c["geometry"].get("attribs", [])}
+        if a.get("AA_TITLE") in titles:
+            victims.append(c["geometry"]["block"])
+    if north:
+        for c in session.components("AA_SYM_"):
+            a = {x["tag"]: x.get("text", {}).get("value", "")
+                 for x in c["geometry"].get("attribs", [])}
+            if a.get("AA_KIND") == "NORTH":
+                victims.append(c["geometry"]["block"])
+    for blk in victims:
+        delete_component(session, blk)
+    if victims:
+        session.run([], save=True)
+    return victims
+
+
+def place_schedules(session: Session, sheet_id: str | None = None, *,
+                    north: bool = True,
+                    opening_table: bool = True,
+                    room_table: bool = True,
+                    replace: bool = False,
+                    margin: float = 6.0,
+                    north_prefer: str = "top-left",
+                    table_prefer: str = "top-right",
+                    scale: float | None = None) -> dict[str, Any]:
+    """把指北针 / 门窗表 / 房间面积表**自动放到图面空处**，不再手填坐标。
+
+    为什么要这个：手写表格坐标是返工率最高的一步——挪一次表就要重算一次，
+    挪歪了还压图签。这里先量出内框与已占用图元的外包，
+    再用 `find_free_rect` 找空位；放不下的项**不报错、只返回没放的原因**，
+    由调用方决定是缩表还是换幅面。
+
+    顺序：先表后符号。表按 `table_prefer` 方向贴角，
+    每放一张就把它的外包并进占用列表，所以第二张自然避开第一张。
+    `sheet_id` 省略（或给 `auto`）时自动取图上唯一的图幅；
+    留缝 `margin` 按**图纸 mm** 给，内部换算成图元单位。
+    """
+    if replace:
+        clear_schedules(session, north=north,
+                        opening_table=opening_table, room_table=room_table)
+    if not sheet_id or str(sheet_id).lower() == "auto":
+        sheet_id = _only_sheet_id(session)
+    sc = float(scale) if scale else drawing_scale(session)
+    margin = annot_size(max(0.0, float(margin)), sc)
+    # 图元只扫一遍：`_quality_pieces` 每次都要解析整份 DXF，几 MB 的图重复扫很浪费
+    base_pieces = [p for p in _quality_pieces(session) if not p.get("frame")]
+    boxes = sheet_frame_boxes(session, sheet_id, pieces=base_pieces)
+    inner = boxes["inner"]
+    occupied = list(boxes["occupied"])
+    before = _sheet_occupancy(base_pieces, inner)
+
+    # 候选落位区，按"像不像正规排图"排序：
+    #   1) 图签上方那条横带——附表贴着图签往上排，是最常规的摆法；
+    #   2) 图形右侧的竖带——退一步放右边；
+    #   3) 整个内框——实在没地方才满图找。
+    # 横带的下界用"图签顶标高"，上界用图形在图签之上的最低边，
+    # 这样底部的施工说明（在图签顶以下）不会把横带挤没。
+    ix0, iy0, ix1, iy1 = inner
+    tx0, ty0, tx1, ty1 = boxes["title"]
+    above = [b for b in occupied if b[3] > ty1 + 1e-6]
+    if above:
+        dy0 = min(b[1] for b in above)
+        dx1 = max(b[2] for b in above)
+    else:
+        dy0, dx1 = iy1, ix0
+    bands: list[tuple[tuple[float, float, float, float], str]] = []
+    if dy0 - ty1 > 0:
+        bands.append(((ix0, ty1, ix1, dy0), "bottom-right"))
+    if ix1 - dx1 > 0:
+        bands.append(((dx1, ty1, ix1, iy1), "top-right"))
+    bands.append((inner, table_prefer))
+
+    def _fit_table(occ, tw, th, cands, base_margin):
+        """按落位区优先、留缝由宽到紧地找位置。
+
+        为什么要有留缝回退：一张 20 行的房间面积表高 88mm，
+        图签上方那条带净高 95mm，按 6mm 留缝差 5mm 就放不下——
+        这时它会被赶到老远的右上角，跟门窗表分家。宁可留缝收到 1.5mm，
+        也要让两张附表排在一起。
+        """
+        # 先按落位区优先级走，同一区内再把留缝逐级收紧；
+        # 反过来先试"宽松留缝"的话，次优区会抢在最优区前面得手。
+        for bi, (band, pref) in enumerate(cands):
+            for shrink in (1.0, 0.5, 0.25):
+                at2 = find_free_rect(inner, occ, tw, th,
+                                     margin=base_margin * shrink,
+                                     prefer=pref, search=band)
+                if at2 is not None:
+                    return at2, bi
+        return None, -1
+
+    row_h = annot_size(4.0, sc)
+    placed: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    added: list[tuple[float, float, float, float]] = []
+    n_existing = len(session.components("AA_TABLE_"))
+    seq = 0
+
+    def next_table_id() -> str:
+        nonlocal seq
+        while True:
+            seq += 1
+            cand = "T%03d" % (n_existing + seq)
+            if not session.block_exists("AA_TABLE_" + cand):
+                return cand
+
+    # 两张附表的内容和尺寸先都算出来，再决定摆放顺序：
+    # **大表先落位，小表必须跟着同一个落位区**。否则 31 行的房间面积表
+    # 塞不进图签上方那条 95mm 的横带，会被甩到右上角跟门窗表分家，
+    # 一套图里各层排法还不一致。
+    specs: list[dict[str, Any]] = []
+
+    if room_table:
+        rep = rooms_report(session)
+        if not rep["rooms"]:
+            skipped.append({"item": "房间面积表", "why": "图上没有房间，无内容可列"})
+        else:
+            body = [[r["房间编号"], r["房间名称"], r["净面积(m2)"], r["周长(mm)"]]
+                    for r in rep["rows"]]
+            body.append(["合计", "%d 间" % rep["rooms"],
+                         "%.2f" % rep["total_area_m2"], ""])
+            widths = [1600.0, 2600.0, 2600.0, 2300.0]
+
+            def _draw_rooms(at, tid, _b=body, _w=widths):
+                return draw_table(session, at, "房间面积表",
+                                  header=["编号", "名称", "净面积(m²)", "周长(mm)"],
+                                  body=_b, widths=_w, scale=sc, table_id=tid)
+
+            specs.append({"item": "房间面积表", "w": sum(widths),
+                          "h": row_h * (1.15 + 1 + len(body)),
+                          "rows": len(body), "draw": _draw_rooms})
+
+    if opening_table:
+        # 规范 7 列（序号/编号/类别/洞口尺寸/窗台高/樘数/所在层）；
+        # 不用 openings_report 那张 6 列旧表——它的"所在墙"列填的是 W001;W003
+        # 这类内部墙号，施工方看不懂，长串还会把格子挤爆。
+        items = opening_summary(session)
+        if not items:
+            skipped.append({"item": "门窗表", "why": "图上没有洞口，无内容可列"})
+        else:
+            cols_mm = [10.0, 22.0, 12.0, 30.0, 16.0, 12.0, 22.0]
+
+            def _draw_openings(at, tid, _c=cols_mm):
+                return create_opening_table(session, tid, at, scale=sc, widths=_c)
+
+            specs.append({"item": "门窗表", "w": sum(cols_mm) * sc,
+                          "h": row_h * (1.15 + 1 + len(items)),
+                          "rows": len(items), "draw": _draw_openings})
+
+    specs.sort(key=lambda sp: -(sp["w"] * sp["h"]))
+    floor_band = 0            # 已落位的表所在落位区，后面的表不许再往更优的区跑
+    for sp in specs:
+        at, bi = _fit_table(occupied, sp["w"], sp["h"], bands[floor_band:], margin)
+        if at is None:
+            skipped.append({"item": sp["item"],
+                            "why": "内框放不下 %.0f×%.0f" % (sp["w"], sp["h"])})
+            continue
+        floor_band += bi
+        tid = next_table_id()
+        res = sp["draw"](at, tid)
+        tw = float(res.get("width") or sp["w"])
+        th = float(res.get("height") or sp["h"])
+        added.append((at[0], at[1] - th, at[0] + tw, at[1]))
+        occupied.append(added[-1])
+        placed.append({"item": sp["item"], "id": tid, "at": list(at),
+                       "size": [tw, th], "rows": sp["rows"],
+                       "shrunk": res.get("shrunk", 0),
+                       "truncated": res.get("truncated", 0)})
+
+    # ---- 指北针 ----
+    if north:
+        d = annot_size(24.0, sc)
+        at = find_free_rect(inner, occupied, d, d, margin=margin, prefer=north_prefer)
+        if at is None:
+            skipped.append({"item": "指北针", "why": "内框放不下直径 %.0f 的圆" % d})
+        else:
+            cx, cy = at[0] + d / 2.0, at[1] - d / 2.0
+            k = 1
+            while session.block_exists("AA_SYM_N%d" % k):
+                k += 1
+            sid = "N%d" % k
+            create_north_arrow(session, sid, (cx, cy), scale=sc)
+            added.append((at[0], at[1] - d, at[0] + d, at[1]))
+            occupied.append(added[-1])
+            placed.append({"item": "指北针", "id": sid,
+                           "at": [cx, cy], "size": [d, d]})
+
+    # after = 原有图元 + 刚放进去的外包；不重新回读，省一次整图解析
+    after_pieces = list(base_pieces)
+    for b in added:
+        after_pieces.append({"pts": [(b[0], b[1]), (b[2], b[3])]})
+    after = _sheet_occupancy(after_pieces, inner)
+    return {"sheet": sheet_id, "size": boxes["size"], "scale": sc,
+            "placed": placed, "skipped": skipped,
+            "occupancy_before": round(before, 3),
+            "occupancy_after": round(after, 3)}
 
 
 def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
@@ -6264,7 +6627,7 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
         hits: list[dict[str, Any]] = []
         for p in geom:
             if p["type"] not in ("LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE",
-                                 "SOLID", "ARC", "DIMENSION"):
+                                 "SOLID", "ARC", "DIMENSION", "TEXT", "MTEXT"):
                 continue
             b = _piece_box(p)
             if (b[0] < tb[2] - tol and tb[0] < b[2] - tol
@@ -7492,14 +7855,40 @@ def draw_table(session: Session, table_at: tuple[float, float], title: str,
     y0 = float(table_at[1])
 
     body: list[str] = []
+    shrunk = [0]          # 缩字才塞进去的格子数
+    truncated = [0]       # 缩到 70% 还得截断的格子数
+    pad = text_height * 0.25   # 单元格左右留白
 
     def seg(x1: float, y1: float, x2: float, y2: float) -> None:
         body.append('(aa:mkline (list %.3f %.3f) (list %.3f %.3f) "%s")'
                     % (x1, y1, x2, y2, lay))
 
-    def txt(cx: float, cy: float, s: str, hgt: float) -> None:
+    def txt(cx: float, cy: float, s: str, hgt: float,
+            avail: float | None = None) -> None:
+        """画一格居中文字。给了 `avail` 就必须塞进这一格：先缩字，缩到 70% 还超就截断加省略号。
+
+        旧版直接居中画、不看列宽，长内容（比如一串墙号）会往两边顶出去，
+        看上去就像表格压线——这类"看着不像错、但一定被审图挑"的问题最难返工，
+        所以在原语这一层就掐死，别指望调用方每处都自己算宽度。
+        """
         if not s:
             return
+        if avail is not None:
+            avail = max(0.0, float(avail))
+            tw = _text_w(s, hgt)
+            if tw > avail > 0:
+                if tw * 0.7 <= avail:
+                    hgt *= avail / tw                       # 缩字刚好占满
+                    shrunk[0] += 1
+                else:
+                    hgt *= 0.7
+                    keep = s
+                    while keep and _text_w(keep + "…", hgt) > avail:
+                        keep = keep[:-1]
+                    s = (keep + "…") if keep else ""
+                    truncated[0] += 1
+                    if not s:
+                        return
         w = _text_w(s, hgt)
         body.append('(aa:mktext-r (list %.3f %.3f) "%s" "%s" %.3f 0.0)'
                     % (cx - w / 2.0, cy - hgt / 2.0, s.replace('"', "'"), lay, hgt))
@@ -7526,13 +7915,15 @@ def draw_table(session: Session, table_at: tuple[float, float], title: str,
         h = heights[ri]
         cy = y_top - h / 2.0
         if ri == 0:
-            txt(x0 + total_w / 2.0, cy, title, text_height * 1.25)
+            txt(x0 + total_w / 2.0, cy, title, text_height * 1.25,
+                avail=total_w - 2 * pad)
         else:
             hgt = text_height * (1.1 if ri == 1 else 1.0)
             for ci in range(ncol):
                 cell = line[ci] if ci < len(line) else ""
                 if str(cell).strip():
-                    txt((col_x[ci] + col_x[ci + 1]) / 2.0, cy, str(cell), hgt)
+                    txt((col_x[ci] + col_x[ci + 1]) / 2.0, cy, str(cell), hgt,
+                        avail=widths[ci] - 2 * pad)
         y_top -= h
 
     before = session.snapshot()
@@ -7557,7 +7948,8 @@ def draw_table(session: Session, table_at: tuple[float, float], title: str,
     handle = session.insert(block, (0.0, 0.0), att_vals, layer=lay)
     return {"at": [x0, y0], "width": total_w, "height": total_h,
             "by": "geometry", "rows": len(rows), "cols": ncol,
-            "block": block, "id": table_id, "handle": handle}
+            "block": block, "id": table_id, "handle": handle,
+            "shrunk": shrunk[0], "truncated": truncated[0]}
 
 
 FLOOR_HEADER = ["层号", "楼层标高", "层高", "平面图号", "层名"]

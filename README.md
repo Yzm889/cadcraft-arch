@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.57，图纸质量门禁落地）
+## 现状（v1.0.58，自动排附表 + 排图缺陷修复）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -24,6 +24,7 @@
 | 楼层表 | `floors` | 完成（B6-1） | 各层层号/楼层标高/层高/平面图号/层名，画成 `AA_TABLE_<编号>` 表（`AA_TYPE=FLOOR_TABLE`）；标高省略时按层高自下而上累加（±0.000 / 3.600 / 7.200），层高≤0、标高低于下层顶、编号重复都拒绝；`read_floors` 可回读成结构化数据，是立面/剖面的数据源 |
 | **门窗表** | `opening-table` | 完成（B7-1） | 从图上 `AA_OPENING` 自动统计，不手抄：编号+类别+洞口宽高+窗台高归并，樘数=图上真实数量，所在层取洞口所在墙的 `AA_FLOOR`（连续写 `1-3`、不连续写 `1,2`）；7 列（序号/编号/类别/洞口尺寸/窗台高/樘数/所在层），`AA_TYPE=OPENING_TABLE`，`read_opening_table` 可回读；`--note` 表下附注，`--no-scale` 标题不带比例；空图/重名拒绝。依赖 `wall --floor` 写层号，墙体重建（开洞/split/merge/set-wall）不丢层号 |
 | **图纸集** | `sheet-set` | 完成（B7-2） | 登记"图号→图名→图幅→备注"，**图幅与比例从图框读**不手填；图号重复/图幅被占用/图幅不存在/空集/集编号重复都拒绝；`AA_TYPE=SHEETSET`，`read_sheet_set` 回读，是图纸目录与批量出图的数据源 |
+| **自动排附表** | `place` | 完成（v1.0.58） | 把门窗表 / 房间面积表 / 指北针自动放进图面空位，不用手填坐标：先量内框、图签与已有图元外包，再按「图签上方横带 → 图形右侧竖带 → 全内框」优先级找空矩形（积分图，O(1) 单次查询）；留缝按图纸 mm 给，放不下时逐级收紧到 1.5mm；两张表**大表先落位、小表跟着同一落位区**，不会拆到图纸两头；`--replace` 先清同名附表再重排，可重复执行不堆表；`--sheet auto` 自动识别唯一图幅；返回 `placed / skipped / occupancy_before / occupancy_after`。CLI 与 MCP `aa_place` 均已接通 |
 | **图纸目录** | `sheet-index` | 完成（B7-2） | 按图纸集自动生成 6 列（序号/图号/图名/图幅/比例/备注），行高 5mm、字高 3mm；`AA_TYPE=SHEET_INDEX` 可回读；表下可附注 |
 | **批量出图** | `export-set` | 完成（B7-2） | 按图纸集逐张出 PNG/SVG/PDF，一张图幅一个文件，命名`图号_图名.扩展名`；每张出完校验产物 >2KB，缺一张整体报错并列已完成清单；PNG 仍按图层线宽补粗、按 ACI 上色 |
 | **楼层复制** | `copy-floor` | 完成（B7-3） | 按 `AA_FLOOR` 把源层墙 + 门窗 + 房间整层复制到目标层，编号统一加前缀（`2W001`/`2M001`/`2R001`），房间面积必须与源层一致；可选 `offset` 平移便于同图核对；层相同/无墙/目标层已有墙/编号冲突/偏移非法都拒绝；楼梯柱台阶暂不带（无层号） |
@@ -61,7 +62,7 @@
 | **构件一致性检查** | `reconcile` | 完成（B8-1，v1.0.48 自动收尾） | 只查数据是否自洽：墙长/墙厚为 0、门窗宿主墙缺失或越出墙段/同墙重叠、房间存储面积与轮廓鞋带面积不符；`--fix` 只做无歧义修复：删零长空墙、删零宽洞口、唯一可匹配的悬空门窗重挂、放得下的越界洞口夹回墙内、重建房间面积；墙厚 0、重叠、多候选、洞口比墙长等只给 `suggestion`；整图先备份 `<stem>.reconcile.bak.dxf`，任一动作失败整图回滚；房间仍受门窗/墙体遗留错误保护（`fix_skipped`） |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，55 个原子工具与 CLI 一一对应（含 `aa_site` / `aa_roof_detail`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 58 个；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，56 个原子工具与 CLI 一一对应（含 `aa_site` / `aa_roof_detail` / `aa_place`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 59 个；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
@@ -122,6 +123,12 @@ python tools/aa_cmd.py roof out.dxf RF1 --at 0,0 --kind flat --w 12000 --d 8000 
 python tools/aa_cmd.py roof-detail out.dxf RD1 --roof RF1 --grid "4,3" \
   --inner-gutter "S,N:400" --slope 2
 python tools/aa_cmd.py roof-detail out.dxf --show RD1  # 只回读，不改图
+
+# 1e. 自动排附表：门窗表 / 房间面积表 / 指北针 放进图面空位（图幅自动识别）
+python tools/aa_cmd.py place out.dxf
+python tools/aa_cmd.py place out.dxf --replace          # 重排：先清同名附表再放，不堆表
+python tools/aa_cmd.py place out.dxf --no-rooms          # 只要门窗表 + 指北针
+# 返回 placed / skipped / occupancy_before / occupancy_after，可直接看排完充实了多少
 
 # 2a. 轴网（等距）：3 道纵轴 @3600，2 道横轴 @4800
 python tools/aa_cmd.py axis out.dxf AX001 --xcount 3 --xspace 3600 --ycount 2 --yspace 4800
@@ -410,7 +417,7 @@ cadcraft-arch/
 └── samples/  验收输出（dxf/png）
 ```
 
-## 图面质量门禁（v1.0.57）
+## 图面质量门禁（v1.0.57，v1.0.58 修了三处判定缺陷）
 
 `audit` 在原有"几何错误"之外，额外返回**不影响 `count` 的质量警告**，让"规范不规范、返工率高不高"变成可比较的数字：
 
@@ -430,6 +437,14 @@ cadcraft-arch/
 | `internal_jargon` | 注字里是否含 `AA_`、`鞋带`、`块参照`、`CADCraft` 等实现术语 | 施工说明混入开发语言 |
 
 `quality.occupancy` 是连续指标，可用来比较改图前后的图面充实度。幼儿园 5 层方案图在 v1.0.57 里已把图签压线、说明术语全部修掉，00–05 六张图 `count=0 / warning_count=0`。
+
+v1.0.58 又修掉三处**判定本身**的缺陷——指标算错比指标缺失更坏，因为它会让人以为图没问题：
+
+1. **属性定义被当成可见图元**：`ATTDEF` 的坐标留在块定义原点附近，跟着 `INSERT` 做变换会凭空造出一堆框。一层平面图里 `ATTDEF` 有 1201 个、真实图元只有 646 个，`occupancy` 因此虚高（0.336 → 修后 0.315）。现在 `_quality_pieces` 直接排除 `ATTDEF/ATTRIB/SEQEND`。
+2. **文字外包退化成零面积点**：`_piece_box` 按"插入点 ± 半径"算，文字宽度信息全丢，于是 `title_block_overlap` 干脆把 `TEXT` 整类排除在判定外——"主题：…"明明落进图签框也报不出来。现在文字按 插入点 + 估算字宽 + 字高 还原成真实占位框，压线检查把 `TEXT/MTEXT` 纳入。
+3. **表格文字会顶出格子**：`draw_table` 自称"用线+文字自绘"来规避原生 table 的列宽问题，但自绘版同样不看列宽，一串墙号能把字顶到邻列甚至表格外。现在单元格文字先缩字（最紧到 70%），还超就截断加省略号，并在返回值里报 `shrunk / truncated` 计数——**表格尺寸永不变，字永不出格**。
+
+另外顺带修了"说明标题写死第 6 行"（说明一加行就压到第一行字上）和"本层标高/主题摆进图签框"两个排版错。
 
 ## 实测踩到的平台约束（重要）
 

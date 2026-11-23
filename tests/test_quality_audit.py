@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from aa_lib import Session, audit, create_sheet, create_text  # noqa: E402
+from aa_lib import Session, audit, create_sheet, create_text, sheet_layout  # noqa: E402
 
 OUT = ROOT / "samples"
 PATH = OUT / "test_quality_audit.dxf"
@@ -49,6 +49,24 @@ def main() -> int:
     assert cli["quality"]["checks"] == 3, cli
     print("CLI 质量字段 ok:", cli["warning_count"], cli["quality"])
 
+    # 回归：文字压图签。旧版把 TEXT 整类排除在判定之外，文字外包又退化成零面积点，
+    # 所以"主题：…"明明落在图签框里也报不出来。现在泰文字必须按真实字宽成框。
+    p2 = OUT / "test_quality_text.dxf"
+    s2 = Session(p2)
+    s2.new_metric(scale=100)
+    create_sheet(s2, "SHT", "A4", at=(0.0, 0.0))
+    lay4 = sheet_layout("A4", 100)
+    ix, iy = lay4["inner_org"]
+    # 放进图签框内部（右下角 title_w × title_h）
+    tx = ix + lay4["inner_w"] - lay4["title_w"] / 2.0
+    ty = iy + lay4["title_h"] / 2.0
+    create_text(s2, "TX1", (tx, ty), "主题：美工 / 科学建构", height=2.5, scale=100)
+    d2 = audit(s2)
+    hit = [w for w in d2["warnings"] if w["kind"] == "title_block_overlap"]
+    assert hit, d2["warnings"]
+    assert "TEXT" in hit[0]["detail"], hit[0]
+    print("文字压图签能被抓到:", hit[0]["detail"][:70])
+
     # 修补后的幼儿园交付图：程序问题 0、质量警告 0（S 级三项已修）
     for i in range(0, 6):
         stem = ("00_总平面索引" if i == 0 else
@@ -57,7 +75,17 @@ def main() -> int:
         d = audit(Session(f))
         assert d["count"] == 0, (stem, d["issues"])
         assert d["warning_count"] == 0, (stem, d["warnings"])
-    print("交付集 00–05：程序问题 0 / 质量警告 0")
+        # 幅面不再空（v1.0.58）
+        assert d["quality"]["occupancy"] >= 0.35, (stem, d["quality"])
+        s0 = Session(f)
+        if i == 0:
+            # 总平面索引图：只要求图纸目录那一张表，不排门窗表/面积表
+            assert len(s0.components("AA_TABLE_")) >= 1, stem
+        else:
+            # 平面图：门窗表 + 房间面积表 + 指北针 三样都得在
+            assert len(s0.components("AA_TABLE_")) >= 2, stem
+            assert len(s0.components("AA_SYM_N")) >= 1, stem
+    print("交付集 00–05：程序问题 0 / 质量警告 0 / 附表与指北针齐全")
 
     print("PASS test_quality_audit")
     return 0

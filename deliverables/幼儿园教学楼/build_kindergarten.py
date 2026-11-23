@@ -23,7 +23,7 @@ from aa_lib import (  # noqa: E402
     CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, bind_walls_to_axis,
     block_geometry, create_axis_grid, create_opening, create_room_edges, create_sheet,
     create_stair, create_text, draw_table, drawing_extent, drawing_scale, export, opening_data,
-    png_size, reconcile, refresh_opening_labels, room_data, wall_data,
+    place_schedules, png_size, reconcile, refresh_opening_labels, room_data, wall_data,
 )
 
 OUT = Path(__file__).resolve().parent
@@ -208,6 +208,15 @@ class FloorBuilder:
             drawn="待填", check="待审", unit="mm",
         )
         self.add_notes(sheet, title)
+        # 附表与指北针自动排位（门窗表/房间面积表/指北针），
+        # 手写表格坐标是返工率最高的一步，这里交给 place 找空位。
+        # 排图属装饰性步骤：失败只报警，绝不能让几何生成跟着崩。
+        try:
+            layout = place_schedules(self.s, replace=True)
+            self.layout = {p["item"]: p["at"] for p in layout["placed"]}
+            self.layout_skipped = layout["skipped"]
+        except Exception as exc:            # noqa: BLE001
+            self.layout, self.layout_skipped = {}, [{"item": "排图", "why": str(exc)[:120]}]
         return sheet
 
     def add_notes(self, sheet, title: str, note_title: str = "图纸说明"):
@@ -215,7 +224,8 @@ class FloorBuilder:
         s = SCALE
         x = ax + 30 * s
         y0 = ay + 13 * s
-        self.text((x, ay + (13 + 6 * 6.0) * s), note_title, 3.2)
+        # 说明标题跟着行数走：写死 6.0 的话，说明一加行就压到第一行字上
+        self.text((x, y0 + (len(notes) + 1) * 4.8 * s), note_title, 3.2)
         notes = [
             "1. 合规声明：按 JGJ 39-2016《托儿所、幼儿园建筑设计规范》，幼儿园建筑层数不宜超过3层。",
             "   本图为5层假设性方案，层数与消防需专项论证；标注“方案图”，不直接作为报建施工图。",
@@ -226,12 +236,12 @@ class FloorBuilder:
         ]
         for i, line in enumerate(notes):
             self.text((x, y0 + (len(notes) - i) * 4.8 * s), line, 2.2)
-        # 楼层标高/主题
-        self.text((ax + 65100 + 3000, ay + 7200),
-                  "标高 %s" % self.elevation, 2.5)
+        # 本层标高/主题：放在说明区右端那一行，**不能**往图签上方塞——
+        # 旧版按 `ay + 4200` 摆，正好落进图签框（-18700~-13100），文字压线。
+        info = "本层标高 %s m" % self.elevation
         if self.theme:
-            self.text((ax + 65100 + 3000, ay + 4200),
-                      "主题：%s" % self.theme, 2.2)
+            info += "　主题：%s" % self.theme
+        self.text((ax + 20000, y0 + (len(notes) + 1) * 4.8 * s), info, 2.5)
 
     # ---------- 保存 / 回读 / 出图 ----------
     def save(self):

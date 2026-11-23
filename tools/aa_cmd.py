@@ -82,6 +82,7 @@ from aa_lib import (  # noqa: E402
     rescale_annotations,
     set_drawing_scale,
     audit,
+    place_schedules,
     reconcile,
     verify,
     create_elevation_mark,
@@ -442,6 +443,18 @@ def main(argv: list[str] | None = None) -> int:
     p_section.add_argument("--dir", default="down", choices=["down", "up", "left", "right"],
                            help="投射方向（往哪边看）")
     p_section.add_argument("--no", default="1", help="剖切编号")
+
+    p_place = sub.add_parser("place", help="自动排附表：在空白处放指北针 / 门窗表 / 房间面积表")
+    p_place.add_argument("path")
+    p_place.add_argument("--sheet", default="auto",
+                         help="图幅编号；默认 auto = 自动取图上唯一的图幅")
+    p_place.add_argument("--no-north", action="store_true", help="不放指北针")
+    p_place.add_argument("--no-openings", action="store_true", help="不放门窗表")
+    p_place.add_argument("--no-rooms", action="store_true", help="不放房间面积表")
+    p_place.add_argument("--margin", type=float, default=6.0,
+                         help="表格与图框/图元的最小留缝（图纸 mm），默认 6")
+    p_place.add_argument("--replace", action="store_true",
+                         help="先清掉图上已有的门窗表/房间面积表/指北针再重排（可重复执行）")
 
     p_audit = sub.add_parser("audit", help="图面自检：墙未接、门窗越界、文字重叠、尺寸压轴号、出图框")
     p_audit.add_argument("path")
@@ -985,6 +998,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "section":
             emit({"ok": True, **create_section_mark(
                 session, args.id, _pt(args.p1), _pt(args.p2), args.dir, args.no)})
+        elif args.cmd == "place":
+            emit({"ok": True, **place_schedules(
+                session, args.sheet,
+                north=not args.no_north,
+                opening_table=not args.no_openings,
+                room_table=not args.no_rooms,
+                margin=args.margin, replace=args.replace)})
         elif args.cmd == "audit":
             res = audit(session)
             emit({"ok": True, **res})

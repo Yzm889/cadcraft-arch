@@ -81,6 +81,7 @@ from aa_lib import (  # noqa: E402
     create_sheet,
     create_title_mark,
     create_north_arrow,
+    place_schedules,
     rescale_annotations,
     export,
     layer_table,
@@ -101,7 +102,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.57"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.58"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -549,6 +550,27 @@ TOOLS: list[dict[str, Any]] = [
                 "size": {"type": "number", "description": "圆直径（图元单位），默认 2400"},
             },
             "required": ["path", "at"],
+        },
+    },
+    {
+        "name": "aa_place",
+        "description": "自动排附表：在图面空白处放门窗表 / 房间面积表 / 指北针，"
+                       "自动避开图签和已有图元；--replace 可重复执行不堆表。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "sheet": {"type": "string",
+                          "description": "图幅编号；默认 auto = 取图上唯一的图幅",
+                          "default": "auto"},
+                "north": {"type": "boolean", "description": "是否放指北针", "default": True},
+                "opening_table": {"type": "boolean", "description": "是否放门窗表", "default": True},
+                "room_table": {"type": "boolean", "description": "是否放房间面积表", "default": True},
+                "replace": {"type": "boolean",
+                            "description": "先清掉已有的同名附表与指北针再重排", "default": False},
+                "margin": {"type": "number", "description": "与图框/图元的留缝（图纸 mm）", "default": 6.0},
+            },
+            "required": ["path"],
         },
     },
     {
@@ -1672,6 +1694,15 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **create_north_arrow(
             s, a.get("id", "N001"), _pt(a["at"], "at"),
             _opt(a.get("size")))}
+
+    if name == "aa_place":
+        return {"ok": True, **place_schedules(
+            s, a.get("sheet", "auto"),
+            north=bool(a.get("north", True)),
+            opening_table=bool(a.get("opening_table", True)),
+            room_table=bool(a.get("room_table", True)),
+            replace=bool(a.get("replace", False)),
+            margin=_num(a.get("margin", 6.0), "margin"))}
 
     if name == "aa_elev":
         return {"ok": True, **create_elevation_mark(
