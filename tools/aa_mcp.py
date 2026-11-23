@@ -105,7 +105,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.60"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.61"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -520,7 +520,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "aa_dim",
-        "description": "尺寸标注：外墙墙段长度标在外层、洞口宽在内层，落在 AA-DIM 层；重跑幂等。",
+        "description": "尺寸标注：外墙墙段长度标在外层、洞口宽在内层，落在 AA-DIM 层；重跑幂等。M-DIM 可选项：locate（第一道补成门窗定位链）、thickness（墙厚）、coords（墙角坐标 X=/Y=，m）；选项记在图上，rescale 按原选项重画。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -528,6 +528,9 @@ TOOLS: list[dict[str, Any]] = [
                 "opening_off": {"type": "number", "description": "洞口尺寸线离墙面距离", "default": 900},
                 "wall_off": {"type": "number", "description": "墙段尺寸线离墙面距离", "default": 2000},
                 "all_walls": {"type": "boolean", "description": "连内墙一起标（默认只标外墙）", "default": False},
+                "locate": {"type": "boolean", "description": "M-DIM 门窗定位尺寸：第一道尺寸线补成完整链 墙端→洞口边→…→墙端，合计=墙长", "default": False},
+                "thickness": {"type": "boolean", "description": "M-DIM 墙厚标注：每道墙在墙端外延处注一道墙厚；墙端是 T 接/共线延续/落点进房间的跳过并在 thickness_skipped 里报告", "default": False},
+                "coords": {"type": "boolean", "description": "M-DIM 坐标标注：外廓各墙角（墙中心线交点）注两行 X=纵坐标(北)/Y=横坐标(东)，单位 m", "default": False},
             },
             "required": ["path"],
         },
@@ -1931,6 +1934,9 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             float(a.get("opening_off") or 900.0),
             float(a.get("wall_off") or 2000.0),
             exterior_only=not bool(a.get("all_walls")),
+            locate=bool(a.get("locate", False)),
+            thickness=bool(a.get("thickness", False)),
+            coords=bool(a.get("coords", False)),
         )}
 
     if name == "aa_room":

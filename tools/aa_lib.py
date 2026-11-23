@@ -1514,7 +1514,12 @@ def rescale_annotations(session: Session, scale: float,
 
         dims = 0
         if rebuild_dims:
-            res = annotate(session, scale=sc)
+            opts = dim_options(session)      # 按 AA_CFG_DIM 记住的 M-DIM 选项原样重画
+            res = annotate(session, scale=sc,
+                           exterior_only=opts["exterior_only"],
+                           envelope_only=opts["envelope_only"],
+                           locate=opts["locate"], thickness=opts["thickness"],
+                           coords=opts["coords"])
             dims = res["dims"]
     finally:
         if prev is None:
@@ -4735,15 +4740,10 @@ def _in_polygon(pt: tuple[float, float], poly: list[tuple[float, float]]) -> boo
     return inside
 
 
-def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
-    """墙是不是外墙：沿墙取中段，两侧各探一点，只有一侧落在房间内才算外墙。
-
-    内墙两侧都是房间；外墙则是"内侧是房间、外侧是室外"。
-    若图纸还没有房间，无法判断，一律按外墙处理。
-    """
-    rooms = room_data(session)
+def _room_polygons(session: Session) -> list[list[tuple[float, float]]]:
+    """全部房间的轮廓多边形（点集），给外墙判断和"落点在不在室内"检查共用。"""
     polys: list[list[tuple[float, float]]] = []
-    for r in rooms:
+    for r in room_data(session):
         raw = r.get("pts")
         if isinstance(raw, str) and raw.strip():
             try:
@@ -4756,6 +4756,22 @@ def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
             continue
         if r.get("outline"):
             polys.append([tuple(p) for p in r["outline"]])
+    return polys
+
+
+def _in_rooms(polys: Sequence[Sequence[tuple[float, float]]],
+              pt: tuple[float, float]) -> bool:
+    """点是否落在任一房间轮廓内。没有房间多边形时一律视为室外。"""
+    return any(_in_polygon(pt, poly) for poly in polys)
+
+
+def _is_exterior(session: Session, wall: dict[str, Any]) -> bool:
+    """墙是不是外墙：沿墙取中段，两侧各探一点，只有一侧落在房间内才算外墙。
+
+    内墙两侧都是房间；外墙则是"内侧是房间、外侧是室外"。
+    若图纸还没有房间，无法判断，一律按外墙处理。
+    """
+    polys = _room_polygons(session)
     if not polys:
         return True
 
@@ -4794,7 +4810,8 @@ def annotate(session: Session, opening_off: float | None = None,
              wall_off: float | None = None, total_off: float | None = None,
              total: bool = True, clear: bool = True,
              exterior_only: bool = True, scale: float | None = None,
-             envelope_only: bool = False) -> dict[str, Any]:
+             envelope_only: bool = False, locate: bool = False,
+             thickness: bool = False, coords: bool = False) -> dict[str, Any]:
     """给外墙标尺寸：洞口宽在内层、墙段（轴线）在中层、总尺寸在最外层。
 
     - 外侧判断：取所有墙中点均值作为"建筑内部参考点"，
@@ -4808,10 +4825,20 @@ def annotate(session: Session, opening_off: float | None = None,
       避免电梯井、配电间这类贴边小房间的内墙被误判为外墙后生成一圈碎尺寸。
     - 标注统一落在 AA-DIM 层，样式 AA-DIM（字高 250 / 箭头 150）。
     - 默认先清掉 AA-DIM 层上已有的标注，重跑幂等，不会叠出一堆重影。
+
+    M-DIM 补充（都默认关；打开后同样落 AA-DIM、同样幂等，返回里多出
+    `locate / thickness / thickness_skipped / coords` 四个计数）：
+    - `locate`：第一道尺寸线补成完整的门窗定位链 墙端→洞口边→…→墙端，
+      分段合计正好等于墙长；洞口宽那一段沿用上面的洞口尺寸，不重复画。
+    - `thickness`：每道墙在墙端外延处注一道墙厚（见 `_dim_wall_thickness`）。
+    - `coords`：外廓每个墙角注两行坐标 X=/Y=（见 `_dim_coords`）。
+    - 选项记进 `AA_CFG_DIM` 标记，`rescale_annotations` 重画尺寸时按它原样恢复。
     """
     walls = wall_data(session)
     if not walls:
         raise CadError("拒绝标注：图纸里没有墙")
+    if not clear and (locate or thickness or coords):
+        raise CadError("clear=False 时不允许叠加 M-DIM 标注（locate/thickness/coords），会重影")
     sc = float(scale) if scale else drawing_scale(session)
     if opening_off is None:
         opening_off = annot_size(9.0, sc)      # 内层尺寸线离墙 9mm
@@ -4841,6 +4868,7 @@ def annotate(session: Session, opening_off: float | None = None,
                              ext_offset=annot_size(1.0, sc))
 
     if clear:
+        _clear_dim_notes(session)      # 上一次的坐标注字（AA_TXT_DIM*）
         old = [e["handle"] for e in session.entities().get("entities", [])
                if e["type"] == "Dimension" and e.get("layer") == LAYERS["dim"]]
         if old:
@@ -4855,6 +4883,7 @@ def annotate(session: Session, opening_off: float | None = None,
 
     made: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
+    n_locate = 0
     openings = opening_data(session)
     cmds: list[tuple[str, dict]] = []
     for w in walls:
@@ -4879,7 +4908,7 @@ def annotate(session: Session, opening_off: float | None = None,
                                    "at": [round(at[0], 4), round(at[1], 4)],
                                    "rotation": round(ang, 6)}))
         made.append({"kind": "wall", "id": w["id"], "value": round(w["len"], 2)})
-        lines.append({"p1": p1, "p2": p2, "d": d, "n": n, "side": side})
+        lines.append({"id": w["id"], "p1": p1, "p2": p2, "d": d, "n": n, "side": side})
 
         # 洞口宽（内层）
         for o in openings:
@@ -4897,6 +4926,36 @@ def annotate(session: Session, opening_off: float | None = None,
                                        "at": [round(oat[0], 4), round(oat[1], 4)],
                                        "rotation": round(ang, 6)}))
             made.append({"kind": "opening", "id": o["id"], "value": round(o["width"], 2)})
+
+        # M-DIM 门窗定位尺寸：把第一道尺寸线补成完整的链 墙端→洞口边→…→墙端。
+        # 链必须完整——verify 拿这一道的分段合计去对外道墙长，跳过短段合计就对不上。
+        # 洞口宽那一段上面已经画过（就是洞口尺寸），这里只补洞口两侧的墙垛。
+        if locate:
+            own = [o for o in openings if o["wallid"] == w["id"]]
+            cuts = [0.0, w["len"]]
+            for o in own:
+                cuts += [o["pos"] - o["width"] / 2.0, o["pos"] + o["width"] / 2.0]
+            uniq: list[float] = []
+            for c in sorted(min(max(float(c), 0.0), w["len"]) for c in cuts):
+                if not uniq or abs(c - uniq[-1]) > 1e-6:
+                    uniq.append(c)
+            for a, b in zip(uniq, uniq[1:]):
+                if b - a <= 1.0:
+                    continue
+                if any(abs(a - (o["pos"] - o["width"] / 2.0)) <= 1e-6
+                       and abs(b - (o["pos"] + o["width"] / 2.0)) <= 1e-6 for o in own):
+                    continue
+                q1 = (p1[0] + d[0] * a, p1[1] + d[1] * a)
+                q2 = (p1[0] + d[0] * b, p1[1] + d[1] * b)
+                at = ((q1[0] + q2[0]) / 2.0 + n[0] * side * o_off,
+                      (q1[1] + q2[1]) / 2.0 + n[1] * side * o_off)
+                cmds.append(("dimlinear", {
+                    "p1": [round(q1[0], 4), round(q1[1], 4)],
+                    "p2": [round(q2[0], 4), round(q2[1], 4)],
+                    "at": [round(at[0], 4), round(at[1], 4)],
+                    "rotation": round(ang, 6)}))
+                made.append({"kind": "locate", "id": w["id"], "value": round(b - a, 2)})
+                n_locate += 1
 
     # 外层总尺寸：把"同一条外墙线 + 同一侧"的墙归成一组，每组注一条全长。
     # 先把方向规范化到 +x/+y 半球，避免同一立面被正向/反向拆成两组。
@@ -4958,14 +5017,252 @@ def annotate(session: Session, opening_off: float | None = None,
             raise CadError("回读测量值不符：%s(%.2f) 期望 %.2f"
                            % (want["id"], float(m or 0), want["value"]))
 
+    side_of = {ln["id"]: ln["side"] for ln in lines}
+    n_thick, thick_skipped = _dim_wall_thickness(
+        session, walls, wall_data(session), side_of, sc) if thickness else (0, [])
+    n_coords = _dim_coords(session, lines, total_off, sc) if coords else 0
+    if clear and (locate or thickness or coords or session.reference(CFG_DIM_BLOCK)):
+        _write_dim_options(session, {
+            "locate": bool(locate), "thickness": bool(thickness), "coords": bool(coords),
+            "exterior_only": bool(exterior_only), "envelope_only": bool(envelope_only)})
+
     return {
-        "dims": len(made),
+        "dims": len(made) + n_thick,
         "walls": sum(1 for m in made if m["kind"] == "wall"),
         "openings": sum(1 for m in made if m["kind"] == "opening"),
         "totals": sum(1 for m in made if m["kind"] == "total"),
         "layer": LAYERS["dim"],
         "style": "AA-DIM",
+        "locate": n_locate,
+        "thickness": n_thick,
+        "thickness_skipped": thick_skipped,
+        "coords": n_coords,
     }
+
+
+CFG_DIM_BLOCK = "AA_CFG_DIM"
+# 尺寸标注选项 -> (标记里的属性 tag, 默认值)
+_DIM_FLAGS: tuple[tuple[str, str, bool], ...] = (
+    ("locate", "AA_LOCATE", False),
+    ("thickness", "AA_THICK", False),
+    ("coords", "AA_COORDS", False),
+    ("exterior_only", "AA_EXTERIOR", True),
+    ("envelope_only", "AA_ENVELOPE", False),
+)
+
+
+def dim_options(session: Session) -> dict[str, bool]:
+    """读图上记住的尺寸标注选项（`AA_CFG_DIM` 标记）；没有标记返回默认值。
+
+    `annotate()` 每次都把本次用到的**全套**选项写回去，`rescale_annotations`
+    重画尺寸时按它原样恢复——这样 `dim --locate --coords` 之后再改出图比例，
+    补出来的标注不会丢，也不会留在旧字高。
+    """
+    out = {key: dflt for key, _tag, dflt in _DIM_FLAGS}
+    ref = session.reference(CFG_DIM_BLOCK)
+    if not ref:
+        return out
+    attrs = {a["tag"]: a.get("text", {}).get("value", "")
+             for a in ref["geometry"].get("attribs", [])}
+    for key, tag, _dflt in _DIM_FLAGS:
+        v = attrs.get(tag)
+        if v in ("0", "1"):
+            out[key] = v == "1"
+    return out
+
+
+def _write_dim_options(session: Session, flags: dict[str, bool]) -> None:
+    """写/改尺寸标注选项标记：只有属性，不画几何（同 `AA_CFG_SCALE` 的做法）。"""
+    values = {tag: ("1" if flags.get(key, dflt) else "0")
+              for key, tag, dflt in _DIM_FLAGS}
+    ref = session.reference(CFG_DIM_BLOCK)
+    if ref:
+        session.run([("attedit", {"handle": ref["handle"], "values": values})], save=True)
+        return
+    atts = session.define_attributes(
+        [(tag, "dim option " + key, values[tag]) for key, tag, _d in _DIM_FLAGS])
+    session.make_block(CFG_DIM_BLOCK, (0.0, 0.0), atts)
+    session.insert(CFG_DIM_BLOCK, (0.0, 0.0), values, layer=LAYERS["axistext"])
+
+
+def _clear_dim_notes(session: Session) -> int:
+    """删掉 annotate 自己生成的注字块（编号以 DIM 开头：DIMC* 坐标），返回删除数。"""
+    n = 0
+    for e in session.components("AA_TXT_DIM"):
+        attrs = {a["tag"]: a.get("text", {}).get("value", "")
+                 for a in e["geometry"].get("attribs", [])}
+        if attrs.get("AA_ID", "").startswith("DIM"):
+            delete_component(session, e["geometry"]["block"])
+            n += 1
+    return n
+
+
+def _thickness_end(walls: Sequence[dict[str, Any]], wall: dict[str, Any],
+                   end: tuple[float, float], d: tuple[float, float],
+                   open_side: float, tol: float = 1.0) -> tuple[float, float] | None:
+    """墙端能不能放墙厚尺寸；能放返回 (文字侧符号 s, 邻墙半厚)，不能放返回 None。
+
+    尺寸线垂直于墙、放在墙端之外，所以这一端往外必须是空的：
+      - 墙线在这一端延续（共线邻墙）-> 外延会压在邻墙身上，不行；
+      - T 接（邻墙从中间穿过）-> 外延进了邻墙另一侧的房间，不行；
+      - 多墙交汇 -> 不猜。
+    s = ±1 说的是 p14 取墙法向 n 的哪一边。CAD 把放不下的文字沿测量方向推到
+    p14 一侧，所以 p14 要落在相邻墙那一边（墙角外的空当）；开放墙端取室外一侧。
+    """
+    nb = None
+    for o in walls:
+        if o["id"] == wall["id"]:
+            continue
+        q1, q2 = tuple(o["p1"]), tuple(o["p2"])
+        if _pt_seg_dist(end, q1, q2) > tol:
+            continue
+        do = _unit(q1, q2)
+        if abs(abs(d[0] * do[0] + d[1] * do[1]) - 1.0) < 1e-6:
+            return None
+        if math.dist(end, q1) > tol and math.dist(end, q2) > tol:
+            return None
+        if nb is not None:
+            return None
+        nb = o
+    n = (-d[1], d[0])
+    if nb is None:
+        return (1.0 if open_side >= 0 else -1.0, 0.0)
+    far = q2 if math.dist(end, q1) <= tol else q1
+    v = _unit(end, far)
+    return (1.0 if (v[0] * n[0] + v[1] * n[1]) >= 0 else -1.0, float(nb["thick"]) / 2.0)
+
+
+def _dim_wall_thickness(session: Session, walls: Sequence[dict[str, Any]],
+                        all_walls: Sequence[dict[str, Any]],
+                        side_of: dict[str, float], sc: float) -> tuple[int, list[str]]:
+    """每道墙在墙端外延处注一道墙厚尺寸（M-DIM），返回 (条数, 放不下的墙编号)。
+
+    摆法：p13/p14 落在墙的两个面上，尺寸线垂直于墙、离墙端 = 邻墙半厚 + 2.5mm
+    （开放墙端只留 2.5mm），文字朝相邻墙那一边。为什么不像详图那样跨着墙身画：
+    240 墙在 1:100 上只有 2.4mm，"240"三个字放不进两根尺寸界线之间，CAD 会把
+    文字沿测量方向往外推 6mm 左右——跨墙画会把它推进第一道尺寸线的文字带、
+    甚至推进房间（实测过）。一个墙角只放一道，相邻两墙不挤在同一个角上。
+    画完逐条回读：测量值必须等于墙厚，尺寸线和文字都不能落在房间里（凹角会这样）；
+    不合格就删掉这一条换另一端，两端都不行则跳过并报告，不留残留。
+    """
+    polys = _room_polygons(session)
+    gap = annot_size(2.5, sc)
+    used: list[tuple[float, float]] = []
+    skipped: list[str] = []
+    count = 0
+    for w in walls:
+        t = float(w["thick"])
+        if t <= 0:
+            skipped.append(w["id"])
+            continue
+        p1, p2 = tuple(w["p1"]), tuple(w["p2"])
+        d = _unit(p1, p2)
+        n = (-d[1], d[0])
+        placed = False
+        for end, out in ((p1, (-d[0], -d[1])), (p2, d)):
+            if any(math.dist(end, u) <= 1.0 for u in used):
+                continue
+            info = _thickness_end(all_walls, w, end, d, side_of.get(w["id"], 1.0))
+            if info is None:
+                continue
+            s, nb_half = info
+            reach = nb_half + gap
+            defpt = (end[0] + out[0] * reach, end[1] + out[1] * reach)
+            pa = (end[0] - s * n[0] * t / 2.0, end[1] - s * n[1] * t / 2.0)
+            pb = (end[0] + s * n[0] * t / 2.0, end[1] + s * n[1] * t / 2.0)
+            rot = math.degrees(math.atan2(s * n[1], s * n[0])) % 180.0
+            res = session.run([("dimlinear", {
+                "p1": [round(pa[0], 4), round(pa[1], 4)],
+                "p2": [round(pb[0], 4), round(pb[1], 4)],
+                "at": [round(defpt[0], 4), round(defpt[1], 4)],
+                "rotation": round(rot, 6)})], save=True)
+            hs = [r.get("handle") for r in res.data if r.get("handle")]
+            if not hs:
+                continue
+            h = hs[0]
+            session.run([("properties.set", {"handles": [h], "layer": LAYERS["dim"]})],
+                        save=True)
+            ent = next((x for x in session.entities().get("entities", [])
+                        if x.get("handle") == h), None)
+            g = (ent or {}).get("geometry") or {}
+            tm = g.get("textMid") or {}
+            ok = (abs(float(g.get("measurement") or 0) - t) <= 0.01
+                  and bool(tm)
+                  and not _in_rooms(polys, defpt)
+                  and not _in_rooms(polys, (float(tm["x"]), float(tm["y"]))))
+            if not ok:
+                session.run([("erase", {"handles": [h]})], save=True)
+                if g.get("block"):
+                    session.run([("purge", {"type": "blocks", "names": g["block"]})],
+                                save=True)
+                continue
+            used.append(end)
+            placed = True
+            count += 1
+            break
+        if not placed:
+            skipped.append(w["id"])
+    return count, skipped
+
+
+def _dim_coords(session: Session, lines: Sequence[dict[str, Any]],
+                total_off: float, sc: float) -> int:
+    """外廓各墙角注两行坐标（M-DIM），返回注了几个角。
+
+    坐标值取墙角（墙中心线交点；默认即轴线交点，偏轴墙要自己换算），单位 m、
+    两位小数。按测量坐标习惯：X = 纵坐标（北，图面 y），Y = 横坐标（东，图面 x）
+    ——字母前缀写明了，和总平面 site 的无标注 "x,y" 不是一回事。
+    文字块放在墙角的室外对角象限、最外道总尺寸线再往外 12mm 起，整块留在象限内：
+    不跨轴线、不压轴号圈，也不碰三道尺寸线的文字。
+    落块 `AA_TXT_DIMC<n>X` / `AA_TXT_DIMC<n>Y`，层 AA-DIM；n 按角点 (x, y) 排序编号。
+    角上外墙的外法向在某个方向互相抵消（T 形外廓）时定不了象限，这个角跳过。
+    """
+    # 墙角 = 端点聚类（容差 1mm），角点坐标取聚类均值——墙合角重建后端点带着
+    # 1e-5 级的漂移，直接拿第一个点当角点会把 -0.00 这种数注到图上。
+    clusters: list[list[tuple[float, float]]] = []
+    for ln in lines:
+        for p in (ln["p1"], ln["p2"]):
+            p = (float(p[0]), float(p[1]))
+            for c in clusters:
+                if math.dist(p, c[0]) <= 1.0:
+                    c.append(p)
+                    break
+            else:
+                clusters.append([p])
+    pts = [(sum(q[0] for q in c) / len(c), sum(q[1] for q in c) / len(c))
+           for c in clusters]
+    h = annot_size(2.5, sc)
+    reach = float(total_off) + annot_size(12.0, sc)
+    n = 0
+    for idx, (cx, cy) in enumerate(sorted(pts, key=lambda p: (round(p[0]), round(p[1]))), 1):
+        hit = [ln for ln in lines
+               if math.dist((cx, cy), ln["p1"]) <= 2.0 or math.dist((cx, cy), ln["p2"]) <= 2.0]
+        if len(hit) < 2:
+            continue
+        # 角上各外墙外法向的合成分量：真正互相抵消（T 形外廓）时才定不了象限。
+        # 法向里带着 1e-9 级的噪声，不能逐个判正负再计数——噪声会被当成一个方向，
+        # 把真实方向抵消掉（实测踩过）。
+        sx = sy = 0.0
+        for ln in hit:
+            sx += ln["n"][0] * ln["side"]
+            sy += ln["n"][1] * ln["side"]
+        if abs(sx) < 0.5 or abs(sy) < 0.5:
+            continue
+        ox = 1.0 if sx > 0 else -1.0
+        oy = 1.0 if sy > 0 else -1.0
+        # 先按 0.001mm 取整再换米，"+ 0.0" 把 -0.0 归成 0.0，免得注出 "-0.00"
+        tx = "X=%.2f" % (round(cy, 3) / 1000.0 + 0.0)
+        ty = "Y=%.2f" % (round(cx, 3) / 1000.0 + 0.0)
+        w = max(_text_w(tx, h), _text_w(ty, h))
+        blk_h = 2.5 * h
+        x0 = cx + ox * reach - (w if ox < 0 else 0.0)
+        y0 = cy + oy * reach - (blk_h if oy < 0 else 0.0)
+        create_text(session, "DIMC%dY" % idx, (x0, y0), ty, height=2.5, scale=sc,
+                    layer=LAYERS["dim"])
+        create_text(session, "DIMC%dX" % idx, (x0, y0 + 1.5 * h), tx, height=2.5,
+                    scale=sc, layer=LAYERS["dim"])
+        n += 1
+    return n
 
 
 def normalize_around(session: Session, wall_id: str) -> int:
@@ -7443,6 +7740,27 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
             "corner_gap": gap}
 
 
+def _is_thickness_dim(p13: dict, p14: dict, walls: Sequence[dict[str, Any]],
+                      tol: float = 1.0) -> bool:
+    """这条尺寸是不是某道墙的墙厚标注：两点各落在墙的一个面上、沿墙同站位。"""
+    for w in walls:
+        t = float(w.get("thick") or 0)
+        if t <= 0:
+            continue
+        p1, p2 = tuple(w["p1"]), tuple(w["p2"])
+        ln = math.dist(p1, p2)
+        if ln <= 1e-9:
+            continue
+        ux, uy = (p2[0] - p1[0]) / ln, (p2[1] - p1[1]) / ln
+        q = [-uy * (p["x"] - p1[0]) + ux * (p["y"] - p1[1]) for p in (p13, p14)]
+        a = [ux * (p["x"] - p1[0]) + uy * (p["y"] - p1[1]) for p in (p13, p14)]
+        if (abs(abs(q[0]) - t / 2.0) <= tol and abs(abs(q[1]) - t / 2.0) <= tol
+                and q[0] * q[1] < 0 and abs(a[0] - a[1]) <= tol
+                and -tol <= min(a) and max(a) <= ln + tol):
+            return True
+    return False
+
+
 def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:
     """全图复核：只读检查跨图纸/表的一致性，不改图。
 
@@ -7451,7 +7769,8 @@ def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:
          轴数与编号数量不符、墙的轴号引用不存在；
       2. `opening_table_*`：门窗表樘数/编号/尺寸/层号与图上实际洞口是否一致；
       3. `floor_*`：楼层表内部标高/层高是否自洽，立面/剖面的楼层行是否与楼层表一致；
-      4. `dim_*`：尺寸测量值与几何长度是否一致，同一条尺寸链的分段合计与外道总尺寸是否一致。
+      4. `dim_*`：尺寸测量值与几何长度是否一致，同一条尺寸链的分段合计与外道总尺寸是否一致；
+         墙厚尺寸（M-DIM）只查测量值、不进尺寸链分组，条数计入 `stats.thickness_dims`。
     缺失的表/轴网按“没做”跳过，不把没画的表当成错误。返回 `issues/count/by_kind/
     errors/warnings/stats/scale`。
     """
@@ -7748,10 +8067,16 @@ def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:
         t1 = ux * float(p13["x"]) + uy * float(p13["y"])
         t2 = ux * float(p14["x"]) + uy * float(p14["y"])
         dims.append({"handle": e.get("handle", ""), "ang": ang, "c": c,
-                     "t0": min(t1, t2), "t1": max(t1, t2), "m": measure})
+                     "t0": min(t1, t2), "t1": max(t1, t2), "m": measure,
+                     "thickness": _is_thickness_dim(p13, p14, walls)})
     stats["dimensions"] = len(dims)
     groups: dict[tuple[int, int], dict[str, Any]] = {}
     for d in dims:
+        if d["thickness"]:
+            # 墙厚尺寸自成一类：它跨着墙量，本来就不和任何一条尺寸链同线，
+            # 站位碰巧落在某道尺寸线的 c 上时也不能被当成链里的一段。
+            stats["thickness_dims"] = stats.get("thickness_dims", 0) + 1
+            continue
         key = (int(round(math.degrees(d["ang"]) * 10)), int(round(d["c"] / max(tol, 1e-9))))
         g = groups.setdefault(key, {"ang": d["ang"], "c": d["c"], "segs": []})
         g["segs"].append(d)
@@ -10620,11 +10945,13 @@ def create_text(
     rotation: float = 0.0,
     factor: float | None = None,
     scale: float | None = None,
+    layer: str | None = None,
 ) -> dict[str, Any]:
     """图上注一行字：`at` 为文字左下角（基线左端），`height` 为图面字高（mm）。
 
     用于门窗编号、材料做法、房间名之外的零星注字；落块 `AA_TXT_<id>`，
     `AA_TYPE=TEXT`，`read_text` 回读。rotation 单位为度（逆时针）。
+    `layer` 缺省落 AA-NAME；坐标这类尺寸的附属注字可以指定 AA-DIM。
     """
     if not str(text).strip():
         raise CadError("注字内容不能为空")
@@ -10642,7 +10969,7 @@ def create_text(
     hgt = annot_size(float(height), sc) * f
     ang = math.radians(float(rotation))
 
-    lay_name = LAYERS["name"]
+    lay_name = layer or LAYERS["name"]
     session.ensure_layers([lay_name])
     before = session.snapshot()
     # 块内按局部坐标 (0,0) 画，再 insert 到 at，避免插入点二次偏移

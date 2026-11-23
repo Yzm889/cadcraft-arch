@@ -651,6 +651,12 @@ def main(argv: list[str] | None = None) -> int:
     p_dim.add_argument("--opening-off", type=float, default=700.0, help="洞口尺寸线离墙面距离")
     p_dim.add_argument("--wall-off", type=float, default=1150.0, help="墙段尺寸线离墙面距离")
     p_dim.add_argument("--all-walls", action="store_true", help="连内墙一起标（默认只标外墙）")
+    p_dim.add_argument("--locate", action="store_true",
+                       help="M-DIM 门窗定位尺寸：第一道尺寸线补成完整链 墙端→洞口边→…→墙端")
+    p_dim.add_argument("--thickness", action="store_true",
+                       help="M-DIM 墙厚标注：每道墙在墙端外延处注一道墙厚（放不下的跳过）")
+    p_dim.add_argument("--coords", action="store_true",
+                       help="M-DIM 坐标标注：外廓各墙角注 X=/Y=（m），按 AA_CFG_DIM 记住选项供 rescale")
 
     p_split = sub.add_parser("split", help="墙体相交自动切断")
     p_split.add_argument("path")
@@ -1209,7 +1215,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "dim":
             emit({"ok": True, **annotate(
                 session, args.opening_off, args.wall_off,
-                exterior_only=not args.all_walls)})
+                exterior_only=not args.all_walls,
+                locate=args.locate, thickness=args.thickness, coords=args.coords)})
         elif args.cmd == "sheet":
             emit({"ok": True, **create_sheet(
                 session, args.id, args.size, args.scale,
