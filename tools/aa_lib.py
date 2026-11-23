@@ -2578,6 +2578,230 @@ def create_roof(
             "outer_w": outer_w, "outer_d": outer_d, "geom_handles": handles}
 
 
+def create_roof_detail(
+    session: Session,
+    detail_id: str,
+    roof_id: str,
+    grid: Any = None,
+    inner_gutter: Any = None,
+    slope: float | None = None,
+    scale: float | None = None,
+) -> dict[str, Any]:
+    """屋面分格 / 内天沟 / 坡度注字（M2，v1.0.56）。
+
+    在**已有屋顶** `AA_ROOF_<roof_id>` 的净区里追加一层可回读的细部：
+    - `grid`：`{"nx":3,"ny":2}`（分格数）或 `{"xspace":3000,"yspace":2000}`（分格间距）；
+      画净区内部分格线，回读 `AA_GRID` 与 `AA_GRID_LINES`；
+    - `inner_gutter`：`{"sides":["S","N"],"width":300}`；沿净区边画天沟带 + 雨水口，
+      回读 `AA_INNER_GUTTER`；
+    - `slope`：坡度百分数（如 2 表示 i=2%），按屋顶类型/屋脊方向画找坡箭头
+      + `i=2%` 注字，回读 `AA_SLOPE` / `AA_SLOPE_ARROWS` / `AA_SLOPE_TEXT`。
+
+    局部坐标与源屋顶一致（相对屋顶 `at`，不旋转）；块 `AA_ROOFD_<id>` 插入到同一锚点、
+    同一旋转角。三类细部都是可选，至少给一类。
+    """
+    block = "AA_ROOFD_" + detail_id
+    if session.block_exists(block):
+        raise CadError("屋面细部 %s 已存在，请换编号" % detail_id)
+    roof_block = "AA_ROOF_" + roof_id
+    attrs = session.attributes(roof_block)
+    if attrs.get("AA_TYPE") != "ROOF":
+        raise CadError("找不到屋顶 %s，请先创建屋顶" % roof_id)
+    if grid is None and inner_gutter is None and slope is None:
+        raise CadError("屋面细部至少给 grid / inner_gutter / slope 中的一项")
+
+    w, d = float(attrs["AA_W"]), float(attrs["AA_D"])
+    oh, gut = float(attrs["AA_OVERHANG"]), float(attrs["AA_GUTTER"])
+    par = float(attrs.get("AA_PARAPET") or 0.0)
+    kind = attrs.get("AA_KIND") or "FLAT"
+    ridge = attrs.get("AA_RIDGE") or "X"
+    m = (max(oh + gut, par) if kind == "FLAT"
+         else max(oh, gut) if kind == "SHED" else oh)
+    x0, y0, x1, y1 = m, m, w - m, d - m
+    if x1 - x0 <= 0 or y1 - y0 <= 0:
+        raise CadError("源屋顶没有净区，无法追加屋面细部")
+    sc = float(scale) if scale else drawing_scale(session)
+    if sc <= 0:
+        raise CadError("出图比例必须为正：%r" % scale)
+    th = annot_size(2.5, sc)
+    hw = annot_size(1.75, sc)
+
+    body: list[str] = []
+    grid_data: dict[str, Any] | None = None
+    gutter_data: dict[str, Any] | None = None
+    slope_label = ""
+    arrow_count = 0
+
+    def line(p, q, lay):
+        return "(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) \"%s\")" % (
+            p[0], p[1], q[0], q[1], lay)
+
+    def text(p, s, lay, h=0.0):
+        clean = str(s).replace("\\", "\\\\").replace('"', '\\"')
+        return "(aa:mktext (aa:pt %.4f %.4f) \"%s\" \"%s\" %.4f)" % (
+            p[0], p[1], clean, lay, h or th)
+
+    # 1) 分格线：净区等分；nx/ny 为分格数，内部线数 = nx-1 / ny-1
+    if grid is not None:
+        if isinstance(grid, dict):
+            nx = grid.get("nx")
+            ny = grid.get("ny")
+            xs = grid.get("xspace")
+            ys = grid.get("yspace")
+        else:
+            seq = list(grid)
+            if len(seq) != 2:
+                raise CadError("grid 要写成 {nx,ny} 或 {xspace,yspace}")
+            nx, ny = seq[0], seq[1]
+            xs = ys = None
+        if xs is not None or ys is not None:
+            if xs is None or ys is None:
+                raise CadError("给分格间距时 xspace 与 yspace 必须同时给")
+            if float(xs) <= 0 or float(ys) <= 0:
+                raise CadError("分格间距必须为正")
+            nx = max(1, int(round((x1 - x0) / float(xs))))
+            ny = max(1, int(round((y1 - y0) / float(ys))))
+        nx, ny = int(nx or 0), int(ny or 0)
+        if nx < 1 or ny < 1:
+            raise CadError("分格数 nx/ny 必须 ≥1")
+        for i in range(1, nx):
+            x = x0 + (x1 - x0) * i / nx
+            body.append(line((x, y0), (x, y1), LAYERS["roof"]))
+        for j in range(1, ny):
+            y = y0 + (y1 - y0) * j / ny
+            body.append(line((x0, y), (x1, y), LAYERS["roof"]))
+        grid_data = {"nx": nx, "ny": ny, "lines": (nx - 1) + (ny - 1),
+                     "xspace": round((x1 - x0) / nx, 4),
+                     "yspace": round((y1 - y0) / ny, 4)}
+
+    # 2) 内天沟：沿净区指定边画带状矩形 + 两个雨水口
+    if inner_gutter is not None:
+        g = dict(inner_gutter) if isinstance(inner_gutter, dict) else {"sides": inner_gutter}
+        sides = [str(s).upper() for s in (g.get("sides") or [])]
+        width = float(g.get("width") or 0.0)
+        if not sides:
+            raise CadError("内天沟必须指定 sides（N/S/E/W）")
+        bad = [s for s in sides if s not in ("N", "S", "E", "W")]
+        if bad:
+            raise CadError("内天沟方向只能是 N/S/E/W（收到 %s）" % bad)
+        if len(set(sides)) != len(sides):
+            raise CadError("内天沟方向不能重复")
+        if width <= 0 or 2.0 * width >= min(x1 - x0, y1 - y0):
+            raise CadError("内天沟宽度必须为正且小于净区的一半（收到 %s）" % width)
+        for side in sides:
+            if side == "S":
+                rx0, ry0, rx1, ry1 = x0, y0, x1, y0 + width
+                drains = [((x0 + x1) / 4.0, y0 + width / 2.0),
+                          ((3 * x0 + x1) / 4.0, y0 + width / 2.0)]
+            elif side == "N":
+                rx0, ry0, rx1, ry1 = x0, y1 - width, x1, y1
+                drains = [((x0 + x1) / 4.0, y1 - width / 2.0),
+                          ((3 * x0 + x1) / 4.0, y1 - width / 2.0)]
+            elif side == "W":
+                rx0, ry0, rx1, ry1 = x0, y0, x0 + width, y1
+                drains = [(x0 + width / 2.0, (y0 + y1) / 4.0),
+                          (x0 + width / 2.0, (3 * y0 + y1) / 4.0)]
+            else:
+                rx0, ry0, rx1, ry1 = x1 - width, y0, x1, y1
+                drains = [(x1 - width / 2.0, (y0 + y1) / 4.0),
+                          (x1 - width / 2.0, (3 * y0 + y1) / 4.0)]
+            body.append("(aa:rectpl %.4f %.4f %.4f %.4f \"%s\")" % (
+                rx0, ry0, rx1, ry1, LAYERS["roof"]))
+            for dx, dy in drains:
+                body.append("(aa:drain %.4f %.4f %.4f \"%s\")" % (
+                    dx, dy, min(width * 0.6, 300.0), LAYERS["roof"]))
+        gutter_data = {"sides": sides, "width": width, "bands": len(sides)}
+
+    # 3) 坡度注字 + 找坡箭头（箭头一律指向下坡/天沟）
+    if slope is not None:
+        sv = float(slope)
+        if not 0 < sv <= 100:
+            raise CadError("坡度百分数必须在 (0,100] 内（收到 %s）" % slope)
+        slope_label = "i=%g%%" % sv
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        # 细部箭头错到净区 1/4、3/4 处，避免与 create_roof 自带的中心找坡箭头重叠。
+        ax1 = x0 + (x1 - x0) * 0.2
+        ax2 = x0 + (x1 - x0) * 0.8
+        ay1 = y0 + (y1 - y0) * 0.25
+        ay2 = y0 + (y1 - y0) * 0.75
+        arrows: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        if kind == "FLAT":
+            arrows = [((ax1, cy), (ax1, y0)), ((ax2, cy), (ax2, y1))]
+        elif kind == "SHED":
+            arrows = [((cx, y1 - (y1 - y0) * 0.1), (cx, y0))]
+        else:
+            if ridge == "X":
+                arrows = [((ax1, cy), (ax1, y0)), ((ax2, cy), (ax2, y1))]
+            else:
+                arrows = [((cx, ay1), (x0, ay1)), ((cx, ay2), (x1, ay2))]
+        for p, q in arrows:
+            body.append("(aa:slopearrow %.4f %.4f %.4f %.4f %.4f \"%s\")" % (
+                p[0], p[1], q[0], q[1], hw, LAYERS["roofarrow"]))
+        # 注字放在净区中心偏上，避开两侧箭头尖与天沟带
+        body.append(text((cx, cy + annot_size(3.0, sc)), slope_label,
+                         LAYERS["roofarrow"]))
+        arrow_count = len(arrows)
+
+    session.ensure_layers([LAYERS["roof"], LAYERS["roofarrow"]])
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp", "aa_roof.lisp"))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("屋面细部没有生成任何图元")
+
+    atx, aty = float(attrs.get("AA_ATX") or 0.0), float(attrs.get("AA_ATY") or 0.0)
+    angle = float(attrs.get("AA_ANGLE") or 0.0)
+    att_defs = [
+        ("AA_TYPE", "component type", "ROOF_DETAIL"),
+        ("AA_ID", "component id", detail_id),
+        ("AA_REF", "source roof id", roof_id),
+        ("AA_GRID", "grid spec json", json.dumps(grid_data, ensure_ascii=False) if grid_data else ""),
+        ("AA_GRID_LINES", "grid line count", str(grid_data["lines"] if grid_data else 0)),
+        ("AA_INNER_GUTTER", "inner gutter json",
+         json.dumps(gutter_data, ensure_ascii=False) if gutter_data else ""),
+        ("AA_SLOPE", "slope percent", "%.4f" % float(slope) if slope is not None else "0.0000"),
+        ("AA_SLOPE_ARROWS", "slope arrow count", str(arrow_count)),
+        ("AA_SLOPE_TEXT", "slope label", slope_label),
+        ("AA_ATX", "anchor x", "%.4f" % atx),
+        ("AA_ATY", "anchor y", "%.4f" % aty),
+        ("AA_ANGLE", "rotation deg", "%.4f" % angle),
+        ("AA_SCALE", "drawing scale", "%.4f" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles,
+                                  (atx, aty), att_vals, rotation=angle,
+                                  layer=LAYERS["roof"])
+    session.expect_attributes(block, {"AA_TYPE": "ROOF_DETAIL", "AA_ID": detail_id,
+                                      "AA_REF": roof_id})
+    return {"block": block, "handle": handle, "id": detail_id, "roof": roof_id,
+            "grid": grid_data, "inner_gutter": gutter_data,
+            "slope": float(slope) if slope is not None else None,
+            "slope_text": slope_label, "slope_arrows": arrow_count,
+            "at": (atx, aty), "angle": angle, "geom_handles": handles}
+
+
+def read_roof_detail(session: Session, detail_id: str) -> dict[str, Any]:
+    """回读屋面分格/天沟/坡度：规格、图元数量、锚点与源屋顶。"""
+    block = "AA_ROOFD_" + detail_id
+    attrs = session.attributes(block)
+    if attrs.get("AA_TYPE") != "ROOF_DETAIL":
+        raise CadError("不是屋面细部构件：%s" % detail_id)
+    grid = json.loads(attrs.get("AA_GRID") or "null")
+    gutter = json.loads(attrs.get("AA_INNER_GUTTER") or "null")
+    return {"id": attrs.get("AA_ID") or detail_id, "block": block,
+            "roof": attrs.get("AA_REF") or "", "grid": grid,
+            "grid_lines": int(attrs.get("AA_GRID_LINES") or 0),
+            "inner_gutter": gutter,
+            "slope": float(attrs.get("AA_SLOPE") or 0),
+            "slope_arrows": int(attrs.get("AA_SLOPE_ARROWS") or 0),
+            "slope_text": attrs.get("AA_SLOPE_TEXT") or "",
+            "at": (float(attrs.get("AA_ATX") or 0), float(attrs.get("AA_ATY") or 0)),
+            "angle": float(attrs.get("AA_ANGLE") or 0),
+            "scale": float(attrs.get("AA_SCALE") or 100)}
+
+
 def _norm_floors(floors: Sequence[Any]) -> list[dict[str, Any]]:
     """立面/剖面用的楼层数据：接受 {height,elev?} 或 {no,elev,height,plan,name}，
     标高缺省按层高自下而上累加（首层 ±0.000）。"""

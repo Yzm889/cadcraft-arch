@@ -40,6 +40,8 @@ from aa_lib import (  # noqa: E402
     read_site,
     create_stair,
     create_roof,
+    create_roof_detail,
+    read_roof_detail,
     audit,
     reconcile,
     verify,
@@ -99,7 +101,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.55"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.56"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -766,6 +768,31 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_roof_detail",
+        "description": "屋面细部（M2）：在已有屋顶净区追加分格线 / 内天沟（带雨水口）/ 找坡箭头与 i=x% 注字，规格与图元数量可回读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "屋面细部编号，图纸内唯一"},
+                "roof": {"type": "string", "description": "源屋顶编号（AA_ROOF_<id>）"},
+                "grid": {"type": "object", "description": "分格：{nx,ny} 分格数，或 {xspace,yspace} 分格间距 mm",
+                         "properties": {"nx": {"type": "integer"},
+                                        "ny": {"type": "integer"},
+                                        "xspace": {"type": "number"},
+                                        "yspace": {"type": "number"}}},
+                "inner_gutter": {"type": "object", "description": "内天沟 {sides:['N','S','E','W'], width:mm}",
+                                 "properties": {"sides": {"type": "array", "items": {"type": "string"}},
+                                                "width": {"type": "number"}},
+                                 "required": ["sides", "width"]},
+                "slope": {"type": "number", "description": "坡度百分数，如 2 表示 i=2%"},
+                "scale": {"type": "number", "description": "出图比例分母，默认读图档"},
+                "show": {"type": "string", "description": "只回读已有屋面细部编号"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "aa_elevation",
         "description": "建筑立面：按楼层数据 + 门窗生成地坪线/轮廓/楼层线/门窗/女儿墙或山墙/标高，顶层高可回读；供后续剖面复用。",
         "inputSchema": {
@@ -1368,6 +1395,10 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "path": str(s.path), "units": "mm",
                 "scale": drawing_scale(s)}
 
+    # 会话必须在使用 s 的所有工具分支之前建好；旧版在这里漏了，
+    # 导致 aa_stair/aa_roof 等早期分支直接 UnboundLocalError。
+    s = _session(path)
+
     if name == "aa_stair":
         return {"ok": True, **create_stair(
             s, a["id"], _pt(a["at"], "at"), a.get("kind", "STRAIGHT"),
@@ -1384,6 +1415,16 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("overhang", 600), "overhang"), _num(a.get("gutter", 300), "gutter"),
             a.get("ridge", "X"), _num(a.get("angle", 0.0), "angle"),
             _num(a.get("parapet", 0), "parapet"), a.get("hatch") or {})}
+
+    if name == "aa_roof_detail":
+        if a.get("show"):
+            return {"ok": True, **read_roof_detail(s, a["show"])}
+        if not a.get("roof"):
+            raise CadError("屋面细部缺少 roof（源屋顶编号）")
+        return {"ok": True, **create_roof_detail(
+            s, a["id"], a["roof"], a.get("grid"), a.get("inner_gutter"),
+            _num(a["slope"], "slope") if a.get("slope") is not None else None,
+            _num(a["scale"], "scale") if a.get("scale") else None)}
 
     if name == "aa_elevation":
         return {"ok": True, **create_elevation(

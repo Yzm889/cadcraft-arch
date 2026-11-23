@@ -73,6 +73,8 @@ from aa_lib import (  # noqa: E402
     read_leader,
     read_wall_node,
     create_roof,
+    create_roof_detail,
+    read_roof_detail,
     create_elevation,
     create_section,
     read_floors,
@@ -314,6 +316,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="女儿墙厚（mm，0=不画，只有平屋顶能画）")
     p_roof.add_argument("--hatch", default="",
                         help="上人孔 \"x,y,size\"（屋面坐标，size 常见 700）")
+
+    p_rdetail = sub.add_parser("roof-detail", help="屋面细部：分格线 / 内天沟 / 坡度注字（M2）")
+    p_rdetail.add_argument("path")
+    p_rdetail.add_argument("id", nargs="?")
+    p_rdetail.add_argument("--roof", default=None, help="源屋顶编号（AA_ROOF_<id>）")
+    p_rdetail.add_argument("--grid", default=None, help="分格数 \"nx,ny\"（如 3,2）")
+    p_rdetail.add_argument("--grid-space", default=None,
+                           help="分格间距 \"xspace,yspace\"（mm，与 --grid 二选一）")
+    p_rdetail.add_argument("--inner-gutter", default=None,
+                           help="内天沟 \"S,N:300\"（方向 N/S/E/W，冒号后为宽 mm）")
+    p_rdetail.add_argument("--slope", type=float, default=None, help="坡度百分数，如 2 表示 i=2%%")
+    p_rdetail.add_argument("--scale", type=float, default=None, help="出图比例分母（默认读图档）")
+    p_rdetail.add_argument("--show", default=None, help="只回读已有屋面细部")
 
     p_elevation = sub.add_parser("elevation",
                                  help="建筑立面：按楼层 + 门窗生成（落 AA-ELEV）")
@@ -844,6 +859,29 @@ def main(argv: list[str] | None = None) -> int:
                 session, args.id, _pt(args.at), args.kind, args.w, args.d,
                 args.oh, args.gutter, args.ridge, args.angle,
                 args.parapet, hatch)})
+        elif args.cmd == "roof-detail":
+            if args.show:
+                emit({"ok": True, **read_roof_detail(session, args.show)})
+            else:
+                if not args.roof:
+                    raise CadError("屋面细部必须给 --roof 源屋顶编号")
+                grid = None
+                if args.grid:
+                    a, b = [int(float(x)) for x in args.grid.split(",")]
+                    grid = {"nx": a, "ny": b}
+                if args.grid_space:
+                    a, b = [float(x) for x in args.grid_space.split(",")]
+                    grid = {"xspace": a, "yspace": b}
+                ig = None
+                if args.inner_gutter:
+                    if ":" not in args.inner_gutter:
+                        raise CadError("--inner-gutter 要写成 \"S,N:300\"")
+                    sides, width = args.inner_gutter.rsplit(":", 1)
+                    ig = {"sides": [x.strip() for x in sides.split(",") if x.strip()],
+                          "width": float(width)}
+                emit({"ok": True, **create_roof_detail(
+                    session, args.id, args.roof, grid=grid, inner_gutter=ig,
+                    slope=args.slope, scale=args.scale)})
         elif args.cmd == "elevation":
             floors = []
             for spec in args.floor:

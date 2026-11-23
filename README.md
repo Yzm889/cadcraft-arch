@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.55，M2 总平面落地）
+## 现状（v1.0.56，M2 总平面 + 屋面细部落地）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -19,6 +19,7 @@
 | 台阶 / 散水 | `step` / `apron` | 完成 | 台阶：贴墙线不画、按踏步数×踏步宽出踏步线 + 两侧边线（2 步×300 演示）；散水：外沿线 + 两端收头（600 宽）；同在 `AA-STEP`（白 7、0.18）；`AA_TYPE=STEP/APRON` 可回读 |
 | 剖面 | `profile` | 完成（B6-4） | 按楼层生成剖面：地坪线、**剖切面穿过的两端外墙都画成墙厚窄带**（半剖时 `--side LEFT/RIGHT` 只画一端）、每层楼板（板顶粗 / 板底细）、屋面板、女儿墙（两端窄矩形 + 压顶）、双坡屋面板 + 脊；剖到的门窗断墙 + 窗框双线 + 玻璃/门上亮子 + 窗台挑出；门窗可直接由 `read_cut_openings` 沿剖切线从平面反取；被剖到的室内隔墙按 120 墙厚画窄带、隔墙上被剖到的门窗可断墙（`--inwall x,厚[,层号,洞高,窗台高[,WINDOW|DOOR]]`）、楼板下可挂梁（`--beam 层号,x0,x1,梁高`）、楼梯断面（`--stair x0,x1,起层,踏步数`：踏步一平一竖 + 梯段板斜线）；各层楼面与屋面注标高；左侧默认注三道竖向尺寸 + 底部两道横向尺寸（净宽/总宽，落 `AA-DIM`，`--no-dims` 可关） |
 | **立面** | `elevation` | 完成（B6-3） | 按楼层数据 + 门窗生成立面：地坪线（两端出头）、两侧轮廓、楼面线、直立门窗洞（天正立面做法：窗框双线 + 亮子 + 中梃分扇 + 窗台线）、平屋顶女儿墙 + 压顶 / 双坡山墙三角 / 双坡正对檐口（檐口 + 屋脊）/ 无屋顶；每层右侧注标高（±0.000 / 3.600）；`--from-wall=W001` 可直接从平面读这道墙的门窗（北面墙加 `--flip`）；`--eave=200` 檐口板厚（檐口线下加板底线 + 两端封口）、`--axis "0,1"` 立面轴号（顶部 8mm 圆 + 圈内 3mm 字，圈下短引线接轮廓顶）；门扇固定 2100，洞高 >2200 才画门上亮子线；左侧默认注三道竖向尺寸（细部/层高/总高，落 `AA-DIM`，`--no-dims` 可关）；同层洞口重叠、洞超宽、门超层高都拒绝 |
+| **屋面细部** | `roof-detail` | 完成（M2，v1.0.56） | 在已有屋顶净区追加分格线（`nx×ny` 或间距）、内天沟（N/S/E/W 带 + 雨水口）、找坡箭头与 `i=x%` 注字；块 `AA_ROOFD_<id>` 存 `AA_GRID/AA_INNER_GUTTER/AA_SLOPE` 等，`read_roof_detail` 可回读规格与图元数量；CLI `--show` 与 MCP `aa_roof_detail` 已接通 |
 | 屋顶 | `roof` | 完成（B6-2） | 平屋顶（檐口 + 檐沟 + 四角雨水口 + 南北找坡，可选女儿墙 `--parapet` 画压顶外沿 + 内皮、`--hatch "x,y,size"` 上人孔方框 + 对角 + 注字）/ 双坡（正脊贯到檐口）/ 四坡（正脊 + 四条 45° 斜脊）/ 单坡（低端檐沟）；檐口外挑计入平面面积，找坡箭头尖指下坡；类型/尺寸/檐沟过宽/重名都拒绝 |
 | 楼层表 | `floors` | 完成（B6-1） | 各层层号/楼层标高/层高/平面图号/层名，画成 `AA_TABLE_<编号>` 表（`AA_TYPE=FLOOR_TABLE`）；标高省略时按层高自下而上累加（±0.000 / 3.600 / 7.200），层高≤0、标高低于下层顶、编号重复都拒绝；`read_floors` 可回读成结构化数据，是立面/剖面的数据源 |
 | **门窗表** | `opening-table` | 完成（B7-1） | 从图上 `AA_OPENING` 自动统计，不手抄：编号+类别+洞口宽高+窗台高归并，樘数=图上真实数量，所在层取洞口所在墙的 `AA_FLOOR`（连续写 `1-3`、不连续写 `1,2`）；7 列（序号/编号/类别/洞口尺寸/窗台高/樘数/所在层），`AA_TYPE=OPENING_TABLE`，`read_opening_table` 可回读；`--note` 表下附注，`--no-scale` 标题不带比例；空图/重名拒绝。依赖 `wall --floor` 写层号，墙体重建（开洞/split/merge/set-wall）不丢层号 |
@@ -60,13 +61,14 @@
 | **构件一致性检查** | `reconcile` | 完成（B8-1，v1.0.48 自动收尾） | 只查数据是否自洽：墙长/墙厚为 0、门窗宿主墙缺失或越出墙段/同墙重叠、房间存储面积与轮廓鞋带面积不符；`--fix` 只做无歧义修复：删零长空墙、删零宽洞口、唯一可匹配的悬空门窗重挂、放得下的越界洞口夹回墙内、重建房间面积；墙厚 0、重叠、多候选、洞口比墙长等只给 `suggestion`；整图先备份 `<stem>.reconcile.bak.dxf`，任一动作失败整图回滚；房间仍受门窗/墙体遗留错误保护（`fix_skipped`） |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，54 个原子工具与 CLI 一一对应（含 `aa_site`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 57 个；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，55 个原子工具与 CLI 一一对应（含 `aa_site` / `aa_roof_detail`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 58 个；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # 49 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/run_all.py     # 50 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
 python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
+python tests/test_roof_detail.py  # 屋面分格/天沟/坡度注字单项验收
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/demo_building.py  # 生成 samples/demo_building.dxf + .png（全套图 A2）
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
@@ -90,6 +92,7 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 - `samples/demo_elev_balcony.dxf` + `demo_elev_balcony.png` —— **立面阳台/雨篷**：两层立面（3600×2）+ 二层阳台（挑板 100、栏板 1000）+ 一层门头雨篷（1600×120，门洞 1600×2100）。由 `tools/demo_elev_balcony.py` 生成。
 - `samples/demo_foundation.dxf` + `demo_foundation.png` —— **基础大放脚**：标准 6-6 节点：240 墙、两级 130×65 放脚、基底 500、垫层 600、埋深 2000、地圈梁 250。由 `tools/demo_foundation.py` 生成。
 - `samples/demo_dim_annot.dxf` + `demo_dim_annot.png` —— **三道尺寸 + 注字/引注**：6000×4800 平面，洞口/轴线/总尺寸三道不压轴号，配"外墙 240 厚"注字与"窗台 1500"引注。由 `tools/demo_dim_annot.py` 生成。
+- `samples/demo_roof_detail.dxf` + `samples/demo_roof_detail.png` —— **屋面细部**：平屋顶上加 4×3 分格、南北内天沟（各带 2 个雨水口）、错开的找坡箭头与 `i=2%` 注字；`audit` 0 问题。由 `tools/demo_roof_detail.py` 生成。
 - `samples/demo_site.dxf` + `samples/demo_site.png` —— **总平面示意**：60×40 m 闭合红线、3 处建筑轮廓、2 条道路双线、2 个出入口箭头与名称、指北针、红线顶点坐标（m）与总宽/总深尺寸；`audit` 0 问题。由 `tools/demo_site.py` 生成。
 - `samples/zoom_layers.png` —— 图层配色实测：轴号/轴线红（轴线点划线）、墙白、门窗青、尺寸绿、房间名白；局部放大看得到点划线的"点"。`samples/demo_sheet.png` 是同一套颜色出在 A3 图框里。
 
@@ -112,6 +115,12 @@ python tools/aa_cmd.py site out.dxf SITE01 --boundary "0,0;60000,0;60000,40000;0
   --building "4000,4000,26000,17000,教学楼" --road "6000|0,25000;60000,25000" \
   --entrance "15000,0:主入口:0,-1" --north 55000,6000 --scale 500
 python tools/aa_cmd.py site out.dxf --show SITE01     # 只回读，不改图
+
+# 1d. 屋面细部（M2）：先有屋顶，再加分格/内天沟/坡度注字
+python tools/aa_cmd.py roof out.dxf RF1 --at 0,0 --kind flat --w 12000 --d 8000 --parapet 240
+python tools/aa_cmd.py roof-detail out.dxf RD1 --roof RF1 --grid "4,3" \
+  --inner-gutter "S,N:400" --slope 2
+python tools/aa_cmd.py roof-detail out.dxf --show RD1  # 只回读，不改图
 
 # 2a. 轴网（等距）：3 道纵轴 @3600，2 道横轴 @4800
 python tools/aa_cmd.py axis out.dxf AX001 --xcount 3 --xspace 3600 --ycount 2 --yspace 4800
@@ -412,7 +421,6 @@ cadcraft-arch/
 
 ## 下一步（M2 剩余 / M3）
 
-- 屋面分格 / 天沟 / 坡度注字（验收：分格线与坡度箭头可回读）
 - 设计说明页 / 会签栏（验收：图幅内可排版、文字可回读）
 - 多页 PDF 合并（现在只有逐张导出）
 - M3 工程化：CI 纯算法单测、`plot_style.json`、全量回归分批与汇总报告、同图多比例边界评估
