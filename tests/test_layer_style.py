@@ -115,15 +115,18 @@ def main() -> int:
     win3 = (-500.0, -500.0, 4500.0, 1500.0)
     on = aa_lib.export(s3, OUT / "test_layer_lw_on.png", win3, lineweights=True, scale=100)
     off = aa_lib.export(s3, OUT / "test_layer_lw_off.png", win3, lineweights=False)
-    assert on.get("thickened", 0) > 0, on
-
-    from PIL import Image
-    def bright(path):
-        im = Image.open(path).convert("L")
-        return sum(1 for p in im.convert('L').tobytes() if p > 100)
-    n_on, n_off = bright(OUT / "test_layer_lw_on.png"), bright(OUT / "test_layer_lw_off.png")
-    assert n_on > n_off, (n_on, n_off)
-    print("补线宽前后亮点数:", n_off, "->", n_on, "px_per_mm", on.get("px_per_mm"))
+    if on.get("skipped") == "no-pillow":
+        # Pillow 是可选依赖：缺失时补粗会优雅降级，像素级断言跳过，不误判为功能失效。
+        print("跳过补线宽像素断言：环境无 Pillow（导出与图层规格仍已校验）")
+    else:
+        assert on.get("thickened", 0) > 0, on
+        from PIL import Image
+        def bright(path):
+            im = Image.open(path).convert("L")
+            return sum(1 for p in im.convert('L').tobytes() if p > 100)
+        n_on, n_off = bright(OUT / "test_layer_lw_on.png"), bright(OUT / "test_layer_lw_off.png")
+        assert n_on > n_off, (n_on, n_off)
+        print("补线宽前后亮点数:", n_off, "->", n_on, "px_per_mm", on.get("px_per_mm"))
 
     print("PASS test_layer_style")
     return 0

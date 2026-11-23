@@ -4,11 +4,12 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.54，小件回归通过；整层重建受本机内存限制）
+## 现状（v1.0.55，M2 总平面落地）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
 | 新建公制图纸 | `new` | 完成 | 建图即建 21 个标准层；`--scale 100` 可开图就定出图比例 |
+| **总平面** | `site` | 完成（M2，v1.0.55） | 用地红线闭合多段线（红 Continuous）+ 建筑轮廓 + 道路双线 + 出入口箭头/名称 + 简化指北针 + 红线顶点坐标（m）+ 总宽/总深尺寸；`AA_SITE_<id>` 存 `AA_PTS/AA_AREA/AA_DATA`，`read_site` 可回读；红线/道路只作示意，不替代实测；CLI `--show` 与 MCP `aa_site` 均已接通 |
 | 轴网（等距） | `axis` | 完成 | 4 纵 + 3 横、14 个图元、10 项属性、DWG 往返；`--xspaces/--yspaces` 可传逐段间距序列，非等距同样支持 |
 | **轴网（非等距）** | `axis --xspaces/--yspaces` | 完成（v1.0.52） | 间距参数可为标量或序列；序列长度必须等于轴数减一，按顺序写 `AA_XSPACES/AA_YSPACES`，同时回读 `AA_XPOS/AA_YPOS`；轴号/轴线/文字位置全部按实际累计间距生成，不按平均值摊平 |
 | **轴网自动** | `axis-auto` | 完成 | 由墙反推轴线：竖墙 x 聚类、横墙 y 聚类（`--tol` 50mm 合同轴）、竖轴编 1/2/3、横轴编 A/B/C、轴线端外伸 2400、斜墙跳过并记 `AA_SKIP`；回读校验线数/圈数/文字/线型（全 CENTER）；**生成时顺手把每堵墙的 AX1/AX2 回填**（横墙端点→1/2/3，竖墙端点→A/B/C，斜墙留空） |
@@ -59,12 +60,13 @@
 | **构件一致性检查** | `reconcile` | 完成（B8-1，v1.0.48 自动收尾） | 只查数据是否自洽：墙长/墙厚为 0、门窗宿主墙缺失或越出墙段/同墙重叠、房间存储面积与轮廓鞋带面积不符；`--fix` 只做无歧义修复：删零长空墙、删零宽洞口、唯一可匹配的悬空门窗重挂、放得下的越界洞口夹回墙内、重建房间面积；墙厚 0、重叠、多候选、洞口比墙长等只给 `suggestion`；整图先备份 `<stem>.reconcile.bak.dxf`，任一动作失败整图回滚；房间仍受门窗/墙体遗留错误保护（`fix_skipped`） |
 | **图档出图比例** | `new --scale` / `scale` | 完成 | 先定比例再画（天正口径）：比例写进图档标记 `AA_CFG_SCALE`（只有一条不可见属性、不画几何），之后画的轴号/房间名/门窗编号/尺寸/图名/表格直接按该比例取 mm 规格；重开图档仍有效；中途 `scale --set 50` 默认把已有注记整批重画，`--no-rescale` 只改标记 |
 | 标注比例联动 | `rescale` | 完成 | 换出图比例时按 mm 规格整批重画：轴号圈 8mm / 轴号字 3mm / 房间名 2.5mm / 门窗编号 1.8mm / 图名 5mm / 指北针 24mm，尺寸标注删掉按新字高箭头重画；实测 1:100→1:50 轴号字 300→150、圈半径 400→200；房间表/门窗表也按 2.5mm 字高重画。属于"已画完再改比例"的补救路径，正常流程优先用 `scale` |
-| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，52 个原子工具与 CLI 一一对应，另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露；返回回读校验结果，失败 `isError=true` 且零残留 |
+| MCP 工具服务 | `aa_mcp.py` | 完成 | stdio JSON-RPC 的 MCP 服务器，54 个原子工具与 CLI 一一对应（含 `aa_site`），另有 3 个事务编排工具（batch / checkpoint / restore）只在 MCP 暴露，共 57 个；返回回读校验结果，失败 `isError=true` 且零残留 |
 
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # ALL PASS (44 tests)
+python tests/run_all.py     # 49 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/demo_building.py  # 生成 samples/demo_building.dxf + .png（全套图 A2）
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
@@ -88,6 +90,7 @@ python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 sampl
 - `samples/demo_elev_balcony.dxf` + `demo_elev_balcony.png` —— **立面阳台/雨篷**：两层立面（3600×2）+ 二层阳台（挑板 100、栏板 1000）+ 一层门头雨篷（1600×120，门洞 1600×2100）。由 `tools/demo_elev_balcony.py` 生成。
 - `samples/demo_foundation.dxf` + `demo_foundation.png` —— **基础大放脚**：标准 6-6 节点：240 墙、两级 130×65 放脚、基底 500、垫层 600、埋深 2000、地圈梁 250。由 `tools/demo_foundation.py` 生成。
 - `samples/demo_dim_annot.dxf` + `demo_dim_annot.png` —— **三道尺寸 + 注字/引注**：6000×4800 平面，洞口/轴线/总尺寸三道不压轴号，配"外墙 240 厚"注字与"窗台 1500"引注。由 `tools/demo_dim_annot.py` 生成。
+- `samples/demo_site.dxf` + `samples/demo_site.png` —— **总平面示意**：60×40 m 闭合红线、3 处建筑轮廓、2 条道路双线、2 个出入口箭头与名称、指北针、红线顶点坐标（m）与总宽/总深尺寸；`audit` 0 问题。由 `tools/demo_site.py` 生成。
 - `samples/zoom_layers.png` —— 图层配色实测：轴号/轴线红（轴线点划线）、墙白、门窗青、尺寸绿、房间名白；局部放大看得到点划线的"点"。`samples/demo_sheet.png` 是同一套颜色出在 A3 图框里。
 
 ## 它和天正侧插件的区别
@@ -103,6 +106,12 @@ python tools/aa_cmd.py new out.dxf --scale 100
 # 1b. 中途定/改比例（默认把已有注记整批重画；--no-rescale 只改标记）
 python tools/aa_cmd.py scale out.dxf                 # 查询当前比例
 python tools/aa_cmd.py scale out.dxf --set 50
+
+# 1c. 总平面（M2）：红线 / 建筑 / 道路 / 出入口 / 指北针 / 坐标尺寸（世界坐标 mm）
+python tools/aa_cmd.py site out.dxf SITE01 --boundary "0,0;60000,0;60000,40000;0,40000" \
+  --building "4000,4000,26000,17000,教学楼" --road "6000|0,25000;60000,25000" \
+  --entrance "15000,0:主入口:0,-1" --north 55000,6000 --scale 500
+python tools/aa_cmd.py site out.dxf --show SITE01     # 只回读，不改图
 
 # 2a. 轴网（等距）：3 道纵轴 @3600，2 道横轴 @4800
 python tools/aa_cmd.py axis out.dxf AX001 --xcount 3 --xspace 3600 --ycount 2 --yspace 4800
@@ -401,10 +410,12 @@ cadcraft-arch/
 4. **`insert.rotation` 入参是度、回读是弧度**，两者不可混用。
 5. **XData 不可用**：`regapp` / `entmakex` / `setxdata` / `getxdata` 全部无函数定义。
 
-## 下一步（v0.5 规划）
+## 下一步（M2 剩余 / M3）
 
-- 门窗洞口标注（`dim` 系列命令已探明可无头调用）与轴号自动挂接墙体 `AA_AX1/AX2`
-- 表格样式增强：分列不同宽度（引擎 `colWidth` 仅收标量，待试 `table.cellstyle` / `table.insertcol{width}` 绕过）
+- 屋面分格 / 天沟 / 坡度注字（验收：分格线与坡度箭头可回读）
+- 设计说明页 / 会签栏（验收：图幅内可排版、文字可回读）
+- 多页 PDF 合并（现在只有逐张导出）
+- M3 工程化：CI 纯算法单测、`plot_style.json`、全量回归分批与汇总报告、同图多比例边界评估
 
 ## 合规声明
 

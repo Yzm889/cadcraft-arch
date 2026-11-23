@@ -42,8 +42,9 @@ def main() -> int:
     finally:
         aa_lib._store_room = old_store
     assert sha1(WORK) == before, "set_room 失败后图纸字节没有恢复"
-    assert not list(WORK.parent.glob(WORK.name + ".restore.tmp")), "回滚临时文件残留"
-    assert not list(WORK.parent.glob("*.bak.dxf")), "不应再产生 .bak.dxf"
+    # 只看本次工作文件的残留；samples/ 里其它测试的历史 .bak 与本用例无关。
+    assert not WORK.with_name(WORK.name + ".restore.tmp").exists(), "回滚临时文件残留"
+    assert not WORK.with_name(WORK.stem + ".bak.dxf").exists(), "本用例不应产生 .bak.dxf"
 
     # 2. 门窗修改：删掉旧块后重建失败 -> 同样必须恢复原字节
     old_create = aa_lib.create_opening

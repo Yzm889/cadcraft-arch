@@ -46,6 +46,8 @@ from aa_lib import (  # noqa: E402
     read_sheet_set,
     create_title_mark,
     create_north_arrow,
+    create_site,
+    read_site,
     create_column,
     create_step,
     create_apron,
@@ -106,6 +108,50 @@ def _pt(text: str) -> tuple[float, float]:
 
 def _csv(text: str) -> list[str]:
     return [x.strip() for x in text.split(",") if x.strip()]
+
+
+def _site_pts(text: str) -> list[tuple[float, float]]:
+    """总平面 CLI 点列：x,y;x,y;..."""
+    return [_pt(chunk.strip()) for chunk in text.split(";") if chunk.strip()]
+
+
+def _site_buildings(text: str) -> list[tuple]:
+    out = []
+    for chunk in text.split(";"):
+        if not chunk.strip():
+            continue
+        fields = [x.strip() for x in chunk.split(",")]
+        if len(fields) < 4:
+            raise CadError("建筑轮廓需要 x0,y0,x1,y1[,名称]：%s" % chunk)
+        nums = [float(v) for v in fields[:4]]
+        out.append(tuple(nums + ([fields[4]] if len(fields) > 4 else [])))
+    return out
+
+
+def _site_roads(text: str) -> list[tuple[float, list[tuple[float, float]]]]:
+    out = []
+    for chunk in text.split("#"):
+        if not chunk.strip():
+            continue
+        if "|" not in chunk:
+            raise CadError("道路格式应为 宽度|x,y;x,y：%s" % chunk)
+        w, pts = chunk.split("|", 1)
+        out.append((float(w), _site_pts(pts)))
+    return out
+
+
+def _site_entrances(text: str) -> list[dict]:
+    out = []
+    for chunk in text.split(";"):
+        if not chunk.strip():
+            continue
+        fields = chunk.split(":")
+        if len(fields) < 2:
+            raise CadError("出入口格式应为 x,y:名称[:dx,dy]：%s" % chunk)
+        direction = _pt(fields[2].strip()) if len(fields) > 2 else (0.0, -1.0)
+        out.append({"at": _pt(fields[0].strip()), "label": fields[1],
+                    "dir": direction})
+    return out
 
 
 def _axis_space_arg(count: int, scalar, csv_text: str, axis: str):
@@ -334,6 +380,24 @@ def main(argv: list[str] | None = None) -> int:
     p_title.add_argument("--name", required=True, help="图名文字，如 一层平面图")
     p_title.add_argument("--scale", default=None,
                          help="比例分母，如 100 表示 1:100；省略则取图档比例；留空字符串则不注比例")
+
+    p_site = sub.add_parser("site", help="总平面：用地红线 / 建筑轮廓 / 道路 / 出入口 / 指北针 / 坐标尺寸")
+    p_site.add_argument("path")
+    p_site.add_argument("id", nargs="?")
+    p_site.add_argument("--boundary", default=None,
+                        help="用地红线点列 x,y;x,y;...（至少 3 点，世界坐标 mm）")
+    p_site.add_argument("--building", default="",
+                        help="建筑轮廓 x0,y0,x1,y1[,名称];...（矩形）")
+    p_site.add_argument("--road", default="",
+                        help="道路 宽度|x,y;x,y#宽度|x,y;x,y（# 分隔多条路）")
+    p_site.add_argument("--entrance", default="",
+                        help="出入口 x,y:名称:dx,dy;...（方向为 outward 单位向量）")
+    p_site.add_argument("--north", default=None, help="指北针位置 x,y")
+    p_site.add_argument("--no-coords", action="store_true", help="不注红线顶点坐标")
+    p_site.add_argument("--no-dims", action="store_true", help="不注总宽/总深尺寸")
+    p_site.add_argument("--scale", type=float, default=None, help="出图比例分母（默认读图档）")
+    p_site.add_argument("--at", default="0,0", help="整体平移 x,y")
+    p_site.add_argument("--show", default=None, help="只回读已有总平面")
 
     p_north = sub.add_parser("north", help="指北针（圆 + 指针）")
     p_north.add_argument("path")
@@ -749,6 +813,20 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "apron":
             emit({"ok": True, **create_apron(
                 session, args.id, _pt(args.at), args.length, args.w, args.angle)})
+        elif args.cmd == "site":
+            if args.show:
+                emit({"ok": True, **read_site(session, args.show)})
+            else:
+                if not args.boundary:
+                    raise CadError("总平面必须给 --boundary 用地红线点列")
+                emit({"ok": True, **create_site(
+                    session, args.id, _site_pts(args.boundary),
+                    buildings=_site_buildings(args.building),
+                    roads=_site_roads(args.road),
+                    entrances=_site_entrances(args.entrance),
+                    north=_pt(args.north) if args.north else None,
+                    coords=not args.no_coords, dims=not args.no_dims,
+                    scale=args.scale, at=_pt(args.at))})
         elif args.cmd == "stair":
             emit({"ok": True, **create_stair(
                 session, args.id, _pt(args.at), args.kind, args.w, args.steps,

@@ -36,6 +36,8 @@ from aa_lib import (  # noqa: E402
     create_column,
     create_step,
     create_apron,
+    create_site,
+    read_site,
     create_stair,
     create_roof,
     audit,
@@ -97,7 +99,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.54"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.55"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -283,6 +285,29 @@ TOOLS: list[dict[str, Any]] = [
                 "rise": {"type": "number", "description": "单步高 mm（仅记录）", "default": 150},
             },
             "required": ["path", "id", "at", "width"],
+        },
+    },
+    {
+        "name": "aa_site",
+        "description": "总平面：用地红线（闭合可回读）+ 建筑轮廓 + 道路 + 出入口标注 + 指北针 + 顶点坐标/总尺寸；只画示意，不替代实测红线。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "总平面编号，如图纸内唯一 SITE01"},
+                "boundary": {"type": "array", "items": {"type": "array", "items": {"type": "number"}},
+                             "description": "用地红线顶点 [[x,y], ...]，至少 3 点，世界坐标 mm"},
+                "buildings": {"type": "array", "description": "建筑轮廓：{pts:[[x,y]...], name} 或 [x0,y0,x1,y1,名称]"},
+                "roads": {"type": "array", "description": "道路：{width,pts:[[x,y]...]} 或 [宽度,[[x,y]...]]"},
+                "entrances": {"type": "array", "description": "出入口：{at:[x,y],label,dir:[dx,dy]}，dir 为朝外方向"},
+                "north": {"type": "array", "items": {"type": "number"}, "description": "指北针位置 [x, y]"},
+                "coords": {"type": "boolean", "description": "是否注红线顶点坐标（米）", "default": True},
+                "dims": {"type": "boolean", "description": "是否注总宽/总深尺寸", "default": True},
+                "scale": {"type": "number", "description": "出图比例分母，默认读图档"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "整体平移 [x, y]", "default": [0, 0]},
+                "show": {"type": "string", "description": "只回读已有总平面编号"},
+            },
+            "required": ["path"],
         },
     },
     {
@@ -1662,6 +1687,19 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, **create_apron(
             s, a["id"], _pt(a["at"], "at"), _num(a["length"], "length"),
             _num(a.get("width", 800), "width"), _num(a.get("angle", 270.0), "angle"))}
+
+    if name == "aa_site":
+        if a.get("show"):
+            return {"ok": True, **read_site(s, a["show"])}
+        if not a.get("boundary"):
+            raise CadError("总平面缺少 boundary（用地红线顶点）")
+        return {"ok": True, **create_site(
+            s, a["id"], a["boundary"], a.get("buildings") or [],
+            a.get("roads") or [], a.get("entrances") or [],
+            _pt(a["north"], "north") if a.get("north") else None,
+            bool(a.get("coords", True)), bool(a.get("dims", True)),
+            _num(a["scale"], "scale") if a.get("scale") else None,
+            _pt(a.get("at") or [0, 0], "at"))}
 
     if name == "aa_opening":
         return {"ok": True, **create_opening(

@@ -17,6 +17,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -2070,6 +2071,270 @@ def create_apron(
                                       "AA_W": "%.4f" % width, "AA_LEN": "%.4f" % length})
     return {"block": block, "handle": handle, "length": length, "width": width,
             "angle": angle, "geom_handles": handles}
+
+
+def _site_point(value: Any, name: str) -> tuple[float, float]:
+    """单个点：[x,y] / (x,y) / {"x":x,"y":y}。"""
+    if isinstance(value, dict):
+        value = (value.get("x"), value.get("y"))
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise CadError("%s 必须是 x,y 二元组" % name)
+    return float(value[0]), float(value[1])
+
+
+def _site_points(value: Any, name: str) -> list[tuple[float, float]]:
+    """把点序列归一成 [(x,y), ...]；拒绝少于 2 个点与非数字。"""
+    if not isinstance(value, (list, tuple)):
+        raise CadError("%s 必须是点序列" % name)
+    out: list[tuple[float, float]] = []
+    for p in value:
+        if isinstance(p, dict):
+            p = (p.get("x"), p.get("y"))
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            raise CadError("%s 的点必须是 x,y 二元组" % name)
+        out.append((float(p[0]), float(p[1])))
+    if len(out) < 2:
+        raise CadError("%s 至少需要 2 个点" % name)
+    return out
+
+
+def create_site(
+    session: Session,
+    site_id: str,
+    boundary: Sequence[Sequence[float]],
+    buildings: Sequence[Any] = (),
+    roads: Sequence[Any] = (),
+    entrances: Sequence[Any] = (),
+    north: Sequence[float] | None = None,
+    coords: bool = True,
+    dims: bool = True,
+    scale: float | None = None,
+    at: tuple[float, float] = (0.0, 0.0),
+) -> dict[str, Any]:
+    """总平面（M2）：用地红线 + 建筑轮廓 + 道路 + 出入口 + 指北针 + 坐标/总尺寸。
+
+    `boundary` 为世界坐标点序列（至少 3 点，可首尾重复）；`at` 是整体平移量。
+    红线画在红色 Continuous 层 `AA-AXISTEXT`，建筑轮廓 `AA-WALL`，道路 `AA-STEP`，
+    坐标/总尺寸用 `AA-DIM`，出入口与指北针文字用 `AA-NAME`——不新增图层，沿用 21 层标准。
+    几何写进块，复杂数据存 `AA_DATA`（JSON），`read_site` 可完整回读。
+    """
+    block = "AA_SITE_" + site_id
+    if session.block_exists(block):
+        raise CadError("总平面 %s 已存在，请换编号" % site_id)
+    sc = float(scale) if scale else drawing_scale(session)
+    if sc <= 0:
+        raise CadError("出图比例必须为正：%r" % scale)
+    ox, oy = float(at[0]), float(at[1])
+    pts = _site_points(boundary, "用地红线")
+    if len(pts) < 3:
+        raise CadError("用地红线至少需要 3 个点")
+    if math.dist(pts[0], pts[-1]) < 1e-6:
+        pts = pts[:-1]
+    pts = [(x + ox, y + oy) for x, y in pts]
+    area = abs(_poly_area(pts))
+    if area < 1e-6:
+        raise CadError("用地红线面积为 0，拒绝写入")
+
+    # 建筑：支持 (x0,y0,x1,y1[,名称]) 或 {"pts":[...],"name":...}
+    bld: list[dict[str, Any]] = []
+    for b in buildings:
+        if isinstance(b, dict):
+            poly = _site_points(b.get("pts") or [], "建筑轮廓")
+            name = str(b.get("name") or "建筑")
+        else:
+            seq = list(b)
+            if len(seq) < 4:
+                raise CadError("建筑轮廓必须给 x0,y0,x1,y1")
+            x0, y0, x1, y1 = [float(v) for v in seq[:4]]
+            if x1 <= x0 or y1 <= y0:
+                raise CadError("建筑轮廓必须是正矩形")
+            poly = [(x0 + ox, y0 + oy), (x1 + ox, y0 + oy),
+                    (x1 + ox, y1 + oy), (x0 + ox, y1 + oy)]
+            name = str(seq[4]) if len(seq) > 4 else "建筑"
+        bld.append({"pts": poly, "name": name})
+
+    rds: list[dict[str, Any]] = []
+    for r in roads:
+        if isinstance(r, dict):
+            width = float(r.get("width") or 0)
+            line = _site_points(r.get("pts") or [], "道路中心线")
+        else:
+            seq = list(r)
+            if len(seq) != 2:
+                raise CadError("道路必须是 (宽度, 点序列)")
+            width = float(seq[0])
+            line = _site_points(seq[1], "道路中心线")
+        if width <= 0:
+            raise CadError("道路宽度必须为正")
+        rds.append({"width": width, "pts": [(x + ox, y + oy) for x, y in line]})
+
+    ents: list[dict[str, Any]] = []
+    for e in entrances:
+        if isinstance(e, dict):
+            p = e.get("at") or e.get("pts")
+            label = str(e.get("label") or "出入口")
+            direction = e.get("dir") or (0.0, -1.0)
+        else:
+            seq = list(e)
+            if len(seq) < 2:
+                raise CadError("出入口必须给 位置和名称")
+            p = seq[0]
+            label = str(seq[1])
+            direction = seq[2] if len(seq) > 2 else (0.0, -1.0)
+        pp = _site_point(p, "出入口位置")
+        dd = _site_point(direction, "出入口方向")
+        mag = math.hypot(dd[0], dd[1])
+        if mag < 1e-9:
+            raise CadError("出入口方向不能为零向量")
+        ents.append({"at": (pp[0] + ox, pp[1] + oy), "label": label,
+                     "dir": (dd[0] / mag, dd[1] / mag)})
+
+    npt = None
+    if north is not None:
+        npt = _site_point(north, "指北针位置")
+        npt = (npt[0] + ox, npt[1] + oy)
+
+    lay_red, lay_bld, lay_road = LAYERS["axistext"], LAYERS["wall"], LAYERS["step"]
+    lay_dim, lay_txt = LAYERS["dim"], LAYERS["name"]
+    th = annot_size(2.5, sc)
+    body: list[str] = []
+
+    def lp(ps: Sequence[tuple[float, float]], lay: str) -> str:
+        return "(aa:mkpline (list %s) \"%s\")" % (
+            " ".join("(aa:pt %.4f %.4f)" % (x, y) for x, y in ps), lay)
+
+    def ln(p: tuple[float, float], q: tuple[float, float], lay: str) -> str:
+        return "(aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) \"%s\")" % (
+            p[0], p[1], q[0], q[1], lay)
+
+    def tx(p: tuple[float, float], text: str, lay: str, h: float = 0.0) -> str:
+        clean = str(text).replace("\\", "\\\\").replace('"', '\\"')
+        return "(aa:mktext (aa:pt %.4f %.4f) \"%s\" \"%s\" %.4f)" % (
+            p[0], p[1], clean, lay, h or th)
+
+    # 红线（闭合）与顶点坐标
+    body.append(lp(list(pts) + [pts[0]], lay_red))
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    if coords:
+        # 坐标注在红线内侧：外侧要留给总尺寸线与图名，避免注记压碰。
+        pull = -annot_size(6.0, sc)
+        for x, y in pts:
+            vx, vy = x - cx, y - cy
+            mag = math.hypot(vx, vy) or 1.0
+            body.append(tx((x + vx / mag * pull, y + vy / mag * pull),
+                           "%.2f,%.2f" % (x / 1000.0, y / 1000.0), lay_dim))
+    # 建筑轮廓（闭合矩形/多边形）+ 名称
+    for b in bld:
+        ps = b["pts"]
+        body.append(lp(list(ps) + [ps[0]], lay_bld))
+        body.append(tx(((min(p[0] for p in ps) + max(p[0] for p in ps)) / 2.0,
+                        (min(p[1] for p in ps) + max(p[1] for p in ps)) / 2.0),
+                       b["name"], lay_txt))
+    # 道路：中心线两侧按半宽偏移，逐段画边线
+    for r in rds:
+        half = r["width"] / 2.0
+        for p, q in zip(r["pts"], r["pts"][1:]):
+            dx, dy = q[0] - p[0], q[1] - p[1]
+            ln_len = math.hypot(dx, dy)
+            if ln_len < 1e-6:
+                continue
+            nx, ny = -dy / ln_len * half, dx / ln_len * half
+            body.append(ln((p[0] + nx, p[1] + ny), (q[0] + nx, q[1] + ny), lay_road))
+            body.append(ln((p[0] - nx, p[1] - ny), (q[0] - nx, q[1] - ny), lay_road))
+    # 出入口：朝外箭头 + 名称
+    for e in ents:
+        x, y = e["at"]
+        dx, dy = e["dir"]
+        arrow = annot_size(7.0, sc)
+        tip = (x + dx * arrow, y + dy * arrow)
+        body.append(ln((x, y), tip, lay_txt))
+        body.append(ln(tip, (tip[0] - dx * arrow * 0.5 - dy * arrow * 0.35,
+                             tip[1] - dy * arrow * 0.5 + dx * arrow * 0.35), lay_txt))
+        body.append(ln(tip, (tip[0] - dx * arrow * 0.5 + dy * arrow * 0.35,
+                             tip[1] - dy * arrow * 0.5 - dx * arrow * 0.35), lay_txt))
+        body.append(tx((tip[0] + dx * annot_size(5.0, sc),
+                        tip[1] + dy * annot_size(5.0, sc)), e["label"], lay_txt))
+    # 指北针（简化：圆 + 指针 + N）
+    if npt:
+        r = annot_size(12.0, sc)
+        body.append("(aa:mkcircle (aa:pt %.4f %.4f) %.4f \"%s\")" % (
+            npt[0], npt[1], r, lay_txt))
+        body.append(ln((npt[0], npt[1] - r), (npt[0], npt[1] + r), lay_txt))
+        body.append(ln((npt[0], npt[1] + r),
+                       (npt[0] - r * 0.35, npt[1] + r * 0.25), lay_txt))
+        body.append(ln((npt[0], npt[1] + r),
+                       (npt[0] + r * 0.35, npt[1] + r * 0.25), lay_txt))
+        body.append(tx((npt[0] - th, npt[1] + r + annot_size(3.0, sc)), "N", lay_txt))
+    # 总尺寸（外廓宽/深），画在红线外侧
+    if dims:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        off = annot_size(10.0, sc)
+        tick = annot_size(2.0, sc)
+        body.append(ln((x0, y0 - off), (x1, y0 - off), lay_dim))
+        body.append(ln((x0, y0 - off - tick), (x0, y0 - off + tick), lay_dim))
+        body.append(ln((x1, y0 - off - tick), (x1, y0 - off + tick), lay_dim))
+        body.append(tx(((x0 + x1) / 2.0, y0 - off + annot_size(1.5, sc)),
+                       "总宽 %.2f m" % ((x1 - x0) / 1000.0), lay_dim))
+        body.append(ln((x1 + off, y0), (x1 + off, y1), lay_dim))
+        body.append(ln((x1 + off - tick, y0), (x1 + off + tick, y0), lay_dim))
+        body.append(ln((x1 + off - tick, y1), (x1 + off + tick, y1), lay_dim))
+        body.append(tx((x1 + off + annot_size(1.5, sc), (y0 + y1) / 2.0),
+                       "总深 %.2f m" % ((y1 - y0) / 1000.0), lay_dim))
+
+    session.ensure_layers([lay_red, lay_bld, lay_road, lay_dim, lay_txt])
+    before = session.snapshot()
+    session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                 libraries=("aa_core.lisp",))
+    handles = session.new_handles(before)
+    if not handles:
+        raise CadError("总平面没有生成任何图元")
+
+    data = {"buildings": bld, "roads": rds, "entrances": ents,
+            "north": list(npt) if npt else None,
+            "coords": bool(coords), "dims": bool(dims)}
+    att_defs = [
+        ("AA_TYPE", "component type", "SITE"),
+        ("AA_ID", "component id", site_id),
+        ("AA_PTS", "boundary points", ";".join("%.4f,%.4f" % p for p in pts)),
+        ("AA_AREA", "site area mm2", "%.4f" % area),
+        ("AA_DATA", "site details json", json.dumps(data, ensure_ascii=False)),
+        ("AA_ATX", "offset x", "%.4f" % ox),
+        ("AA_ATY", "offset y", "%.4f" % oy),
+        ("AA_SCALE", "drawing scale", "%.4f" % sc),
+    ]
+    att_vals = {t: v for t, _p, v in att_defs}
+    att_handles = session.define_attributes(att_defs)
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles,
+                                  (0.0, 0.0), att_vals, layer=lay_red)
+    session.expect_attributes(block, {"AA_TYPE": "SITE", "AA_ID": site_id})
+    return {"block": block, "handle": handle, "id": site_id, "area": area,
+            "boundary": pts, **data, "geom_handles": handles}
+
+
+def read_site(session: Session, site_id: str) -> dict[str, Any]:
+    """回读总平面：红线顶点/面积、建筑、道路、出入口、指北针与注记开关。"""
+    block = "AA_SITE_" + site_id
+    attrs = session.attributes(block)
+    if attrs.get("AA_TYPE") != "SITE":
+        raise CadError("不是总平面构件：%s" % site_id)
+    pts = []
+    for chunk in attrs.get("AA_PTS", "").split(";"):
+        if chunk:
+            x, y = chunk.split(",")
+            pts.append((float(x), float(y)))
+    data = json.loads(attrs.get("AA_DATA") or "{}")
+    ox, oy = float(attrs.get("AA_ATX") or 0), float(attrs.get("AA_ATY") or 0)
+    return {"id": attrs.get("AA_ID") or site_id, "block": block,
+            "boundary": pts, "area": float(attrs.get("AA_AREA") or 0),
+            "buildings": data.get("buildings") or [],
+            "roads": data.get("roads") or [],
+            "entrances": data.get("entrances") or [],
+            "north": data.get("north"), "coords": bool(data.get("coords")),
+            "dims": bool(data.get("dims")), "at": (ox, oy),
+            "scale": float(attrs.get("AA_SCALE") or 100.0)}
 
 
 def create_stair(
@@ -5249,6 +5514,19 @@ def emphasize_lineweights(session: Session, png: str | Path, window: Sequence[fl
             colored += 1
     img.save(out)
     return {"thickened": thick, "colored": colored, "px_per_mm": round(px_per_mm, 2)}
+
+
+def png_size(path: str | Path) -> tuple[int, int]:
+    """只读 PNG 头取宽高，不依赖 Pillow（可选依赖缺失时验收仍可跑）。"""
+    p = Path(path)
+    with p.open("rb") as f:
+        head = f.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        raise CadError("不是合法 PNG：%s" % p)
+    w, h = struct.unpack(">II", head[16:24])
+    if w <= 0 or h <= 0:
+        raise CadError("PNG 尺寸异常：%s (%d×%d)" % (p, w, h))
+    return w, h
 
 
 def export(session: Session, out: str | Path, window: Sequence[float] | None = None,

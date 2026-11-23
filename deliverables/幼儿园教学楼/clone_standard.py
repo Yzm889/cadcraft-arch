@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 from aa_lib import (  # noqa: E402
     Session, audit, avoid_opening_labels, create_stair, create_text, delete_component,
-    drawing_scale, export, reconcile, room_data, set_room, set_sheet,
+    drawing_scale, export, png_size, reconcile, room_data, set_room, set_sheet,
 )
 
 from build_kindergarten import append_png_check, validate_floor  # noqa: E402
@@ -138,15 +138,7 @@ def clone_floor(no: int) -> dict:
            sheet["at"][0] + sheet["outer_wh"][0],
            sheet["at"][1] + sheet["outer_wh"][1])
     res = export(s, png, window=win, scale=drawing_scale(s))
-    try:
-        from PIL import Image
-        im = Image.open(png)
-        if im.size[0] < 2400 or im.size[1] < 1600:
-            im = im.resize((2400, 1600))
-            im.save(png)
-        res["size"] = im.size
-    except Exception as e:  # noqa: BLE001
-        res["size_error"] = str(e)
+    res["size"] = png_size(png)
     res["bytes"] = png.stat().st_size if png.exists() else 0
     snap["png"] = res
     snap["sheet"] = {"size": sheet["size"], "at": sheet["at"],

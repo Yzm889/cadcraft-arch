@@ -23,7 +23,7 @@ from aa_lib import (  # noqa: E402
     CadError, Session, annotate, audit, axis_grids, avoid_opening_labels, bind_walls_to_axis,
     block_geometry, create_axis_grid, create_opening, create_room_edges, create_sheet,
     create_stair, create_text, draw_table, drawing_extent, drawing_scale, export, opening_data,
-    reconcile, refresh_opening_labels, room_data, wall_data,
+    png_size, reconcile, refresh_opening_labels, room_data, wall_data,
 )
 
 OUT = Path(__file__).resolve().parent
@@ -247,15 +247,8 @@ class FloorBuilder:
         win = (at[0], at[1], at[0] + w, at[1] + h)
         out = OUT / png_name
         res = export(self.s, out, window=win, scale=SCALE)
-        try:
-            from PIL import Image
-            im = Image.open(out)
-            if im.size[0] < 2400 or im.size[1] < 1600:
-                im = im.resize((2400, 1600))
-                im.save(out)
-            res["size"] = im.size
-        except Exception as e:  # noqa: BLE001
-            res["size_error"] = str(e)
+        # PNG 头直接读宽高：Pillow 是可选依赖，缺了也不能让 12 条验收假失败。
+        res["size"] = png_size(out)
         res["bytes"] = out.stat().st_size if out.exists() else 0
         return res
 
@@ -772,15 +765,7 @@ def run_site() -> dict:
     win = (ax, ay, ax + sheet["outer_wh"][0], ay + sheet["outer_wh"][1])
     png = OUT / "00_总平面索引.png"
     res = export(s, png, window=win, scale=SCALE)
-    try:
-        from PIL import Image
-        im = Image.open(png)
-        if im.size[0] < 2400 or im.size[1] < 1600:
-            im = im.resize((2400, 1600))
-            im.save(png)
-        res["size"] = im.size
-    except Exception as e:  # noqa: BLE001
-        res["size_error"] = str(e)
+    res["size"] = png_size(png)
     res["bytes"] = png.stat().st_size if png.exists() else 0
     checks = [
         {"name": "00-1 图幅", "ok": sheet["size"] == "A1",
