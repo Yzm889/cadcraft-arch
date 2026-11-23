@@ -49,6 +49,7 @@ from aa_lib import (  # noqa: E402
     create_site,
     read_site,
     create_column,
+    create_elevator,
     create_step,
     create_apron,
     create_stair,
@@ -106,6 +107,14 @@ from aa_lib import (  # noqa: E402
 
 def _pt(text: str) -> tuple[float, float]:
     a, b = text.split(",")
+    return float(a), float(b)
+
+
+def _size(text: str) -> tuple[float, float]:
+    """WxD 尺寸（支持 x / × / * 分隔），如 2200x2200。"""
+    for sep in ("×", "*"):
+        text = text.replace(sep, "x")
+    a, b = text.lower().split("x")
     return float(a), float(b)
 
 
@@ -262,6 +271,22 @@ def main(argv: list[str] | None = None) -> int:
     p_column.add_argument("--angle", type=float, default=0.0, help="矩形柱转角（度，逆时针）")
     p_column.add_argument("--material", default="", help="材料，如 C30")
 
+    p_elev = sub.add_parser("elevator", help="电梯：井道校验 + 轿厢/对重 10 线 + 门洞（AA-ELEVATOR）")
+    p_elev.add_argument("path")
+    p_elev.add_argument("id")
+    p_elev.add_argument("--at", default=None, help="井道净空中心 x,y（--show 时可省）")
+    p_elev.add_argument("--shaft", default="2200x2200", help="井道净宽x净深，默认 2200x2200")
+    p_elev.add_argument("--car", default="1600x1400", help="轿厢宽x深，默认 1600x1400")
+    p_elev.add_argument("--door", type=float, default=1100.0, help="门洞宽 mm")
+    p_elev.add_argument("--door-h", type=float, default=2100.0, help="门洞高 mm")
+    p_elev.add_argument("--door-side", default="S", choices=["N", "E", "S", "W"])
+    p_elev.add_argument("--cw-side", default="N", choices=["N", "E", "S", "W"])
+    p_elev.add_argument("--shaft-walls", default=None, help="N,E,S,W 四个井道墙号（--show 时可省）")
+    p_elev.add_argument("--gap", type=float, default=100.0, help="最小允许净距 mm")
+    p_elev.add_argument("--cw-gap", type=float, default=50.0, help="对重侧实际净距 mm")
+    p_elev.add_argument("--door-pos", type=float, default=None, help="门洞中心沿门墙位置，默认中点")
+    p_elev.add_argument("--floor", type=int, default=1)
+    p_elev.add_argument("--show", action="store_true", help="只回读电梯属性")
     p_step = sub.add_parser("step", help="室外台阶（落在 AA-STEP）")
     p_step.add_argument("path")
     p_step.add_argument("id")
@@ -850,6 +875,24 @@ def main(argv: list[str] | None = None) -> int:
             emit({"ok": True, **create_column(
                 session, args.id, _pt(args.at), args.w, args.h,
                 args.kind, args.angle, args.material)})
+        elif args.cmd == "elevator":
+            if args.show:
+                emit({"ok": True, "id": args.id,
+                      "attrs": session.attributes("AA_ELEVATOR_" + args.id)})
+            else:
+                if not args.at:
+                    raise CadError("画电梯必须给 --at 井道净空中心")
+                if not args.shaft_walls:
+                    raise CadError("画电梯必须给 --shaft-walls N,E,S,W 四个墙号")
+                walls = _csv(args.shaft_walls)
+                if len(walls) != 4:
+                    raise CadError("--shaft-walls 必须是 N,E,S,W 四个墙号")
+                emit({"ok": True, **create_elevator(
+                    session, args.id, _pt(args.at), _size(args.shaft),
+                    _size(args.car), args.door, args.door_h,
+                    args.door_side, args.cw_side,
+                    {"N": walls[0], "E": walls[1], "S": walls[2], "W": walls[3]},
+                    args.gap, args.cw_gap, args.door_pos, args.floor)})
         elif args.cmd == "step":
             emit({"ok": True, **create_step(
                 session, args.id, _pt(args.at), args.w, args.steps,

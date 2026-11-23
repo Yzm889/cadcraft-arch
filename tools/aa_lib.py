@@ -2029,6 +2029,272 @@ def create_column(
             "angle": float(angle), "area": area, "geom_handles": handles}
 
 
+ELEVATOR_OPPOSITE = {"N": "S", "S": "N", "E": "W", "W": "E"}
+ELEVATOR_ROTATION = {"N": 0.0, "E": -90.0, "S": 180.0, "W": 90.0}
+
+
+def _elevator_wall_faces(
+    session: Session,
+    shaft_walls: dict[str, str],
+    at: tuple[float, float],
+    shaft_w: float,
+    shaft_d: float,
+    tol: float = 1.0,
+) -> dict[str, dict[str, Any]]:
+    """校验 4 堵井道墙的内表面是否围成 shaft_w × shaft_d 的净矩形。
+
+    约定 shaft_walls 键为 N/E/S/W；只读墙的起点/方向/厚度，不修改墙。
+    """
+    infos: dict[str, dict[str, Any]] = {}
+    for side in ("N", "E", "S", "W"):
+        wid = shaft_walls.get(side)
+        if not wid:
+            raise CadError("井道墙缺少 %s 侧墙号" % side)
+        info = wall_info(session, wid)
+        r = float(info["rotation_rad"])
+        ca, sa = math.cos(r), math.sin(r)
+        dx, dy = ca, sa                       # 墙方向
+        nx, ny = -sa, ca                      # 墙左法向
+        px, py = float(info["at"][0]), float(info["at"][1])
+        thick = float(info["thick"])
+        if thick <= 0:
+            raise CadError("井道墙 %s 厚度必须为正（收到 %s）" % (wid, thick))
+        # 取离井道中心更近的那一面作为内表面
+        proj = (at[0] - px) * nx + (at[1] - py) * ny
+        sign = 1.0 if proj >= 0 else -1.0
+        fx = px + nx * sign * thick / 2.0
+        fy = py + ny * sign * thick / 2.0
+        vertical = abs(nx) > abs(ny)
+
+        if vertical:
+            if side not in ("E", "W"):
+                raise CadError("井道 %s 侧应为横墙（南北向），实际墙 %s 是竖墙" % (side, wid))
+            off = fx - at[0]
+            if abs(abs(off) - shaft_w / 2.0) > tol:
+                raise CadError(
+                    "井道 %s 侧内表面 x=%.3f，距中心 %.3f，期望 %.3f（偏差 %.3f）"
+                    % (side, fx, abs(off), shaft_w / 2.0, abs(off) - shaft_w / 2.0)
+                )
+            if (off > 0) != (side == "E"):
+                raise CadError("井道 %s 侧墙 %s 的内表面在错误的一侧" % (side, wid))
+            p1y = py + dy * float(info["length"])
+            lo, hi = sorted((py, p1y))
+            if lo > at[1] - shaft_d / 2.0 + tol or hi < at[1] + shaft_d / 2.0 - tol:
+                raise CadError("井道 %s 侧墙 %s 长度不够，未覆盖井道净深 %.1f" % (side, wid, shaft_d))
+        else:
+            if side not in ("N", "S"):
+                raise CadError("井道 %s 侧应为纵墙（东西向），实际墙 %s 是横墙" % (side, wid))
+            off = fy - at[1]
+            if abs(abs(off) - shaft_d / 2.0) > tol:
+                raise CadError(
+                    "井道 %s 侧内表面 y=%.3f，距中心 %.3f，期望 %.3f（偏差 %.3f）"
+                    % (side, fy, abs(off), shaft_d / 2.0, abs(off) - shaft_d / 2.0)
+                )
+            if (off > 0) != (side == "N"):
+                raise CadError("井道 %s 侧墙 %s 的内表面在错误的一侧" % (side, wid))
+            p1x = px + dx * float(info["length"])
+            lo, hi = sorted((px, p1x))
+            if lo > at[0] - shaft_w / 2.0 + tol or hi < at[0] + shaft_w / 2.0 - tol:
+                raise CadError("井道 %s 侧墙 %s 长度不够，未覆盖井道净宽 %.1f" % (side, wid, shaft_w))
+
+        infos[side] = info
+    return infos
+
+
+def create_elevator(
+    session: Session,
+    elevator_id: str,
+    at: tuple[float, float],
+    shaft: tuple[float, float] = (2200.0, 2200.0),
+    car: tuple[float, float] = (1600.0, 1400.0),
+    door: float = 1100.0,
+    door_h: float = 2100.0,
+    door_side: str = "S",
+    cw_side: str = "N",
+    shaft_walls: dict[str, str] | None = None,
+    gap: float = 100.0,
+    cw_gap: float = 50.0,
+    door_pos: float | None = None,
+    floor: int = 1,
+) -> dict[str, Any]:
+    """电梯（自研 M-VERT-1）：井道校验 + 轿厢/对重 10 线 + 真实门洞。
+
+    规则见 `docs/spec-M-VERT-电梯坡道阳台.md` §13：
+      - 必须已有闭合井道墙；角点/门墙都按内表面校验；
+      - 块内 10 LINE（轿厢 4 + 对角线 2 + 对重 4），无 TEXT；
+      - 对重侧 C1 只允许与门侧相对（N↔S、E↔W）；
+      - 单次插入；失败整图字节回滚，零残留。
+    """
+    block = "AA_ELEVATOR_" + str(elevator_id)
+    if session.block_exists(block):
+        raise CadError("电梯 %s 已存在，请换编号" % elevator_id)
+
+    door_side = str(door_side).upper()
+    cw_side = str(cw_side).upper()
+    if door_side not in ELEVATOR_OPPOSITE:
+        raise CadError("门所在边只能是 N/E/S/W（收到 %r）" % door_side)
+    if cw_side not in ELEVATOR_OPPOSITE:
+        raise CadError("对重所在边只能是 N/E/S/W（收到 %r）" % cw_side)
+    if ELEVATOR_OPPOSITE[door_side] != cw_side:
+        raise CadError(
+            "C1 仅支持对重与门相对，相邻侧留到后续（door_side=%s, cw_side=%s）"
+            % (door_side, cw_side)
+        )
+
+    try:
+        shaft_w, shaft_d = float(shaft[0]), float(shaft[1])
+        car_w, car_d = float(car[0]), float(car[1])
+    except (TypeError, ValueError, IndexError):
+        raise CadError("井道/轿厢尺寸格式错误，应传 (宽, 深)")
+    door, door_h, gap, cw_gap = float(door), float(door_h), float(gap), float(cw_gap)
+    for name, value in (("井道宽", shaft_w), ("井道深", shaft_d),
+                        ("轿厢宽", car_w), ("轿厢深", car_d),
+                        ("门宽", door), ("门高", door_h)):
+        if value <= 0:
+            raise CadError("%s必须为正实数（收到 %s）" % (name, value))
+    if gap < 0 or cw_gap < 0:
+        raise CadError("最小净距/对重净距不能为负（收到 %s / %s）" % (gap, cw_gap))
+    if not (700.0 <= door <= 1600.0):
+        raise CadError("电梯门宽应在 700–1600 之间（收到 %s）" % door)
+
+    if not shaft_walls or len(shaft_walls) != 4:
+        raise CadError("必须给出 4 堵井道墙（N/E/S/W）")
+    if len(set(shaft_walls.values())) != 4:
+        raise CadError("4 堵井道墙不能重复")
+    wall_infos = _elevator_wall_faces(session, shaft_walls, at, shaft_w, shaft_d)
+    door_wall = shaft_walls[door_side]
+
+    # 对重按自研比例：约 0.8×轿厢宽、0.13×轿厢深（不照抄 T30 实测值）
+    cw_w = float(round(0.8 * car_w))
+    cw_d = float(round(0.13 * car_d))
+    if cw_w <= 0 or cw_d <= 0:
+        raise CadError("对重尺寸计算失败（cw_w=%s, cw_d=%s）" % (cw_w, cw_d))
+    car_offset = (cw_d + cw_gap) / 2.0
+    door_gap = shaft_d / 2.0 - (car_offset + car_d / 2.0)
+    car_bottom = car_offset - car_d / 2.0
+    cw_top = -shaft_d / 2.0 + cw_gap + cw_d
+
+    if car_w + 2.0 * gap > shaft_w + 1e-6:
+        raise CadError("轿厢宽 %.1f + 2×最小净距 %.1f 超过井道净宽 %.1f" % (car_w, gap, shaft_w))
+    if door_gap < gap - 1e-6:
+        raise CadError("实际门侧净距 %.3f 小于最小允许净距 %.1f（不允许偷偷缩小 gap）" % (door_gap, gap))
+    if cw_w + 2.0 * gap > shaft_w + 1e-6:
+        raise CadError("对重宽 %.1f + 2×最小净距 %.1f 超过井道净宽 %.1f" % (cw_w, gap, shaft_w))
+    if cw_d + cw_gap > shaft_d + 1e-6:
+        raise CadError("对重深 %.1f + 对重净距 %.1f 超过井道净深 %.1f" % (cw_d, cw_gap, shaft_d))
+    if car_bottom < cw_top + gap - 1e-6:
+        raise CadError("轿厢与对重之间净距不足 %.1f（实际 %.3f）" % (gap, car_bottom - cw_top))
+
+    # 门洞预检：门墙长度、越界、同墙重叠
+    info = wall_infos[door_side]
+    r = float(info["rotation_rad"])
+    dx, dy = math.cos(r), math.sin(r)
+    px, py = float(info["at"][0]), float(info["at"][1])
+    if door_pos is None:
+        door_pos = (at[0] - px) * dx + (at[1] - py) * dy
+    door_pos = float(door_pos)
+    length = float(info["length"])
+    lo, hi = door_pos - door / 2.0, door_pos + door / 2.0
+    if lo < -1e-6 or hi > length + 1e-6:
+        raise CadError(
+            "门洞 [%.3f, %.3f] 超出墙 %s 的可用范围 [0, %.3f]"
+            % (lo, hi, door_wall, length)
+        )
+    for oid, opos, owidth in _openings_on_wall(session, door_wall):
+        olo, ohi = opos - owidth / 2.0, opos + owidth / 2.0
+        if min(hi, ohi) - max(lo, olo) > 1e-6:
+            raise CadError("门洞与已存在洞口 %s [%.3f, %.3f] 重叠" % (oid, olo, ohi))
+
+    backup = _drawing_bytes(session)
+    try:
+        session.ensure_layers([LAYERS["elevator"]])
+        before = session.snapshot()
+        session.lisp(
+            "(aa:elevator %.4f %.4f %.4f %.4f %.4f %.4f %.4f)"
+            % (car_w, car_d, cw_w, cw_d, car_offset, shaft_d, cw_gap),
+            libraries=("aa_core.lisp", "aa_elevator.lisp"),
+        )
+        handles = session.new_handles(before)
+        if not handles:
+            raise CadError("电梯没有生成任何图元")
+
+        rotation = ELEVATOR_ROTATION[door_side]
+        att_defs = [
+            ("AA_TYPE", "component type", "ELEVATOR"),
+            ("AA_ID", "component id", elevator_id),
+            ("AA_W", "shaft clear width", "%.4f" % shaft_w),
+            ("AA_D", "shaft clear depth", "%.4f" % shaft_d),
+            ("AA_CAR_W", "car width", "%.4f" % car_w),
+            ("AA_CAR_D", "car depth", "%.4f" % car_d),
+            ("AA_DOOR", "door width", "%.4f" % door),
+            ("AA_HEIGHT", "door height", "%.4f" % door_h),
+            ("AA_DOOR_SIDE", "door side", door_side),
+            ("AA_CW_SIDE", "counterweight side", cw_side),
+            ("AA_CW_W", "counterweight width", "%.4f" % cw_w),
+            ("AA_CW_D", "counterweight depth", "%.4f" % cw_d),
+            ("AA_GAP", "min allowed clearance", "%.4f" % gap),
+            ("AA_CW_GAP", "counterweight clearance", "%.4f" % cw_gap),
+            ("AA_DOOR_WALL", "door wall id", door_wall),
+            ("AA_POS", "door center along wall", "%.4f" % door_pos),
+            ("AA_ANGLE", "block rotation deg", "%.4f" % rotation),
+            ("AA_ATX", "anchor x", "%.4f" % float(at[0])),
+            ("AA_ATY", "anchor y", "%.4f" % float(at[1])),
+            ("AA_FLOOR", "floor number", str(int(floor))),
+        ]
+        att_vals = {t: v for t, _p, v in att_defs}
+        att_handles = session.define_attributes(att_defs)
+        handle = session.insert_block(
+            block, (0.0, 0.0), handles + att_handles, at, att_vals,
+            rotation=rotation, layer=LAYERS["elevator"],
+        )
+        session.expect_attributes(
+            block,
+            {
+                "AA_TYPE": "ELEVATOR",
+                "AA_ID": elevator_id,
+                "AA_DOOR_SIDE": door_side,
+                "AA_CW_SIDE": cw_side,
+                "AA_CW_W": "%.4f" % cw_w,
+                "AA_CW_D": "%.4f" % cw_d,
+            },
+        )
+        opening = create_opening(
+            session, "%s-D" % elevator_id, door_wall, "DOOR", door, door_pos,
+            height=door_h, sill=0.0, no="%s-D" % elevator_id, label_side="in",
+        )
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError(
+                "电梯失败且回滚失败：%s；原错误：%s" % (restore_error, exc)
+            ) from exc
+        raise
+
+    return {
+        "block": block,
+        "handle": handle,
+        "elevator": elevator_id,
+        "shaft": [shaft_w, shaft_d],
+        "car": [car_w, car_d],
+        "door": door,
+        "door_h": door_h,
+        "door_side": door_side,
+        "cw_side": cw_side,
+        "cw": [cw_w, cw_d],
+        "car_offset": car_offset,
+        "door_gap": door_gap,
+        "gap": gap,
+        "cw_gap": cw_gap,
+        "door_wall": door_wall,
+        "door_pos": door_pos,
+        "rotation": rotation,
+        "opening": opening,
+        "opening_handle": opening["handle"],
+        "geom_handles": handles,
+    }
+
+
 def create_step(
     session: Session,
     step_id: str,

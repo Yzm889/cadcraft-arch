@@ -34,6 +34,7 @@ from aa_lib import (  # noqa: E402
     auto_rooms,
     create_axis_grid,
     create_column,
+    create_elevator,
     create_step,
     create_apron,
     create_site,
@@ -270,6 +271,34 @@ TOOLS: list[dict[str, Any]] = [
                 "material": {"type": "string", "description": "材料，如 C30", "default": ""},
             },
             "required": ["path", "id", "at", "w"],
+        },
+    },
+    {
+        "name": "aa_elevator",
+        "description": "电梯：校验 4 堵井道墙内表面 + 轿厢/对重 10 线 + 真实门洞，落 AA-ELEVATOR；单次插入，失败零残留。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "电梯编号，图纸内唯一，如 EL001"},
+                "at": {"type": "array", "items": {"type": "number"}, "description": "井道净空中心 [x, y]"},
+                "shaft": {"type": "array", "items": {"type": "number"}, "description": "井道净宽×净深，默认 [2200, 2200]"},
+                "car": {"type": "array", "items": {"type": "number"}, "description": "轿厢宽×深，默认 [1600, 1400]"},
+                "door": {"type": "number", "description": "门洞宽 mm，默认 1100"},
+                "door_h": {"type": "number", "description": "门洞高 mm，默认 2100"},
+                "door_side": {"type": "string", "enum": ["N", "E", "S", "W"],
+                              "description": "门所在边；决定块旋转"},
+                "cw_side": {"type": "string", "enum": ["N", "E", "S", "W"],
+                            "description": "对重所在边；C1 只允许与门相对"},
+                "shaft_walls": {"type": "array", "items": {"type": "string"},
+                                "description": "N,E,S,W 四个井道墙号"},
+                "gap": {"type": "number", "description": "最小允许净距 mm，默认 100（不是实际净距）"},
+                "cw_gap": {"type": "number", "description": "对重侧实际净距 mm，默认 50"},
+                "door_pos": {"type": "number", "description": "门洞中心沿门墙位置，默认中点"},
+                "floor": {"type": "integer", "description": "所在层号（AA_FLOOR）", "default": 1},
+                "show": {"type": "boolean", "description": "只回读电梯属性", "default": False},
+            },
+            "required": ["path", "id", "at", "door_side", "cw_side", "shaft_walls"],
         },
     },
     {
@@ -1764,6 +1793,27 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             s, a["id"], _pt(a["at"], "at"), _num(a["w"], "w"),
             _opt(a.get("h")), a.get("kind", "RECT"),
             _num(a.get("angle", 0.0), "angle"), a.get("material", ""))}
+
+    if name == "aa_elevator":
+        if a.get("show"):
+            return {"ok": True, "id": a["id"],
+                    "attrs": s.attributes("AA_ELEVATOR_" + a["id"])}
+        walls = a.get("shaft_walls")
+        if not isinstance(walls, (list, tuple)) or len(walls) != 4:
+            raise CadError("shaft_walls 必须是 N,E,S,W 四个墙号")
+        return {"ok": True, **create_elevator(
+            s, a["id"], _pt(a["at"], "at"),
+            tuple(a.get("shaft", [2200.0, 2200.0])),
+            tuple(a.get("car", [1600.0, 1400.0])),
+            _num(a.get("door", 1100.0), "door"),
+            _num(a.get("door_h", 2100.0), "door_h"),
+            a["door_side"], a["cw_side"],
+            {"N": str(walls[0]), "E": str(walls[1]),
+             "S": str(walls[2]), "W": str(walls[3])},
+            _num(a.get("gap", 100.0), "gap"),
+            _num(a.get("cw_gap", 50.0), "cw_gap"),
+            _opt(a.get("door_pos")),
+            int(a.get("floor", 1)))}
 
     if name == "aa_step":
         return {"ok": True, **create_step(
