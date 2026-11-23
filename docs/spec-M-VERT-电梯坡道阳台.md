@@ -240,7 +240,7 @@
 ### 4.2 前置
 
 - 起点/终点已定；坡道长度 ≥ 1000；宽度 ≥ 900（无障碍建议 ≥1200）。
-- 坡度 `n`（1:n）在 8–20 之间；`n<12` 时返回 warning（陡于无障碍 1:12），不拒绝。
+- 坡度 `n`（1:n）在 8–20 之间；`n=8–11` 返回 warning（陡于无障碍 1:12），不拒绝；`n<8` 或 `n>20` 拒绝。
 
 ### 4.3 参数与默认值
 
@@ -260,12 +260,13 @@
 |---|---|---|
 | 两侧边线 | 2 | `AA-STEP` |
 | 两端端线 | 2 | `AA-STEP` |
+| 中心线（箭头基座） | 1 | `AA-STEP` |
 | 扶手线（rail=true） | 2 | `AA-STEP` |
 | 箭头杆 | 1 | `AA-STAIR-ARROW` |
 | 实心箭头 | 1 SOLID | `AA-STAIR-ARROW` |
 | 注字 `i=1:n` | 1 TEXT | `AA-STAIR-TEXT` |
 
-- `rail=true`：8 LINE + 1 SOLID + 1 TEXT；`rail=false`：6 LINE + 1 SOLID + 1 TEXT。
+- `rail=true`：8 LINE + 1 SOLID + 1 TEXT；`rail=false`：6 LINE + 1 SOLID + 1 TEXT（计数以默认 `label` 非空为准；`label` 为空串时不注字）。
 - 插入点 = `p1`，旋转 = `atan2(p2-p1)`；属性 `AA_TYPE=RAMP`、`AA_ID`、`AA_W`、`AA_LEN`、`AA_SLOPE`、`AA_ANGLE`、`AA_RAIL`、`AA_ATX/ATY`、`AA_FLOOR`。
 
 ### 4.5 边界/回滚/幂等

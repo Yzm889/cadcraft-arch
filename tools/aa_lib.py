@@ -2356,6 +2356,136 @@ def create_step(
             "tread": tread, "depth": depth, "angle": angle, "geom_handles": handles}
 
 
+def create_ramp(
+    session: Session,
+    ramp_id: str,
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    width: float = 1500.0,
+    slope: float = 12.0,
+    rail: bool = True,
+    arrow: str = "UP",
+    label: str | None = None,
+    floor: int = 1,
+) -> dict[str, Any]:
+    """坡道（M-VERT-2）：6/8 LINE + 1 SOLID + 1 TEXT，图层沿用楼梯/台阶。
+
+    规则见 `docs/spec-M-VERT-电梯坡道阳台.md` §4：
+      - 长度 ≥1000、宽度 ≥900、坡度 8–20；坡度 8–11 返回 warning 不拒绝；
+      - 单次插入；同 ID 拒绝；失败整图字节回滚，零残留；
+      - 不新增图层：AA-STEP / AA-STAIR-ARROW / AA-STAIR-TEXT。
+    """
+    block = "AA_RAMP_" + str(ramp_id)
+    if session.block_exists(block):
+        raise CadError("坡道 %s 已存在，请换编号" % ramp_id)
+
+    try:
+        x1, y1 = float(p1[0]), float(p1[1])
+        x2, y2 = float(p2[0]), float(p2[1])
+    except (TypeError, ValueError, IndexError):
+        raise CadError("坡道端点格式错误，应传 (x, y)")
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length < 1000.0 - 1e-6:
+        raise CadError("坡道长度必须 ≥1000（当前 %.1f）" % length)
+    width = float(width)
+    if width < 900.0 - 1e-6:
+        raise CadError("坡道宽度必须 ≥900（当前 %.1f）" % width)
+    try:
+        slope = float(slope)
+    except (TypeError, ValueError):
+        raise CadError("坡度必须是数字（收到 %r）" % (slope,))
+    if slope < 8.0 - 1e-9 or slope > 20.0 + 1e-9:
+        raise CadError("坡度必须在 8–20 之间（收到 1:%.4g）" % slope)
+
+    arrow_u = str(arrow).upper()
+    if arrow_u not in ("UP", "DOWN"):
+        raise CadError("箭头方向只能是 UP/DOWN（收到 %r）" % arrow)
+    is_rail = bool(rail)
+    if label is None:
+        label = "i=1:%g" % slope
+    label = str(label)
+    warnings = []
+    if slope < 12.0 - 1e-9:
+        warnings.append("坡度 1:%g 陡于无障碍 1:12" % slope)
+
+    angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+    lh = annot_size(2.5, drawing_scale(session))
+    label_lisp = label.replace("\\", "\\\\").replace('"', '\\"')
+
+    backup = _drawing_bytes(session)
+    try:
+        session.ensure_layers([LAYERS["step"], LAYERS["stairarrow"], LAYERS["stairtext"]])
+        before = session.snapshot()
+        session.lisp(
+            '(aa:ramp %.4f %.4f %d %.4f "%s" %d)'
+            % (length, width, 1 if is_rail else 0, lh, label_lisp,
+               1 if arrow_u == "UP" else -1),
+            libraries=("aa_core.lisp", "aa_ramp.lisp"),
+        )
+        handles = session.new_handles(before)
+        if not handles:
+            raise CadError("坡道没有生成任何图元")
+
+        att_defs = [
+            ("AA_TYPE", "component type", "RAMP"),
+            ("AA_ID", "component id", ramp_id),
+            ("AA_W", "ramp width", "%.4f" % width),
+            ("AA_LEN", "ramp length", "%.4f" % length),
+            ("AA_SLOPE", "slope denominator", "%.4f" % slope),
+            ("AA_ANGLE", "block rotation deg", "%.4f" % angle),
+            ("AA_RAIL", "draw handrail", "1" if is_rail else "0"),
+            ("AA_ARROW", "arrow direction", arrow_u),
+            ("AA_LABEL", "label text", label),
+            ("AA_ATX", "anchor x", "%.4f" % x1),
+            ("AA_ATY", "anchor y", "%.4f" % y1),
+            ("AA_FLOOR", "floor number", str(int(floor))),
+        ]
+        att_vals = {t: v for t, _p, v in att_defs}
+        att_handles = session.define_attributes(att_defs)
+        handle = session.insert_block(
+            block, (0.0, 0.0), handles + att_handles, (x1, y1), att_vals,
+            rotation=angle, layer=LAYERS["step"],
+        )
+        session.expect_attributes(
+            block,
+            {
+                "AA_TYPE": "RAMP",
+                "AA_ID": ramp_id,
+                "AA_W": "%.4f" % width,
+                "AA_LEN": "%.4f" % length,
+                "AA_SLOPE": "%.4f" % slope,
+                "AA_RAIL": "1" if is_rail else "0",
+                "AA_ARROW": arrow_u,
+                "AA_LABEL": label,
+            },
+        )
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError(
+                "坡道失败且回滚失败：%s；原错误：%s" % (restore_error, exc)
+            ) from exc
+        raise
+
+    return {
+        "block": block,
+        "handle": handle,
+        "ramp": ramp_id,
+        "p1": [x1, y1],
+        "p2": [x2, y2],
+        "length": length,
+        "width": width,
+        "slope": slope,
+        "rail": is_rail,
+        "arrow": arrow_u,
+        "label": label,
+        "angle": angle,
+        "warnings": warnings,
+        "geom_handles": handles,
+    }
+
+
 def create_apron(
     session: Session,
     apron_id: str,

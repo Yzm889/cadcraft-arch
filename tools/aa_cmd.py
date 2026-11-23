@@ -53,6 +53,7 @@ from aa_lib import (  # noqa: E402
     create_step,
     create_apron,
     create_stair,
+    create_ramp,
     create_floor_table,
     create_opening_table,
     create_detail_mark,
@@ -325,6 +326,19 @@ def main(argv: list[str] | None = None) -> int:
     p_stair.add_argument("--side", default="left", choices=["left", "right"],
                          help="上楼位置：left 左边 / right 右边（双跑用）")
 
+    p_ramp = sub.add_parser("ramp", help="坡道：6/8 LINE + 箭头 + i=1:n 注字（沿用楼梯/台阶层）")
+    p_ramp.add_argument("path")
+    p_ramp.add_argument("id")
+    p_ramp.add_argument("--p1", default=None, help="坡道起点 x,y（--show 时可省）")
+    p_ramp.add_argument("--p2", default=None, help="坡道终点 x,y（--show 时可省）")
+    p_ramp.add_argument("--width", type=float, default=1500.0, help="坡道宽 mm")
+    p_ramp.add_argument("--slope", type=float, default=12.0, help="坡度分母 1:n，8–20")
+    p_ramp.add_argument("--no-rail", action="store_true", help="不画两侧扶手线")
+    p_ramp.add_argument("--arrow", default="up", choices=["up", "down"],
+                        help="箭头指向：up 上坡 / down 下坡")
+    p_ramp.add_argument("--label", default=None, help="注字，默认 i=1:n；空串不注字")
+    p_ramp.add_argument("--floor", type=int, default=1)
+    p_ramp.add_argument("--show", action="store_true", help="只回读坡道属性")
     p_roof = sub.add_parser("roof", help="屋顶平面：平 / 双坡 / 四坡 / 单坡（落在 AA-ROOF）")
     p_roof.add_argument("path")
     p_roof.add_argument("id")
@@ -919,6 +933,17 @@ def main(argv: list[str] | None = None) -> int:
                 session, args.id, _pt(args.at), args.kind, args.w, args.steps,
                 args.tread, args.rise, args.well, args.landing, args.angle,
                 args.level, args.side)})
+        elif args.cmd == "ramp":
+            if args.show:
+                emit({"ok": True, "id": args.id,
+                      "attrs": session.attributes("AA_RAMP_" + args.id)})
+            else:
+                if not args.p1 or not args.p2:
+                    raise CadError("画坡道必须给 --p1 和 --p2")
+                emit({"ok": True, **create_ramp(
+                    session, args.id, _pt(args.p1), _pt(args.p2),
+                    args.width, args.slope, not args.no_rail,
+                    args.arrow.upper(), args.label, args.floor)})
         elif args.cmd == "roof":
             hatch = {}
             if args.hatch:

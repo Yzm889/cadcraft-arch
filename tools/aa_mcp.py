@@ -40,6 +40,7 @@ from aa_lib import (  # noqa: E402
     create_site,
     read_site,
     create_stair,
+    create_ramp,
     create_roof,
     create_roof_detail,
     read_roof_detail,
@@ -804,6 +805,28 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_ramp",
+        "description": "坡道：6/8 LINE + 实心箭头 + i=1:n 注字，复用 AA-STEP / AA-STAIR-ARROW / AA-STAIR-TEXT；不新增图层。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "坡道编号，如图纸内唯一 RP001"},
+                "p1": {"type": "array", "items": {"type": "number"}, "description": "起点 [x, y]"},
+                "p2": {"type": "array", "items": {"type": "number"}, "description": "终点 [x, y]"},
+                "width": {"type": "number", "description": "坡道宽 mm（>=900）", "default": 1500},
+                "slope": {"type": "number", "description": "坡度分母 1:n（8–20；8–11 给 warning）", "default": 12},
+                "rail": {"type": "boolean", "description": "是否画两侧扶手线", "default": True},
+                "arrow": {"type": "string", "enum": ["UP", "DOWN"],
+                          "description": "箭头指向：UP 上坡 / DOWN 下坡", "default": "UP"},
+                "label": {"type": "string", "description": "注字，默认 i=1:n；空串不注字"},
+                "floor": {"type": "integer", "description": "所在层号（AA_FLOOR）", "default": 1},
+                "show": {"type": "boolean", "description": "只回读坡道属性", "default": False},
+            },
+            "required": ["path", "id", "p1", "p2"],
+        },
+    },
+    {
         "name": "aa_roof",
         "description": "屋顶平面：平屋顶（檐沟+四角雨水口+找坡）/ 双坡 / 四坡 / 单坡，檐口外挑计入平面面积；落 AA-ROOF 与 AA-ROOF-ARROW 层。",
         "inputSchema": {
@@ -1474,6 +1497,17 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("rise", 150), "rise"), _num(a.get("well", 120), "well"),
             _num(a.get("landing", 1200), "landing"), _num(a.get("angle", 90.0), "angle"),
             a.get("level", "MIDDLE"), a.get("side", "LEFT"))}
+
+    if name == "aa_ramp":
+        if a.get("show"):
+            return {"ok": True, "id": a["id"],
+                    "attrs": s.attributes("AA_RAMP_" + a["id"])}
+        return {"ok": True, **create_ramp(
+            s, a["id"], _pt(a["p1"], "p1"), _pt(a["p2"], "p2"),
+            _num(a.get("width", 1500.0), "width"),
+            _num(a.get("slope", 12.0), "slope"),
+            bool(a.get("rail", True)), str(a.get("arrow", "UP")),
+            a.get("label"), int(a.get("floor", 1)))}
 
     if name == "aa_roof":
         return {"ok": True, **create_roof(
