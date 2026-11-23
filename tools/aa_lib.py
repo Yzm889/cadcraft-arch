@@ -5917,6 +5917,183 @@ def avoid_opening_labels(session: Session, rounds: int = 2) -> dict[str, Any]:
             "collisions": _label_collisions(session)}
 
 
+_QUALITY_JARGON = ("AA_", "鞋带", "块参照", "参数化构件", "豆包", "CADCraft")
+
+
+def _dxf_all_blocks(path: str | Path) -> dict[str, list[dict[str, Any]]]:
+    """一次读 DXF 解析出全部块定义，避免 audit 逐块重复读整份文件。"""
+    lines_in = [ln.strip() for ln in
+                Path(path).read_text(encoding="utf-8", errors="replace").splitlines()]
+    blocks: dict[str, list[dict[str, Any]]] = {}
+    section = None
+    cur_name: str | None = None
+    ents: list[dict[str, Any]] | None = None
+    ent: dict[str, Any] | None = None
+    i = 0
+    while i + 1 < len(lines_in):
+        code, val = lines_in[i], lines_in[i + 1]
+        i += 2
+        try:
+            n = int(code)
+        except ValueError:
+            continue
+        if n == 0:
+            if val in ("SECTION", "ENDSEC"):
+                if val == "ENDSEC" and cur_name and ents is not None:
+                    blocks[cur_name] = ents
+                section, cur_name, ents, ent = None, None, None, None
+            elif section == "BLOCKS":
+                if val == "BLOCK":
+                    cur_name, ents, ent = None, [], None
+                elif val == "ENDBLK":
+                    if cur_name and ents is not None:
+                        blocks[cur_name] = ents
+                    cur_name, ents, ent = None, None, None
+                elif ents is not None:
+                    ent = {"type": val, "layer": None, "pts": [], "text": "",
+                           "h": 0.0, "r": 0.0, "sx": None, "sy": None,
+                           "ex": None, "ey": None, "sol": {}}
+                    ents.append(ent)
+            continue
+        if n == 2:
+            if section is None:
+                section = val
+            elif cur_name is None and ents is not None:
+                cur_name = val
+            continue
+        if section != "BLOCKS" or ent is None:
+            continue
+        if ent["type"] == "SOLID":
+            if n in (10, 11, 12, 13):
+                ent["sol"].setdefault(n, {})["x"] = float(val)
+            elif n in (20, 21, 22, 23):
+                ent["sol"].setdefault(n - 10, {})["y"] = float(val)
+            elif n == 8:
+                ent["layer"] = val
+            continue
+        if n == 8:
+            ent["layer"] = val
+        elif n == 1:
+            ent["text"] = val
+        elif n == 40:
+            ent["h"] = float(val)
+            ent["r"] = float(val)
+        elif n == 10:
+            if ent["type"] == "LWPOLYLINE":
+                ent["pts"].append([float(val), None])
+            else:
+                ent["sx"] = float(val)
+        elif n == 20:
+            if ent["type"] == "LWPOLYLINE" and ent["pts"] and ent["pts"][-1][1] is None:
+                ent["pts"][-1][1] = float(val)
+            elif ent["sy"] is None:
+                ent["sy"] = float(val)
+        elif n == 11:
+            ent["ex"] = float(val)
+        elif n == 21:
+            ent["ey"] = float(val)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for name, items in blocks.items():
+        geo: list[dict[str, Any]] = []
+        for e in items:
+            pts: list[tuple[float, float]] = []
+            if e["type"] == "LWPOLYLINE":
+                pts = [(float(p[0]), float(p[1])) for p in e["pts"]
+                       if p[0] is not None and p[1] is not None]
+            elif e["type"] == "SOLID":
+                pts = [(v["x"], v["y"]) for _k, v in sorted(e["sol"].items())
+                       if "x" in v and "y" in v]
+            elif e["sx"] is not None and e["sy"] is not None:
+                pts.append((e["sx"], e["sy"]))
+                if e["ex"] is not None and e["ey"] is not None:
+                    pts.append((e["ex"], e["ey"]))
+            if not pts:
+                continue
+            geo.append({"type": e["type"], "layer": e["layer"] or "",
+                        "pts": pts, "text": e["text"], "h": e["h"], "r": e["r"]})
+        out[name] = geo
+    return out
+
+
+def _quality_pieces(session: Session) -> list[dict[str, Any]]:
+    """图面上所有非图幅图元的世界坐标片段（用于图签压线与幅面利用率）。"""
+    blocks = _dxf_all_blocks(session.path)
+    pieces: list[dict[str, Any]] = []
+    for ref in session.references():
+        g = ref.get("geometry") or {}
+        block = g.get("block") or ""
+        if not block:
+            continue
+        is_frame = block.startswith("AA_SHEET_")
+        for gi in blocks.get(block, []):
+            pts = [_insert_tf(p, ref) for p in gi["pts"]]
+            pieces.append({"type": gi["type"], "layer": gi["layer"], "pts": pts,
+                           "text": gi["text"], "h": gi["h"], "r": gi["r"],
+                           "block": block, "frame": is_frame})
+    for e in session.entities().get("entities", []):
+        t = str(e.get("type", "")).lower()
+        g = e.get("geometry") or {}
+        lay = str(e.get("layer") or "")
+        pts: list[tuple[float, float]] = []
+        text = ""
+        h = 0.0
+        r = 0.0
+        if t == "line":
+            a, b = g.get("a"), g.get("b")
+            if a and b:
+                pts = [(a["x"], a["y"]), (b["x"], b["y"])]
+        elif t in ("polyline", "lwpolyline"):
+            pts = [(v["p"]["x"], v["p"]["y"]) for v in g.get("vertices", []) if v.get("p")]
+        elif t == "circle":
+            c = g.get("center") or {}
+            r = float(g.get("radius", 0) or 0)
+            if c:
+                pts = [(c["x"], c["y"])]
+        elif t == "text":
+            p = g.get("insert") or g.get("position")
+            if p:
+                pts = [(p["x"], p["y"])]
+                text = str(g.get("value", "") or "")
+                h = float(g.get("height", 0) or 0)
+        elif t == "dimension":
+            for k in ("p13", "p14"):
+                p = g.get(k)
+                if p:
+                    pts.append((p["x"], p["y"]))
+        if pts:
+            pieces.append({"type": t.upper(), "layer": lay, "pts": pts,
+                           "text": text, "h": h, "r": r, "block": "", "frame": False})
+    return pieces
+
+
+def _piece_box(piece: dict[str, Any]) -> tuple[float, float, float, float]:
+    xs = [p[0] for p in piece["pts"]]
+    ys = [p[1] for p in piece["pts"]]
+    r = float(piece.get("r") or 0)
+    return (min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r)
+
+
+def _sheet_occupancy(pieces: Sequence[dict[str, Any]],
+                     inner_box: Sequence[float], cols: int = 24,
+                     rows: int = 16) -> float:
+    """内框被图元实际经过的网格比例；比单纯外包框更能反映"图面空不空"。"""
+    x0, y0, x1, y1 = inner_box
+    cw, ch = (x1 - x0) / cols, (y1 - y0) / rows
+    if cw <= 0 or ch <= 0:
+        return 0.0
+    hit = [[False] * cols for _ in range(rows)]
+    for p in pieces:
+        bx0, by0, bx1, by1 = _piece_box(p)
+        c0 = max(0, min(cols - 1, int((bx0 - x0) / cw)))
+        c1 = max(0, min(cols - 1, int((bx1 - x0) / cw)))
+        r0 = max(0, min(rows - 1, int((by0 - y0) / ch)))
+        r1 = max(0, min(rows - 1, int((by1 - y0) / ch)))
+        for rr in range(r0, r1 + 1):
+            for cc in range(c0, c1 + 1):
+                hit[rr][cc] = True
+    return sum(1 for row in hit for v in row if v) / float(cols * rows)
+
+
 def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
     """图面自检：把"画完看着不对"的常见问题先挑出来，别等到出图才发现。
 
@@ -5927,9 +6104,14 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
       3b. `opening_text_overlap` 门窗编号压房间名/楼梯文字/另一个编号；
       4. `dim_over_axis` 尺寸文字压在轴号圈里；
       5. `outside_sheet` 有图幅时，图形外廓超出内框。
-    返回 `{issues, count, by_kind, scale}`，issue 里带 `level`（error/warn）与 `handles`/`detail`。
+    另外返回**不影响 count 的质量警告** `warnings/warning_count`：
+      6. `title_block_overlap` 图形压进图签；
+      7. `sheet_underfill` 图幅内框利用率过低（24×16 网格实测）；
+      8. `internal_jargon` 施工说明里混入实现术语。
+    返回 `{issues, count, by_kind, errors, scale, warnings, warning_count, quality}`。
     """
     issues: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
 
     def add(kind: str, level: str, message: str,
             handles: Sequence[str] = (), detail: str = "") -> None:
@@ -6029,10 +6211,18 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
         lay = sheet_layout(attrs.get("AA_SIZE", "A3"),
                            float(attrs.get("AA_SCALE", "100") or 100))
         ip = e["geometry"]["insert"]
-        x0, y0 = ip["x"], ip["y"]        # insert 点是内框左下角
+        x0, y0 = ip["x"], ip["y"]        # insert 点是图幅外框左下角
+        ix, iy = lay["inner_org"]
         frames.append({"id": attrs.get("AA_ID", e["geometry"]["block"]),
                        "handle": e.get("handle", ""),
-                       "box": (x0, y0, x0 + lay["inner_w"], y0 + lay["inner_h"])})
+                       "box": (x0 + ix, y0 + iy,
+                               x0 + ix + lay["inner_w"], y0 + iy + lay["inner_h"]),
+                       "inner_box": (x0 + ix, y0 + iy,
+                                     x0 + ix + lay["inner_w"], y0 + iy + lay["inner_h"]),
+                       "title_box": (x0 + ix + lay["inner_w"] - lay["title_w"],
+                                     y0 + iy,
+                                     x0 + ix + lay["inner_w"],
+                                     y0 + iy + lay["title_h"])})
     if len(frames) == 1:
         b = frames[0]["box"]
         if ext and (ext[0] < b[0] - tol or ext[1] < b[1] - tol
@@ -6062,11 +6252,61 @@ def audit(session: Session, tol: float = 1.0) -> dict[str, Any]:
                         handles=[a["handle"], b["handle"]],
                         detail="%r vs %r" % (a["box"], b["box"]))
 
+    # 6~8) 图面质量警告：不进 issues/count，避免老图因"看起来空"被判失败；
+    #      但给出可测量指标，方便按轮次比较返工前后的改善。
+    quality: dict[str, Any] = {"checks": 0}
+    if frames:
+        pieces = _quality_pieces(session)
+        geom = [p for p in pieces if not p.get("frame")]
+        quality["checks"] = 3
+        f0 = frames[0]
+        tb = f0["title_box"]
+        hits: list[dict[str, Any]] = []
+        for p in geom:
+            if p["type"] not in ("LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE",
+                                 "SOLID", "ARC", "DIMENSION"):
+                continue
+            b = _piece_box(p)
+            if (b[0] < tb[2] - tol and tb[0] < b[2] - tol
+                    and b[1] < tb[3] - tol and tb[1] < b[3] - tol):
+                hits.append(p)
+        if hits:
+            sample = "、".join("%s/%s" % (h.get("block") or "顶层", h["type"])
+                              for h in hits[:4])
+            warnings.append({"kind": "title_block_overlap", "level": "warn",
+                             "message": "%d 处图形压进图签" % len(hits),
+                             "detail": "图签 %r；命中 %s" % (tb, sample),
+                             "handles": []})
+        ratio = _sheet_occupancy(geom, f0["inner_box"])
+        quality["occupancy"] = round(ratio, 3)
+        if ratio < 0.30:
+            warnings.append({"kind": "sheet_underfill", "level": "warn",
+                             "message": "图幅利用率仅 %.1f%%" % (ratio * 100),
+                             "detail": "24×16 网格内框命中率；建议换小图幅或重排图面",
+                             "handles": []})
+        jargon: list[tuple[str, str]] = []
+        for p in pieces:
+            txt = str(p.get("text") or "").strip()
+            if not txt:
+                continue
+            for kw in _QUALITY_JARGON:
+                if kw in txt:
+                    jargon.append((txt[:48], kw))
+                    break
+        uniq = list(dict.fromkeys(jargon))[:8]
+        quality["jargon"] = len(uniq)
+        if uniq:
+            warnings.append({"kind": "internal_jargon", "level": "warn",
+                             "message": "%d 条注字含实现术语" % len(uniq),
+                             "detail": "；".join("%s（%s）" % (t, k) for t, k in uniq),
+                             "handles": []})
+
     by_kind: dict[str, int] = {}
     for it in issues:
         by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
     return {"issues": issues, "count": len(issues), "by_kind": by_kind,
-            "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc}
+            "errors": sum(1 for it in issues if it["level"] == "error"), "scale": sc,
+            "warnings": warnings, "warning_count": len(warnings), "quality": quality}
 
 
 def verify(session: Session, tol: float = 1.0) -> dict[str, Any]:

@@ -27,15 +27,21 @@
     "count": 0,
     "by_kind": {},
     "errors": 0,
-    "scale": 100.0
+    "scale": 100.0,
+    "warnings": [],
+    "warning_count": 0,
+    "quality": {
+      "checks": 3,
+      "occupancy": 0.68,
+      "jargon": 0
+    }
   },
   "errors": [],
   "png": {
     "path": "C:\\Users\\19891\\Desktop\\CADcraf\\cadcraft-arch\\deliverables\\幼儿园教学楼\\00_总平面索引.png",
-    "bytes": 81631,
-    "thickened": 8,
-    "colored": 0,
-    "px_per_mm": 2.69,
+    "bytes": 84264,
+    "thickened": 0,
+    "skipped": "no-pillow",
     "size": [
       2400,
       1600

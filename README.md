@@ -4,7 +4,7 @@
 
 让 AI 直接驱动 CADCraft 画建筑平面图：轴网、墙体、门窗、房间，全部由 AI 按指令生成，并且**每一步都经回读校验，不谎报成功**。
 
-## 现状（v1.0.56，M2 总平面 + 屋面细部落地）
+## 现状（v1.0.57，图纸质量门禁落地）
 
 | 功能 | 命令 | 状态 | 验收 |
 |---|---|---|---|
@@ -66,9 +66,10 @@
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # 50 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/run_all.py     # 51 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
 python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
 python tests/test_roof_detail.py  # 屋面分格/天沟/坡度注字单项验收
+python tests/test_quality_audit.py  # 图面质量门禁（图签压线/幅面利用率/施工说明术语）
 python tools/demo.py        # 生成 samples/demo_floorplan.dxf + .png
 python tools/demo_building.py  # 生成 samples/demo_building.dxf + .png（全套图 A2）
 python tools/mcp_demo.py    # 纯 MCP 客户端身份画一张图，生成 samples/mcp_demo.dxf + .png
@@ -408,6 +409,27 @@ cadcraft-arch/
 ├── tests/    按功能验收：axis / wall / opening / room / room_auto / room_modify / openings / dim / label / mcp / panel / corner / layers / split / merge / modify
 └── samples/  验收输出（dxf/png）
 ```
+
+## 图面质量门禁（v1.0.57）
+
+`audit` 在原有"几何错误"之外，额外返回**不影响 `count` 的质量警告**，让"规范不规范、返工率高不高"变成可比较的数字：
+
+```json
+{
+  "issues": [], "count": 0, "errors": 0,
+  "warnings": [{"kind": "title_block_overlap", "message": "...", "level": "warn"}],
+  "warning_count": 1,
+  "quality": {"checks": 3, "occupancy": 0.336, "jargon": 0}
+}
+```
+
+| 警告 | 检查口径 | 触发 |
+|---|---|---|
+| `title_block_overlap` | 非图幅图元是否压进图签矩形 | 红线/建筑线穿进标题栏 |
+| `sheet_underfill` | 内框 24×16 网格被图元经过的比例 | 利用率 < 30% |
+| `internal_jargon` | 注字里是否含 `AA_`、`鞋带`、`块参照`、`CADCraft` 等实现术语 | 施工说明混入开发语言 |
+
+`quality.occupancy` 是连续指标，可用来比较改图前后的图面充实度。幼儿园 5 层方案图在 v1.0.57 里已把图签压线、说明术语全部修掉，00–05 六张图 `count=0 / warning_count=0`。
 
 ## 实测踩到的平台约束（重要）
 

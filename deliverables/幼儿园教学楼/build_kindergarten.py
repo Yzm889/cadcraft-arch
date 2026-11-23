@@ -204,8 +204,8 @@ class FloorBuilder:
         sheet = create_sheet(
             self.s, "S%s" % self.tag, size="A1", scale=SCALE, at=None,
             project="幼儿园教学楼（5层假设性方案）", drawing=title,
-            number=self.title_no, date="2026-11-21", design="豆包 AI",
-            drawn="CADCraft", check="待审", unit="mm",
+            number=self.title_no, date="2026-11-21", design="AI 辅助设计",
+            drawn="待填", check="待审", unit="mm",
         )
         self.add_notes(sheet, title)
         return sheet
@@ -221,8 +221,8 @@ class FloorBuilder:
             "   本图为5层假设性方案，层数与消防需专项论证；标注“方案图”，不直接作为报建施工图。",
             "2. 单位：除标高为米外，其余均为毫米；总尺寸/轴线尺寸以 mm 计，面积以 m² 计。",
             "3. 墙体：外墙300、内墙200、隔墙100，均按中心线绘制，墙厚为构件属性（不是线宽）。",
-            "4. 门窗：M6 为乙级防火门，M7 为甲级防火门；门窗编号见门窗表，洞口定位见 AA_POS。",
-            "5. 本图由 CADCraft AA_ 参数化构件生成；块参照缩放=1，房间面积按净空轮廓鞋带公式计算。",
+            "4. 门窗：M6 为乙级防火门，M7 为甲级防火门；洞口定位及编号见门窗表与平面标注。",
+            "5. 本图为方案阶段建筑平面图；尺寸以毫米计，面积以平方米计，最终以审定施工图为准。",
         ]
         for i, line in enumerate(notes):
             self.text((x, y0 + (len(notes) - i) * 4.8 * s), line, 2.2)
@@ -720,11 +720,13 @@ def run_site() -> dict:
     s.lisp("(progn %s (princ \"ok\"))" % " ".join(cmds),
            libraries=("aa_core.lisp",))
 
+    # 图幅整体下移：图签贴内框右下，原来会与用地红线右边线相交（v1.0.57 修）。
+    # at.y 再下移 10000，使图签完全落在红线底边 y=-12000 以下；目录同步下移。
     sheet = create_sheet(
-        s, "S00", size="A1", scale=SCALE, at=(-15000, -12000),
+        s, "S00", size="A1", scale=SCALE, at=(-15000, -22000),
         project="幼儿园教学楼（5层假设性方案）", drawing="总平面索引",
-        number="建施-00", date="2026-11-21", design="豆包 AI",
-        drawn="CADCraft", check="待审", unit="mm",
+        number="建施-00", date="2026-11-21", design="AI 辅助设计",
+        drawn="待填", check="待审", unit="mm",
     )
     ax, ay = sheet["at"]
 
@@ -748,7 +750,7 @@ def run_site() -> dict:
         ["6", "建施-00", "总平面索引", "A1", "1:100", "本图"],
     ]
     tab = draw_table(
-        s, (50000, 42000), "图纸目录",
+        s, (50000, 32000), "图纸目录",
         ["序号", "图号", "图名", "图幅", "比例", "备注"], rows,
         [w * SCALE for w in (10, 26, 58, 14, 16, 26)],
         row_height=4.5 * SCALE, text_height=2.7 * SCALE,
