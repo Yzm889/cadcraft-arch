@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 import aa_mcp  # noqa: E402
+from check_version import version_mismatch  # noqa: E402
+
 
 OUT = ROOT / "samples"
 MCP = ROOT / "tools" / "aa_mcp.py"
@@ -37,6 +39,8 @@ def main() -> int:
     init = rpc("initialize", {})
     assert init["result"]["protocolVersion"] == aa_mcp.PROTOCOL_VERSION
     assert init["result"]["capabilities"]["tools"] == {"listChanged": False}
+    # 版本一致性：README「现状」版本必须与 SERVER_INFO 相同，tools/check_version.py 共用同一判定
+    assert version_mismatch() is None, version_mismatch()
     assert init["result"]["serverInfo"]["name"] == "cadcraft-arch"
 
     # 2) 工具表完整、每项都有 inputSchema 与 description
@@ -247,6 +251,7 @@ def main() -> int:
         lines = [proc.stdout.readline(), proc.stdout.readline()]
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
+        assert r1["result"]["serverInfo"]["version"] == aa_mcp.SERVER_INFO["version"], r1
         assert r2["id"] == 2 and len(r2["result"]["tools"]) == 62, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:

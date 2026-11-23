@@ -3,7 +3,7 @@
 > 交接日期：2026-11-24
 > 项目：`cadcraft-arch`（MIT）—— 面向 CADCraft 的自研建筑智能绘图插件
 > 当前分支：`main`；远端：`git@github.com:Yzm889/cadcraft-arch.git`
-> 当前状态：交接时本地领先 `origin/main` 12 个提交，本文档提交后为 13；**未 push**；无 tag
+> 当前状态：交接时本地领先 `origin/main` 12 个提交，本文档提交后为 13；2026-11-24 债务处理后再 +2，共 15；**未 push**；无 tag
 > 适用对象：接手开发的新同事 / 新 AI 代理 / 换 CAD 平台后的迁移负责人
 
 ---
@@ -21,7 +21,7 @@
 | 项 | 值 |
 |---|---|
 | README 版本 | **v1.0.60**（M-VERT 完成） |
-| MCP `SERVER_INFO` 版本 | **1.0.59**（与 README 不一致，已知债务，见 §9） |
+| MCP `SERVER_INFO` 版本 | **1.0.60**（2026-11-24 已与 README 对齐；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
 | 测试文件 | **56 个**（`tests/test_*.py`） |
 | MCP 工具 | **62 个** = 59 原子 + 3 事务编排（batch/checkpoint/restore） |
 | 标准图层 | **22 个**（新增电梯层 `AA-ELEVATOR`） |
@@ -76,6 +76,7 @@ python tools\aa_cmd.py new samples\smoke.dxf
 python tools\aa_cmd.py wall samples\smoke.dxf W001 --p1 0,0 --p2 6000,0 --thick 240
 python tools\aa_cmd.py show samples\smoke.dxf
 python tools\aa_mcp.py --selftest     # 看工具表与数量
+python tools\check_version.py        # README 现状版本 == MCP SERVER_INFO（CI 也跑）
 python tools\build_integration.py     # 重生成集成样板 + audit + PNG
 ```
 
@@ -253,7 +254,7 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 
 - `tests/run_all.py` 在宿主拦截批量删除时会有**假失败**，以逐文件 exit code 为准。
 - 测试会改写 `samples/test_*.dxf` 等已跟踪样例；提交前按老流程还原（`git show HEAD:file > file`，中文/含空格路径用 Python 字节写回），否则会产生大量样例噪声。
-- 测试生成的 `samples/test_*.dxf` 未跟踪文件不要提交。
+- 测试生成的 `samples/test_*.dxf` 已由 `.gitignore` 忽略（连同 `samples/_zoom_*.png`），不会误提交；已跟踪的样例被改写后仍需还原。
 - 受保护交付图 00–05 的 SHA-256 见 `deliverables/幼儿园教学楼/验收报告.md`；当前工作区 `git status -- deliverables` 为空。
 
 ### 8.3 新增功能约定
@@ -270,17 +271,17 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 
 | # | 问题 | 影响/建议 |
 |---|---|---|
-| 1 | README v1.0.60，但 `aa_mcp.py` `SERVER_INFO` 仍 1.0.59 | MCP 客户端看到的版本偏旧；建议统一 bump 到 1.0.60 并加版本断言 |
-| 2 | 本地 `main` 领先 `origin/main` **12 个提交**，未 push | 换机器/换软件前先决定是否 push；本环境不做自动 push |
-| 3 | `docs/缺口盘点-...md` 未跟踪 | 重要的 T30 对比材料；若要保留请单独提交 |
-| 4 | `samples/` 下有历史未跟踪测试图/截图 | 不要提交；测试产物可随时重生成 |
-| 5 | `scratch_*` 本地实验文件 | `.gitignore` 已忽略，可删 |
+| 1 | ~~README v1.0.60，但 `aa_mcp.py` `SERVER_INFO` 仍 1.0.59~~ **已处理（2026-11-24）** | `SERVER_INFO` 已升 1.0.60；`tests/test_mcp.py` 与 `tools/check_version.py` 断言 README 现状版本 == SERVER_INFO，再漂移直接红 |
+| 2 | 本地 `main` 领先 `origin/main` **15 个提交**（含 2026-11-24 的 2 笔），未 push | 所有权人已确认暂不 push；换机器/换软件前再决定 |
+| 3 | `docs/缺口盘点-...md` | **已单独提交（2026-11-24）**，不再未跟踪 |
+| 4 | `samples/` 下历史未跟踪测试图/截图 | **已处理（2026-11-24）**：`.gitignore` 忽略 `samples/test_*.dxf`、`samples/_zoom_*.png`；要保留新样例需 `git add -f` |
+| 5 | `scratch_*` 本地实验文件 | **已处理（2026-11-24）**：仓库内 49 个已删；工作区根目录 `CADcraf\` 下的 `probe_*`/`spike*`/`scratch_*` 在仓库外，未动 |
 | 6 | T30 只实测南向电梯门 | 北/东/西/重复井道/编号冲突仍 UNKNOWN，不要写成已验证 |
 | 7 | `audit.corner_gap` 是“墙块侧线 vs wall_sides 期望”的不一致墙块数 | 能抓未合角，但不等于逐角几何测量；目检/测试仍需配合 |
 | 8 | 默认 `create_wall(normalize=True)` 增加单墙开销 | 批量必须 `normalize=False` + `normalize_all_walls`；`_apply_layout` 内禁止递归 |
 | 9 | `_apply_layout` 连续重建偶发块定义残留 | 已有 purge 兜底；若再遇 `块定义已存在`，先查 purge 流程 |
 | 10 | 00–05 是在自动合角修复前生成的 | 按约定**不重生成**；若将来重生成，哈希会变，需所有权人批准 |
-| 11 | 无 CI、无 package/tag、无远程 push | 当前靠本地逐文件回归；接手方应补最小 CI |
+| 11 | 无 package/tag、无远程 push；CI 只有轻量版 | **已加 `.github/workflows/ci.yml`（2026-11-24）**：compileall + MCP selftest + 版本一致性；56 个测试依赖本机 CLI，不在云端跑；push 后才生效 |
 | 12 | M-DIM 未开始 | 下一功能建议，先测试后实现；不要先做 M-OPEN 高级门窗 |
 
 ---

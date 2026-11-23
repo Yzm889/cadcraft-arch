@@ -3,6 +3,8 @@ __pycache__/
 *.bak
 *.tmp
 scratch_*
+samples/test_*.dxf
+samples/_zoom_*.png
 samples/*.bak
 .venv/
 .aa_snap/

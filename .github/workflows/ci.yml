@@ -1,0 +1,25 @@
+name: ci
+
+# 轻量门禁：不依赖 CADCraft CLI 的三项检查。
+# tests/test_*.py 都要调本机 cadcraft-cli.exe，托管 runner 上跑不了，
+# 全量回归仍按 HANDOVER.md §8.2 在本地逐文件跑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 语法编译（tools + tests）
+        run: python -m compileall -q tools tests
+      - name: MCP 自检（工具表与数量）
+        run: python tools/aa_mcp.py --selftest
+      - name: 版本一致性（README 现状 vs SERVER_INFO）
+        run: python tools/check_version.py
