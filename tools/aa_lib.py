@@ -2356,6 +2356,173 @@ def create_step(
             "tread": tread, "depth": depth, "angle": angle, "geom_handles": handles}
 
 
+def create_balcony(
+    session: Session,
+    balcony_id: str,
+    wall_id: str,
+    pos: float,
+    width: float = 3000.0,
+    depth: float = 1200.0,
+    rail: float = 100.0,
+    label: str = "",
+    floor: int = 1,
+) -> dict[str, Any]:
+    """平面阳台（M-VERT-3）：6 LINE（可选 +1 TEXT），复用 AA-STEP/AA-STAIR-TEXT。
+
+    规则见 `docs/spec-M-VERT-电梯坡道阳台.md` §5：
+      - 依附墙存在；区间在墙段内；不压已有洞口；
+      - width ≥600、depth 600–2400、rail 50–300；
+      - 内墙只 warning 不拒绝；不修改墙块/洞口；
+      - 单次插入；同 ID 拒绝；失败整图字节回滚，零残留。
+    """
+    block = "AA_BALCONY_" + str(balcony_id)
+    if session.block_exists(block):
+        raise CadError("阳台 %s 已存在，请换编号" % balcony_id)
+    info = wall_info(session, wall_id)
+    length = float(info["length"])
+    thick = float(info["thick"])
+    if length <= 0:
+        raise CadError("墙 %s 长度无效（%s）" % (wall_id, length))
+
+    pos = float(pos)
+    width = float(width)
+    depth = float(depth)
+    rail = float(rail)
+    if width < 600.0 - 1e-6:
+        raise CadError("阳台宽度必须 ≥600（当前 %.1f）" % width)
+    if depth < 600.0 - 1e-6 or depth > 2400.0 + 1e-6:
+        raise CadError("阳台深度必须在 600–2400 之间（当前 %.1f）" % depth)
+    if rail < 50.0 - 1e-6 or rail > 300.0 + 1e-6:
+        raise CadError("栏板厚必须在 50–300 之间（当前 %.1f）" % rail)
+
+    lo, hi = pos - width / 2.0, pos + width / 2.0
+    if lo < -1e-6 or hi > length + 1e-6:
+        raise CadError(
+            "阳台区间 [%.1f, %.1f] 越界，墙 %s 可用范围 [0, %.1f]"
+            % (lo, hi, wall_id, length)
+        )
+    for oid, opos, owidth in _openings_on_wall(session, wall_id):
+        olo, ohi = opos - owidth / 2.0, opos + owidth / 2.0
+        if min(hi, ohi) - max(lo, olo) > 1e-6:
+            raise CadError("阳台区间与洞口 %s [%.1f, %.1f] 重叠" % (oid, olo, ohi))
+
+    kind = str(info["attrs"].get("AA_KIND") or "").upper()
+    warnings = []
+    if kind != "EXTERNAL":
+        warnings.append("依附墙 %s 不是外墙（AA_KIND=%s）" % (wall_id, kind or "?"))
+
+    # 判断墙的外侧：用墙中线两侧探点是否落在房间内；无房间时默认左法向。
+    r = float(info["rotation_rad"])
+    dx, dy = math.cos(r), math.sin(r)
+    nx, ny = -dy, dx
+    px, py = float(info["at"][0]), float(info["at"][1])
+    base_x = px + dx * pos
+    base_y = py + dy * pos
+    probe_off = thick / 2.0 + 50.0
+    plus = (base_x + nx * probe_off, base_y + ny * probe_off)
+    minus = (base_x - nx * probe_off, base_y - ny * probe_off)
+    polys: list[list[tuple[float, float]]] = []
+    for room in room_data(session):
+        raw = room.get("pts")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                polys.append([tuple(p) for p in ast.literal_eval(raw)])
+                continue
+            except (ValueError, SyntaxError):
+                pass
+        elif raw:
+            polys.append([tuple(p) for p in raw])
+    plus_indoor = any(_in_polygon(plus, poly) for poly in polys) if polys else None
+    if plus_indoor is None:
+        outward = 1.0                 # 没有房间：默认墙左法向为外
+    elif plus_indoor:
+        outward = -1.0                # 左法向在室内，外侧是右法向
+    else:
+        outward = 1.0
+
+    at = (base_x + nx * outward * thick / 2.0,
+          base_y + ny * outward * thick / 2.0)
+    angle = math.degrees(r)
+    if outward < 0:
+        angle += 180.0
+    angle = angle % 360.0
+    lh = annot_size(2.5, drawing_scale(session))
+    label = "" if label is None else str(label)
+    label_lisp = label.replace("\\", "\\\\").replace('"', '\\"')
+
+    backup = _drawing_bytes(session)
+    try:
+        session.ensure_layers([LAYERS["step"], LAYERS["stairtext"]])
+        before = session.snapshot()
+        session.lisp(
+            '(aa:balcony %.4f %.4f %.4f %.4f "%s")'
+            % (width, depth, rail, lh, label_lisp),
+            libraries=("aa_core.lisp", "aa_balcony.lisp"),
+        )
+        handles = session.new_handles(before)
+        if not handles:
+            raise CadError("阳台没有生成任何图元")
+
+        att_defs = [
+            ("AA_TYPE", "component type", "BALCONY"),
+            ("AA_ID", "component id", balcony_id),
+            ("AA_WALLID", "host wall id", wall_id),
+            ("AA_POS", "offset from wall start", "%.4f" % pos),
+            ("AA_W", "balcony width", "%.4f" % width),
+            ("AA_D", "balcony depth", "%.4f" % depth),
+            ("AA_RAIL", "rail thickness", "%.4f" % rail),
+            ("AA_LABEL", "label text", label),
+            ("AA_ANGLE", "block rotation deg", "%.4f" % angle),
+            ("AA_ATX", "anchor x", "%.4f" % at[0]),
+            ("AA_ATY", "anchor y", "%.4f" % at[1]),
+            ("AA_FLOOR", "floor number", str(int(floor))),
+        ]
+        att_vals = {t: v for t, _p, v in att_defs}
+        att_handles = session.define_attributes(att_defs)
+        handle = session.insert_block(
+            block, (0.0, 0.0), handles + att_handles, at, att_vals,
+            rotation=angle, layer=LAYERS["step"],
+        )
+        session.expect_attributes(
+            block,
+            {
+                "AA_TYPE": "BALCONY",
+                "AA_ID": balcony_id,
+                "AA_WALLID": wall_id,
+                "AA_POS": "%.4f" % pos,
+                "AA_W": "%.4f" % width,
+                "AA_D": "%.4f" % depth,
+                "AA_RAIL": "%.4f" % rail,
+                "AA_LABEL": label,
+            },
+        )
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError(
+                "阳台失败且回滚失败：%s；原错误：%s" % (restore_error, exc)
+            ) from exc
+        raise
+
+    return {
+        "block": block,
+        "handle": handle,
+        "balcony": balcony_id,
+        "wall": wall_id,
+        "pos": pos,
+        "width": width,
+        "depth": depth,
+        "rail": rail,
+        "label": label,
+        "at": [at[0], at[1]],
+        "outward": outward,
+        "angle": angle,
+        "warnings": warnings,
+        "geom_handles": handles,
+    }
+
+
 def create_ramp(
     session: Session,
     ramp_id: str,

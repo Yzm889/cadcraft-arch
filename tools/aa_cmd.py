@@ -54,6 +54,7 @@ from aa_lib import (  # noqa: E402
     create_apron,
     create_stair,
     create_ramp,
+    create_balcony,
     create_floor_table,
     create_opening_table,
     create_detail_mark,
@@ -339,6 +340,17 @@ def main(argv: list[str] | None = None) -> int:
     p_ramp.add_argument("--label", default=None, help="注字，默认 i=1:n；空串不注字")
     p_ramp.add_argument("--floor", type=int, default=1)
     p_ramp.add_argument("--show", action="store_true", help="只回读坡道属性")
+    p_bal = sub.add_parser("balcony", help="阳台：6 LINE（可选注字），沿用 AA-STEP / AA-STAIR-TEXT")
+    p_bal.add_argument("path")
+    p_bal.add_argument("id")
+    p_bal.add_argument("--wall", default=None, help="依附墙号（--show 时可省）")
+    p_bal.add_argument("--pos", type=float, default=None, help="沿墙起点距离（--show 时可省）")
+    p_bal.add_argument("--width", type=float, default=3000.0, help="阳台宽 mm（>=600）")
+    p_bal.add_argument("--depth", type=float, default=1200.0, help="挑出深 mm（600–2400）")
+    p_bal.add_argument("--rail", type=float, default=100.0, help="栏板厚 mm（50–300）")
+    p_bal.add_argument("--label", default="", help="可选注字，默认空")
+    p_bal.add_argument("--floor", type=int, default=1)
+    p_bal.add_argument("--show", action="store_true", help="只回读阳台属性")
     p_roof = sub.add_parser("roof", help="屋顶平面：平 / 双坡 / 四坡 / 单坡（落在 AA-ROOF）")
     p_roof.add_argument("path")
     p_roof.add_argument("id")
@@ -944,6 +956,16 @@ def main(argv: list[str] | None = None) -> int:
                     session, args.id, _pt(args.p1), _pt(args.p2),
                     args.width, args.slope, not args.no_rail,
                     args.arrow.upper(), args.label, args.floor)})
+        elif args.cmd == "balcony":
+            if args.show:
+                emit({"ok": True, "id": args.id,
+                      "attrs": session.attributes("AA_BALCONY_" + args.id)})
+            else:
+                if not args.wall or args.pos is None:
+                    raise CadError("画阳台必须给 --wall 和 --pos")
+                emit({"ok": True, **create_balcony(
+                    session, args.id, args.wall, args.pos,
+                    args.width, args.depth, args.rail, args.label, args.floor)})
         elif args.cmd == "roof":
             hatch = {}
             if args.hatch:

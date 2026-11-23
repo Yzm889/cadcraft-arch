@@ -41,6 +41,7 @@ from aa_lib import (  # noqa: E402
     read_site,
     create_stair,
     create_ramp,
+    create_balcony,
     create_roof,
     create_roof_detail,
     read_roof_detail,
@@ -827,6 +828,26 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "aa_balcony",
+        "description": "平面阳台：6 LINE（可选 +1 TEXT），复用 AA-STEP / AA-STAIR-TEXT；校验墙段/洞口，内墙只 warning，不修改墙块。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "阳台编号，如图纸内唯一 BA001"},
+                "wall": {"type": "string", "description": "依附墙号"},
+                "pos": {"type": "number", "description": "阳台中心沿墙起点距离 mm"},
+                "width": {"type": "number", "description": "阳台宽 mm（>=600）", "default": 3000},
+                "depth": {"type": "number", "description": "挑出深 mm（600–2400）", "default": 1200},
+                "rail": {"type": "number", "description": "栏板厚 mm（50–300）", "default": 100},
+                "label": {"type": "string", "description": "可选注字，默认空"},
+                "floor": {"type": "integer", "description": "所在层号（AA_FLOOR）", "default": 1},
+                "show": {"type": "boolean", "description": "只回读阳台属性", "default": False},
+            },
+            "required": ["path", "id"],
+        },
+    },
+    {
         "name": "aa_roof",
         "description": "屋顶平面：平屋顶（檐沟+四角雨水口+找坡）/ 双坡 / 四坡 / 单坡，檐口外挑计入平面面积；落 AA-ROOF 与 AA-ROOF-ARROW 层。",
         "inputSchema": {
@@ -1508,6 +1529,19 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             _num(a.get("slope", 12.0), "slope"),
             bool(a.get("rail", True)), str(a.get("arrow", "UP")),
             a.get("label"), int(a.get("floor", 1)))}
+
+    if name == "aa_balcony":
+        if a.get("show"):
+            return {"ok": True, "id": a["id"],
+                    "attrs": s.attributes("AA_BALCONY_" + a["id"])}
+        if not a.get("wall") or a.get("pos") is None:
+            raise CadError("画阳台必须给 wall 和 pos")
+        return {"ok": True, **create_balcony(
+            s, a["id"], str(a["wall"]), _num(a["pos"], "pos"),
+            _num(a.get("width", 3000.0), "width"),
+            _num(a.get("depth", 1200.0), "depth"),
+            _num(a.get("rail", 100.0), "rail"),
+            str(a.get("label", "")), int(a.get("floor", 1)))}
 
     if name == "aa_roof":
         return {"ok": True, **create_roof(
