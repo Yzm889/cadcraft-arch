@@ -20,14 +20,14 @@
 
 | 项 | 值 |
 |---|---|
-| README 版本 | **v1.0.61**（M-DIM 尺寸标注补齐） |
-| MCP `SERVER_INFO` 版本 | **1.0.61**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
-| 测试文件 | **59 个**（`tests/test_*.py`） |
+| README 版本 | **v1.0.62**（rescale 房间重建修复 + M-DIM 尺寸标注补齐） |
+| MCP `SERVER_INFO` 版本 | **1.0.62**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
+| 测试文件 | **60 个**（`tests/test_*.py`） |
 | MCP 工具 | **62 个** = 59 原子 + 3 事务编排（batch/checkpoint/restore） |
 | 标准图层 | **22 个**（新增电梯层 `AA-ELEVATOR`） |
 | CADCraft | 0.20.1（`cadcraft-cli`） |
 | Python | 3.11.9，仅标准库（无第三方依赖） |
-| 最近提交 | `git log --oneline -8`（2026-11-24：交接债务处理 2 笔 + M-DIM 实现/文档） |
+| 最近提交 | `git log --oneline -8`（2026-11-24：债务处理 + M-DIM + rescale 房间重建修复） |
 | 交付图 | `deliverables/幼儿园教学楼/00–05`（受保护，当前 `git status` 干净） |
 
 已完成的大块：
@@ -114,7 +114,7 @@ cadcraft-arch/
 │  ├─ aa_elevator.lisp   # 电梯 10 LINE
 │  ├─ aa_ramp.lisp       # 坡道 6/8 LINE + 箭头 + 注字
 │  └─ aa_balcony.lisp    # 阳台 6 LINE
-├─ tests/                # 59 个逐文件验收（先测试后实现的产物）
+├─ tests/                # 60 个逐文件验收（先测试后实现的产物）
 ├─ docs/
 │  ├─ spec-M-VERT-电梯坡道阳台.md   # M-VERT 规格（§13 C1 定稿）
 │  ├─ T30-M-VERT-1-电梯实测记录.md  # T30 行为证据
@@ -237,7 +237,7 @@ python tools/build_integration.py
 
 ### 8.1 测试规模
 
-59 个文件，覆盖：轴网/墙/门窗/房间/标注/尺寸标注补齐（M-DIM）/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
+60 个文件，覆盖：轴网/墙/门窗/房间/标注/尺寸标注补齐（M-DIM）/rescale 房间重建/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
 
 ### 8.2 推荐跑法
 
@@ -283,7 +283,7 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 | 10 | 00–05 是在自动合角修复前生成的 | 按约定**不重生成**；若将来重生成，哈希会变，需所有权人批准 |
 | 11 | 无 package/tag、无远程 push；CI 只有轻量版 | **已加 `.github/workflows/ci.yml`（2026-11-24）**：compileall + MCP selftest + 版本一致性；56 个测试依赖本机 CLI，不在云端跑；push 后才生效 |
 | 12 | ~~M-DIM 未开始~~ **已完成（2026-11-24，v1.0.61）** | `dim --locate / --thickness / --coords`（MCP `aa_dim` 同名布尔参数）；选项记在 `AA_CFG_DIM`，`rescale` 按原选项重画。下一功能：M-OPEN 高级门窗 |
-| 13 | **既有缺陷（M-DIM 开发中发现，未修）**：带 T 接内墙的图上 `rescale` 会失败 | `rescale_annotations` 用整墙版 `create_room` 重建房间，拼不上含 T 接内墙的环：`拒绝写入：墙环断裂，墙 W005 的端点与上一个终点不重合`。改动前（HEAD b902223）同样复现，与 M-DIM 无关；修法是改用 `create_room_edges` 按子段重建。M-DIM 的三个测试因此都另起一张没有内墙的图验 rescale |
+| 13 | ~~带 T 接内墙的图上 `rescale` 会失败~~ **已修复（2026-11-24，v1.0.62）** | 重建房间改为按墙编号集合从 `find_room_rings` 匹配子段边界、走 `create_room_edges`；搜不到环（墙被改过/整墙版直接建的房间）退回原整墙版路径，顺带透传 `show_name`。回归：`tests/test_rescale_tjunc.py` |
 | 14 | 中间轴线的轴号圈会压住总尺寸文字（`audit` 报 `dim_over_axis`） | 轴线外伸 1600 + 圈半径 400 = 2000，正好落在 22mm 总尺寸线（2200）的文字上；与 M-DIM 开关无关（关掉同样报，M-DIM 开发中实测）。规避：轴网 `ext` 给到 ≥ 2400，或用 `dim --opening-off/--wall-off` 把尺寸线调开 |
 
 ---

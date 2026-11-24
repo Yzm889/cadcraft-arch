@@ -1443,10 +1443,24 @@ def rescale_annotations(session: Session, scale: float,
                            leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
 
         rooms = room_data(session)
+        # 房间重建：优先按"搜环得到的子段边界"重建。房间边界可能落在某堵墙的中段
+        # （T 接内墙把外墙分成两段），整墙版 create_room 要求列出的墙首尾相接，
+        # 拼不出这种环，直接调用会报"墙环断裂"（HANDOVER §9 #13，v1.0.62 修）。
+        # 墙在 rescale 里一个不动，搜环结果与建房间时一致；墙被改过/老图搜不到
+        # 对应环时，退回整墙版（简单矩形房间走这条路）。
+        ring_map: dict[frozenset, list] = {}
+        for ring in find_room_rings(session):
+            ring_map.setdefault(frozenset(ring["walls"]), ring["edges"])
         for r in rooms:
             delete_component(session, r["block"])
-            create_room(session, r["id"], r["walls"], r["name"],
-                        show_area=r.get("show_area", True))
+            edges = ring_map.get(frozenset(r["walls"]))
+            if edges is not None:
+                create_room_edges(session, r["id"], edges, name=r["name"],
+                                  show_area=r.get("show_area", True),
+                                  show_name=r.get("show_name", True))
+            else:
+                create_room(session, r["id"], r["walls"], r["name"],
+                            show_area=r.get("show_area", True))
 
         symbols = []
         for e in session.components("AA_SYM_"):
