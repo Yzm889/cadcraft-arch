@@ -20,9 +20,9 @@
 
 | 项 | 值 |
 |---|---|
-| README 版本 | **v1.0.62**（rescale 房间重建修复 + M-DIM 尺寸标注补齐） |
-| MCP `SERVER_INFO` 版本 | **1.0.62**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
-| 测试文件 | **60 个**（`tests/test_*.py`） |
+| README 版本 | **v1.0.63**（M-OPEN 组合门窗/带形窗 + rescale 房间重建修复 + M-DIM 尺寸标注补齐） |
+| MCP `SERVER_INFO` 版本 | **1.0.63**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 守住） |
+| 测试文件 | **61 个**（`tests/test_*.py`） |
 | MCP 工具 | **62 个** = 59 原子 + 3 事务编排（batch/checkpoint/restore） |
 | 标准图层 | **22 个**（新增电梯层 `AA-ELEVATOR`） |
 | CADCraft | 0.20.1（`cadcraft-cli`） |
@@ -114,7 +114,7 @@ cadcraft-arch/
 │  ├─ aa_elevator.lisp   # 电梯 10 LINE
 │  ├─ aa_ramp.lisp       # 坡道 6/8 LINE + 箭头 + 注字
 │  └─ aa_balcony.lisp    # 阳台 6 LINE
-├─ tests/                # 60 个逐文件验收（先测试后实现的产物）
+├─ tests/                # 61 个逐文件验收（先测试后实现的产物）
 ├─ docs/
 │  ├─ spec-M-VERT-电梯坡道阳台.md   # M-VERT 规格（§13 C1 定稿）
 │  ├─ T30-M-VERT-1-电梯实测记录.md  # T30 行为证据
@@ -237,7 +237,7 @@ python tools/build_integration.py
 
 ### 8.1 测试规模
 
-60 个文件，覆盖：轴网/墙/门窗/房间/标注/尺寸标注补齐（M-DIM）/rescale 房间重建/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
+61 个文件，覆盖：轴网/墙/门窗/组合门窗（M-OPEN）/房间/标注/尺寸标注补齐（M-DIM）/rescale 房间重建/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
 
 ### 8.2 推荐跑法
 
@@ -313,7 +313,7 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 
 ### 10.2 之后
 
-- M-OPEN 高级门窗（带形窗/转角窗/组合门窗）
+- M-OPEN 转角窗（带形窗/组合门窗已完成 v1.0.63；转角窗涉及墙角材料处理，待做）
 - 设计说明页 / 会签栏 / 多页 PDF
 - 最后才考虑 GUI、构件库、三维
 
@@ -356,7 +356,7 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 - [ ] 确认 `git status --short -- deliverables` 为空
 - [ ] 确认无 `.bak` / `.restore.tmp`
 - [ ] 决定是否 push 本地 12 个提交（默认不 push）
-- [x] 若要继续开发：M-DIM 已完成，下一个功能按 ROADMAP 做 M-OPEN 高级门窗
+- [x] 若要继续开发：M-DIM 与 M-OPEN 组合门窗/带形窗已完成；下一个功能：M-OPEN 转角窗
 
 ---
 

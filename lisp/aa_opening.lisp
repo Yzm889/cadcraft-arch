@@ -45,6 +45,48 @@
     (t (setq a1 3.141592653589793 a2 4.71238898038469)))
   (aa:mkarc (aa:pt hx face) (abs (float wd)) a1 a2 lay))
 
+;; (aa:opening-label pos width half label lrot side leader) —— 门窗编号注字
+;;   从 aa:opening 里原样抽出（组合门窗的面板绘制在驱动层拼，编号共用这一段）。
+(defun aa:opening-label (pos width half label lrot side leader
+                         / x2 lw lh ly lx)
+  (setq x2 (+ pos (/ width 2.0)))
+  ;; 门窗编号：默认写在洞口靠室内一侧墙面外 250，沿墙方向居中，字高 180
+  ;; （side = -1 / +1 决定落在本地 -Y / +Y 侧，室内外由驱动层换算）。
+  ;; 放在洞内会压住窗的四条线/门的门扇线，所以走墙外。
+  ;; 文字转了 180° 时，插入点要沿侧向反向偏一个字高，可见框才仍贴墙居中。
+  ;; leader=1：编号再外移 8mm，并从洞口右端墙中点拉一条 45° 引线到编号端部。
+  (if (= label "")
+      nil
+      (progn
+        (setq lw (* 0.62 aa:*label-h* (float (strlen label)))
+              lh aa:*label-h*)
+        (if (= leader 1)
+            (progn
+              (setq lx (+ x2 700.0)
+                    ly (* (float side) (+ half 700.0)))
+              (aa:mkline (aa:pt x2 (* (float side) half)) (aa:pt lx ly)
+                         aa:*lay-opening*)
+              (if (> (abs lrot) 1.0)
+                  (if (> side 0.0)
+                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (+ ly lh 80.0)) label
+                                   aa:*lay-opening* lh lrot)
+                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (- ly 80.0)) label
+                                   aa:*lay-opening* lh lrot))
+                  (if (> side 0.0)
+                      (aa:mktext-r (aa:pt (+ lx 180.0) (+ ly 80.0)) label
+                                   aa:*lay-opening* lh lrot)
+                      (aa:mktext-r (aa:pt (+ lx 180.0) (- ly (+ lh 80.0))) label
+                                   aa:*lay-opening* lh lrot))))
+            (progn
+              (setq ly (* (float side) (+ half 250.0)))
+              (if (> (abs lrot) 1.0)
+                  (aa:mktext-r (aa:pt (+ pos (/ lw 2.0)) (- ly (* (float side) lh)))
+                               label aa:*lay-opening* lh lrot)
+                  (aa:mktext-r (aa:pt (- pos (/ lw 2.0)) ly)
+                               label aa:*lay-opening* lh lrot))))))
+)
+
+
 ;; (aa:opening pos width thick kind frame label lrot side leader
 ;;             hinge swing doorpart leaves)
 ;;   pos      = 洞口中心到墙起点的距离
@@ -109,39 +151,7 @@
      (aa:door-leaf (if (= hinge 1) x1 x2) (* (float swing) half)
                    width hinge swing aa:*lay-opening*)))
 
-  ;; 门窗编号：默认写在洞口靠室内一侧墙面外 250，沿墙方向居中，字高 180
-  ;; （side = -1 / +1 决定落在本地 -Y / +Y 侧，室内外由驱动层换算）。
-  ;; 放在洞内会压住窗的四条线/门的门扇线，所以走墙外。
-  ;; 文字转了 180° 时，插入点要沿侧向反向偏一个字高，可见框才仍贴墙居中。
-  ;; leader=1：编号再外移 8mm，并从洞口右端墙中点拉一条 45° 引线到编号端部。
-  (if (= label "")
-      nil
-      (progn
-        (setq lw (* 0.62 aa:*label-h* (float (strlen label)))
-              lh aa:*label-h*)
-        (if (= leader 1)
-            (progn
-              (setq lx (+ x2 700.0)
-                    ly (* (float side) (+ half 700.0)))
-              (aa:mkline (aa:pt x2 (* (float side) half)) (aa:pt lx ly)
-                         aa:*lay-opening*)
-              (if (> (abs lrot) 1.0)
-                  (if (> side 0.0)
-                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (+ ly lh 80.0)) label
-                                   aa:*lay-opening* lh lrot)
-                      (aa:mktext-r (aa:pt (+ lx lw 180.0) (- ly 80.0)) label
-                                   aa:*lay-opening* lh lrot))
-                  (if (> side 0.0)
-                      (aa:mktext-r (aa:pt (+ lx 180.0) (+ ly 80.0)) label
-                                   aa:*lay-opening* lh lrot)
-                      (aa:mktext-r (aa:pt (+ lx 180.0) (- ly (+ lh 80.0))) label
-                                   aa:*lay-opening* lh lrot))))
-            (progn
-              (setq ly (* (float side) (+ half 250.0)))
-              (if (> (abs lrot) 1.0)
-                  (aa:mktext-r (aa:pt (+ pos (/ lw 2.0)) (- ly (* (float side) lh)))
-                               label aa:*lay-opening* lh lrot)
-                  (aa:mktext-r (aa:pt (- pos (/ lw 2.0)) ly)
-                               label aa:*lay-opening* lh lrot))))))
+  ;; 门窗编号：抽成 aa:opening-label，组合门窗与普通门窗共用
+  (aa:opening-label pos width half label lrot side leader)
 
   (strcat (rtos pos 2 4) "#" (rtos width 2 4)))

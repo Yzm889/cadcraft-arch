@@ -1440,7 +1440,8 @@ def rescale_annotations(session: Session, scale: float,
                            o["width"], o["pos"], o["height"], o["sill"],
                            o["frame"], o["no"], o["labelside"],
                            hinge=o.get("hinge", 1), swing=o.get("swing", 1),
-                           leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
+                           leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0),
+                           panels=o.get("panels"))
 
         rooms = room_data(session)
         # 房间重建：优先按"搜环得到的子段边界"重建。房间边界可能落在某堵墙的中段
@@ -1588,7 +1589,7 @@ def opening_no(kind: str, width: float, height: float) -> str:
 
     DOOR 900x2100 -> M0921；WINDOW 1200x1500 -> C1215；门连窗 -> MC0921。
     """
-    prefix = {"DOOR": "M", "WINDOW": "C", "DOORWIN": "MC"}.get(kind, "M")
+    prefix = {"DOOR": "M", "WINDOW": "C", "DOORWIN": "MC", "COMBO": "ZM"}.get(kind, "M")
     return "%s%02d%02d" % (prefix, int(round(width / 100.0)), int(round(height / 100.0)))
 
 
@@ -1628,6 +1629,105 @@ def _label_side_sign(session: Session, wall: dict[str, Any], pos: float,
 # 平开门宽度到这个值就按双扇画（建筑惯例：>=1200 的门不做单扇）
 DOOR_DOUBLE_MIN = 1200.0
 
+# 组合门窗面板最小宽：再窄画不出图例，施工图上也立不住
+PANEL_MIN = 300.0
+_PANEL_KIND = {"D": "DOOR", "W": "WINDOW", "DOOR": "DOOR", "WINDOW": "WINDOW"}
+
+
+def _parse_panels(panels) -> list[tuple[str, float]]:
+    """组合门窗面板序列规整，CLI / MCP / Python 三种入口共用。
+
+    支持三种输入：
+      - 紧凑串 "D900;W1500;D900"
+      - 序列 [("DOOR", 900), ("WINDOW", 1500)] 或 ["D900", ...]
+      - 字典序列 [{"kind": "DOOR", "width": 900}, ...]
+    返回 [("DOOR", 900.0), ...]；不合法直接 CadError。
+    """
+    if panels is None:
+        return []
+    if isinstance(panels, str):
+        raw = [(p.strip()[0].upper(), p.strip()[1:])
+               for p in panels.split(";") if len(p.strip()) >= 2]
+    elif isinstance(panels, (list, tuple)):
+        raw = []
+        for p in panels:
+            if isinstance(p, dict):
+                raw.append((str(p.get("kind", "")), p.get("width", 0)))
+            elif isinstance(p, (list, tuple)) and len(p) == 2:
+                raw.append((str(p[0]), p[1]))
+            elif isinstance(p, str) and len(p.strip()) >= 2:
+                raw.append((p.strip()[0].upper(), p.strip()[1:]))
+            else:
+                raise CadError("组合门窗面板格式不认识：%r" % (p,))
+    else:
+        raise CadError("组合门窗 panels 只能是串 / 序列（收到 %r）" % (panels,))
+    out: list[tuple[str, float]] = []
+    for k, w in raw:
+        pk = _PANEL_KIND.get(str(k).strip().upper())
+        if pk is None:
+            raise CadError("面板类型只能是 DOOR / WINDOW（收到 %r）" % (k,))
+        try:
+            pw = float(w)
+        except (TypeError, ValueError):
+            raise CadError("面板宽度必须是数字（收到 %r）" % (w,))
+        if pw < PANEL_MIN:
+            raise CadError("面板宽 %.1f 小于最小 %s" % (pw, PANEL_MIN))
+        out.append((pk, pw))
+    return out
+
+
+def _combo_lisp(pos: float, width: float, thick: float,
+                panels: Sequence[tuple[str, float]], frame: float, no: str,
+                label_rot: float, side: float, leader: int, hinge: int,
+                swing: int, leaves: int, label_h_model: float) -> str:
+    """拼组合门窗的 LISP。
+
+    面板循环在 Python 侧做：逐面板调 aa:win4 / aa:door-leaf，面板间画中梃竖线，
+    两端画洞口边线，编号共用 aa:opening-label——不把面板列表传进 LISP
+    （解释器子集传列表不可靠），一个 progn 画完整樘，返回值保持 pos#width 口径。
+    """
+    half = thick / 2.0
+    inner = half - (frame if frame < half - 10.0 else half - 10.0)   # 同 aa:win-frame
+    x1, x2 = pos - width / 2.0, pos + width / 2.0
+    body = [
+        "(progn (setq aa:*label-h* %.4f)" % label_h_model,
+        " (aa:begin)",
+        " (aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) aa:*lay-opening*)"
+        % (x1, -half, x1, half),
+        " (aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) aa:*lay-opening*)"
+        % (x2, -half, x2, half),
+    ]
+    x = x1
+    bounds: list[float] = []
+    for pkind, pw in panels:
+        xe = x + pw
+        if pkind == "WINDOW":
+            body.append(" (aa:win4 %.4f %.4f %.4f %.4f aa:*lay-opening*)"
+                        % (x, xe, half, inner))
+        else:
+            lv = leaves or (2 if pw >= DOOR_DOUBLE_MIN else 1)
+            face = swing * half
+            if lv == 2:
+                hx1, hx2 = (x, xe) if hinge == 1 else (xe, x)
+                j1, j2 = (1, -1) if hinge == 1 else (-1, 1)
+                body.append(" (aa:door-leaf %.4f %.4f %.4f %d %d aa:*lay-opening*)"
+                            % (hx1, face, pw / 2.0, j1, swing))
+                body.append(" (aa:door-leaf %.4f %.4f %.4f %d %d aa:*lay-opening*)"
+                            % (hx2, face, pw / 2.0, j2, swing))
+            else:
+                hx = x if hinge == 1 else xe
+                body.append(" (aa:door-leaf %.4f %.4f %.4f %d %d aa:*lay-opening*)"
+                            % (hx, face, pw, 1 if hinge == 1 else -1, swing))
+        bounds.append(xe)
+        x = xe
+    for bx in bounds[:-1]:
+        body.append(" (aa:mkline (aa:pt %.4f %.4f) (aa:pt %.4f %.4f) aa:*lay-opening*)"
+                    % (bx, -half, bx, half))
+    body.append(' (aa:opening-label %.4f %.4f %.4f "%s" %s %s %d)'
+                % (pos, width, half, str(no).replace('"', "'"), label_rot, side, leader))
+    body.append(' (strcat (rtos %.4f 2 4) "#" (rtos %.4f 2 4))' % (pos, width))
+    return " ".join(body) + ")"
+
 
 def create_opening(
     session: Session,
@@ -1647,6 +1747,7 @@ def create_opening(
     swing: int = 1,
     leaves: int = 0,
     doorpart: float = 0.0,
+    panels=None,
 ) -> dict[str, Any]:
     """门窗：校验 -> LISP 生成符号 -> block -> insert（贴墙）-> 回读校验。
 
@@ -1687,6 +1788,19 @@ def create_opening(
     if doorpart > width:
         raise CadError("拒绝写入：门连窗门扇宽 %.1f 超过洞口宽 %.1f"
                        % (doorpart, width))
+    kind = str(kind).upper()
+    if kind not in ("DOOR", "WINDOW", "DOORWIN", "COMBO"):
+        raise CadError("拒绝写入：门窗类型只能是 DOOR / WINDOW / DOORWIN / COMBO（收到 %s）" % kind)
+    panel_list = _parse_panels(panels)
+    if kind == "COMBO":
+        if not panel_list:
+            raise CadError("拒绝写入：组合门窗必须给 panels（如 D900;W1500;D900）")
+        psum = sum(w for _k, w in panel_list)
+        if abs(psum - float(width)) > 0.01:
+            raise CadError("拒绝写入：面板宽合计 %.1f 与洞口宽 %.1f 不符"
+                           % (psum, float(width)))
+    elif panel_list:
+        raise CadError("拒绝写入：panels 只配合 kind=COMBO 使用")
     lo, hi = pos - width / 2.0, pos + width / 2.0
     if lo < -tol or hi > wlen + tol:
         raise CadError(
@@ -1702,11 +1816,14 @@ def create_opening(
             )
 
     if height is None:
-        height = {"DOOR": 2100.0, "WINDOW": 1500.0, "DOORWIN": 2100.0}.get(kind, 2100.0)
+        height = {"DOOR": 2100.0, "WINDOW": 1500.0, "DOORWIN": 2100.0,
+                  "COMBO": 2100.0}.get(kind, 2100.0)
     no = no or opening_no(kind, width, height)
     # 扇数只对平开门有意义：窗与门连窗固定单扇，平开门 >=1200 自动改双扇
     if kind == "DOOR":
         leaves = int(leaves) or (2 if float(width) >= DOOR_DOUBLE_MIN else 1)
+    elif kind == "COMBO":
+        pass    # 扇数留给各门面板按面板宽自动（0），或显式 1 / 2 统一
     else:
         leaves = 1
     if doorpart <= 0.0:
@@ -1740,70 +1857,85 @@ def create_opening(
 
     before = session.snapshot()
     sc = drawing_scale(session)
-    value = session.lisp(
-        '(progn (setq aa:*label-h* %.4f)'
-        ' (aa:opening %s %s %s "%s" %s "%s" %s %s %d %d %d %s %d))'
-        % (annot_size(float(label_h), sc), pos, width, thick, kind, frame, no, label_rot, side,
-           leader_flag, hinge, swing, doorpart, leaves),
-        libraries=("aa_core.lisp", "aa_opening.lisp"),
-    )
+    if kind == "COMBO":
+        value = session.lisp(
+            _combo_lisp(pos, width, thick, panel_list, frame, no, label_rot, side,
+                        leader_flag, hinge, swing, int(leaves),
+                        annot_size(float(label_h), sc)),
+            libraries=("aa_core.lisp", "aa_opening.lisp"),
+        )
+    else:
+        value = session.lisp(
+            '(progn (setq aa:*label-h* %.4f)'
+            ' (aa:opening %s %s %s "%s" %s "%s" %s %s %d %d %d %s %d))'
+            % (annot_size(float(label_h), sc), pos, width, thick, kind, frame, no, label_rot, side,
+               leader_flag, hinge, swing, doorpart, leaves),
+            libraries=("aa_core.lisp", "aa_opening.lisp"),
+        )
     handles = session.new_handles(before)
     got_pos, got_width = value.split("#")
     if abs(float(got_pos) - pos) > 1e-4 or abs(float(got_width) - width) > 1e-4:
         raise CadError("LISP 参数回显不一致：pos=%s width=%s" % (got_pos, got_width))
 
-    att_handles = session.define_attributes(
-        [
-            ("AA_TYPE", "component type", "OPENING"),
-            ("AA_ID", "component id", opening_id),
-            ("AA_KIND", "opening kind", kind),
-            ("AA_WIDTH", "opening width", "%.4f" % float(width)),
-            ("AA_HEIGHT", "opening height", "%.4f" % float(height)),
-            ("AA_SILL", "sill height", "%.4f" % float(sill)),
-            ("AA_WALLID", "host wall id", wall_id),
-            ("AA_POS", "offset from wall start", "%.4f" % float(pos)),
-            ("AA_FRAME", "window frame thickness", "%.4f" % float(frame)),
-            ("AA_NO", "opening mark", no),
-            ("AA_LABELSIDE", "label side", label_side),
-            ("AA_LABEL_H", "label text height", "%.4f" % (float(label_h) * sc)),
-            ("AA_HINGE", "hinge side", str(hinge)),
-            ("AA_SWING", "swing direction (0=auto)", str(swing_req)),
-            ("AA_LEAVES", "leaf count", str(leaves)),
-            ("AA_DOORPART", "doorwin door width", "%.4f" % doorpart),
-        ]
-    )
+    panels_str = ";".join(("D" if k == "DOOR" else "W") + ("%g" % w)
+                          for k, w in panel_list)
+    att_defs = [
+        ("AA_TYPE", "component type", "OPENING"),
+        ("AA_ID", "component id", opening_id),
+        ("AA_KIND", "opening kind", kind),
+        ("AA_WIDTH", "opening width", "%.4f" % float(width)),
+        ("AA_HEIGHT", "opening height", "%.4f" % float(height)),
+        ("AA_SILL", "sill height", "%.4f" % float(sill)),
+        ("AA_WALLID", "host wall id", wall_id),
+        ("AA_POS", "offset from wall start", "%.4f" % float(pos)),
+        ("AA_FRAME", "window frame thickness", "%.4f" % float(frame)),
+        ("AA_NO", "opening mark", no),
+        ("AA_LABELSIDE", "label side", label_side),
+        ("AA_LABEL_H", "label text height", "%.4f" % (float(label_h) * sc)),
+        ("AA_HINGE", "hinge side", str(hinge)),
+        ("AA_SWING", "swing direction (0=auto)", str(swing_req)),
+        ("AA_LEAVES", "leaf count", str(leaves)),
+        ("AA_DOORPART", "doorwin door width", "%.4f" % doorpart),
+    ]
+    att_vals = {
+        "AA_TYPE": "OPENING",
+        "AA_ID": opening_id,
+        "AA_KIND": kind,
+        "AA_WIDTH": "%.4f" % float(width),
+        "AA_HEIGHT": "%.4f" % float(height),
+        "AA_SILL": "%.4f" % float(sill),
+        "AA_WALLID": wall_id,
+        "AA_POS": "%.4f" % float(pos),
+        "AA_FRAME": "%.4f" % float(frame),
+        "AA_NO": no,
+        "AA_LABELSIDE": label_side,
+        "AA_LABEL_H": "%.4f" % (float(label_h) * sc),
+        "AA_HINGE": str(hinge),
+        "AA_SWING": str(swing_req),
+        "AA_LEAVES": str(leaves),
+        "AA_DOORPART": "%.4f" % doorpart,
+    }
+    expect = {
+        "AA_ID": opening_id,
+        "AA_TYPE": "OPENING",
+        "AA_KIND": kind,
+        "AA_WIDTH": "%.4f" % float(width),
+        "AA_WALLID": wall_id,
+        "AA_POS": "%.4f" % float(pos),
+        "AA_NO": no,
+        "AA_LABELSIDE": label_side,
+    }
+    if kind == "COMBO":
+        att_defs.append(("AA_PANELS", "combo panels", panels_str))
+        att_vals["AA_PANELS"] = panels_str
+        expect["AA_PANELS"] = panels_str
 
-    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, wall["at"], {
-            "AA_TYPE": "OPENING",
-            "AA_ID": opening_id,
-            "AA_KIND": kind,
-            "AA_WIDTH": "%.4f" % float(width),
-            "AA_HEIGHT": "%.4f" % float(height),
-            "AA_SILL": "%.4f" % float(sill),
-            "AA_WALLID": wall_id,
-            "AA_POS": "%.4f" % float(pos),
-            "AA_FRAME": "%.4f" % float(frame),
-            "AA_NO": no,
-            "AA_LABELSIDE": label_side,
-            "AA_LABEL_H": "%.4f" % (float(label_h) * sc),
-            "AA_HINGE": str(hinge),
-            "AA_SWING": str(swing_req),
-            "AA_LEAVES": str(leaves),
-            "AA_DOORPART": "%.4f" % doorpart,
-        }, rotation=math.degrees(wall["rotation_rad"]), layer=LAYERS["opening"])
-    session.expect_attributes(
-        block,
-        {
-            "AA_ID": opening_id,
-            "AA_TYPE": "OPENING",
-            "AA_KIND": kind,
-            "AA_WIDTH": "%.4f" % float(width),
-            "AA_WALLID": wall_id,
-            "AA_POS": "%.4f" % float(pos),
-            "AA_NO": no,
-            "AA_LABELSIDE": label_side,
-        },
-    )
+    att_handles = session.define_attributes(att_defs)
+    handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, wall["at"],
+                                  att_vals,
+                                  rotation=math.degrees(wall["rotation_rad"]),
+                                  layer=LAYERS["opening"])
+    session.expect_attributes(block, expect)
     # 洞口符号落地后，重生成所属墙块，让墙身两侧线在洞口处断开
     rebuild_wall_with_openings(session, wall_id)
 
@@ -1820,6 +1952,7 @@ def create_opening(
         "swing": swing,
         "leaves": leaves,
         "doorpart": doorpart,
+        "panels": panel_list,
         "geom_handles": handles,
     }
 
@@ -4456,6 +4589,10 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "swing": int(float(attrs.get("AA_SWING", "1") or 1)),
                 "leaves": int(float(attrs.get("AA_LEAVES", "1") or 1)),
                 "doorpart": float(attrs.get("AA_DOORPART", "0") or 0),
+                "panels": [
+                    (_PANEL_KIND.get(p[:1].upper(), "DOOR"), float(p[1:]))
+                    for p in (attrs.get("AA_PANELS", "") or "").split(";") if len(p) >= 2
+                ],
                 "floor": wall_floor.get(attrs.get("AA_WALLID", ""), 1),
             }
         )
@@ -4549,7 +4686,7 @@ def read_cut_openings(
             half = float(o["width"]) / 2.0
             if abs(along - float(o["pos"])) > half + tol:
                 continue                       # 切在墙身上、没切进洞口
-            kd = "WINDOW" if str(o["kind"]).upper() in ("WINDOW", "DOORWIN") else "DOOR"
+            kd = "WINDOW" if str(o["kind"]).upper() in ("WINDOW", "DOORWIN", "COMBO") else "DOOR"
             out.append({"floor": int(floor), "h": float(o["height"]),
                         "sill": float(o["sill"]), "kind": kd, "side": side,
                         "no": o["no"], "wall": wid})
@@ -5535,6 +5672,7 @@ def _apply_layout(session, walls, final, sides_by_id, openings_plan):
                 no=o.get("no", ""), label_side=o.get("labelside", "in"),
                 hinge=o.get("hinge", 1), swing=o.get("swing", 1),
                 leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0),
+                panels=o.get("panels"),
             )
             moved.append({"id": o["id"], "from": o["wallid"], "to": o["host"],
                           "pos": round(o["new_pos"], 4)})
@@ -8384,7 +8522,8 @@ def reconcile(session: Session, fix: bool = False, tol: float = 1.0) -> dict[str
                                height=o["height"], sill=o["sill"], frame=o["frame"],
                                no=o["no"], label_side=o["labelside"],
                                hinge=o.get("hinge", 1), swing=o.get("swing", 1),
-                               leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
+                               leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0),
+                               panels=o.get("panels"))
                 fixed.append({"action": kind, "opening": o["id"],
                               "from": a["from"], "wall": a["to"], "pos": a["pos"]})
             elif kind == "move_opening":
@@ -8510,7 +8649,8 @@ def copy_floor(session: Session, src_floor: int, dst_floor: int,
                        height=o["height"], sill=o["sill"], frame=o["frame"],
                        no=o["no"], label_side=o["labelside"],
                        hinge=o.get("hinge", 1), swing=o.get("swing", 1),
-                       leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0))
+                       leaves=o.get("leaves", 0), doorpart=o.get("doorpart", 0.0),
+                       panels=o.get("panels"))
         made_ops.append(nid)
 
     src_rooms = [r for r in room_data(session)
@@ -8868,7 +9008,7 @@ def set_opening(session: Session, opening_id: str, pos: float | None = None,
                        height=new_height, sill=new_sill, frame=new_frame, no=new_no,
                        label_side=new_side, label_h=new_label_h,
                        hinge=new_hinge, swing=new_swing, leaves=new_leaves,
-                       doorpart=new_doorpart)
+                       doorpart=new_doorpart, panels=o.get("panels"))
     except Exception as exc:
         try:
             _restore_drawing_bytes(session, backup)
@@ -9286,7 +9426,7 @@ def openings_report(session: Session, csv_path: str | Path | None = None,
                     table_at: tuple[float, float] | None = None,
                     title: str = "门窗表") -> dict[str, Any]:
     """门窗表：同编号同尺寸合并计数，列出洞口宽高与所在墙，可导出 CSV / 图上表格。"""
-    kinds = {"DOOR": "门", "WINDOW": "窗", "DOORWIN": "门连窗"}
+    kinds = {"DOOR": "门", "WINDOW": "窗", "DOORWIN": "门连窗", "COMBO": "组合门窗"}
     groups: dict[str, dict[str, Any]] = {}
     for o in sorted(opening_data(session), key=lambda x: (x["no"], x["id"])):
         no = o["no"] or opening_no(o["kind"], o["width"], o["height"])

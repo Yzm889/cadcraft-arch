@@ -105,7 +105,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.62"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.63"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -362,14 +362,14 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "aa_opening",
-        "description": "在墙上开门/窗：洞口区间在墙身真实开洞（墙面线断开只留垛线），门窗符号独立成块。",
+        "description": "在墙上开门/窗：洞口区间在墙身真实开洞（墙面线断开只留垛线），门窗符号独立成块。kind=COMBO 组合门窗：panels 给面板序列（如 [{kind:DOOR,width:900},...] 或 \"D900;W1500;D900\"），面板合计须等于洞口宽，面板间自动画中梃；纯窗面板序列即带形窗。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "图纸绝对路径"},
                 "id": {"type": "string", "description": "门窗编号，如 D001 / C001"},
                 "wall": {"type": "string", "description": "所属墙编号"},
-                "kind": {"type": "string", "enum": ["DOOR", "WINDOW", "DOORWIN"], "default": "DOOR"},
+                "kind": {"type": "string", "enum": ["DOOR", "WINDOW", "DOORWIN", "COMBO"], "default": "DOOR"},
                 "width": {"type": "number", "description": "洞口宽度 mm"},
                 "pos": {"type": "number", "description": "洞口中心到墙起点的距离 mm"},
                 "height": {"type": "number", "description": "洞口高度 mm（可选）"},
@@ -393,6 +393,8 @@ TOOLS: list[dict[str, Any]] = [
                            "default": 0},
                 "doorpart": {"type": "number",
                              "description": "门连窗里门扇宽度 mm（0=取洞口一半）", "default": 0},
+                "panels": {"type": "array",
+                           "description": "组合门窗面板序列（仅 kind=COMBO）：[{kind: DOOR/WINDOW, width: mm}, ...] 或 [\"D900\", ...]，合计须等于洞口宽"},
             },
             "required": ["path", "id", "wall", "width", "pos"],
         },
@@ -1919,7 +1921,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             a.get("label_side", "in") or "in",
             label_h=_num(a.get("label_h", 1.8), "label_h"),
             hinge=int(a.get("hinge", 1)), swing=int(a.get("swing", 1)),
-            leaves=int(a.get("leaves", 0)), doorpart=float(a.get("doorpart", 0) or 0))}
+            leaves=int(a.get("leaves", 0)), doorpart=float(a.get("doorpart", 0) or 0),
+            panels=a.get("panels"))}
 
     if name == "aa_openings":
         at = a.get("table_at")

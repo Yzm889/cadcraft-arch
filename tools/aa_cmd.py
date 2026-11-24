@@ -552,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     p_op.add_argument("path")
     p_op.add_argument("id")
     p_op.add_argument("--wall", required=True, help="所属墙编号")
-    p_op.add_argument("--kind", default="DOOR", choices=["DOOR", "WINDOW", "DOORWIN"])
+    p_op.add_argument("--kind", default="DOOR", choices=["DOOR", "WINDOW", "DOORWIN", "COMBO"])
     p_op.add_argument("--width", type=float, required=True)
     p_op.add_argument("--pos", type=float, required=True, help="洞口中心到墙起点的距离")
     p_op.add_argument("--height", type=float, default=None)
@@ -571,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="平开门扇数：0=按宽度自动（>=1200 双扇，默认）/ 1 单扇 / 2 双扇")
     p_op.add_argument("--doorpart", type=float, default=0.0,
                       help="门连窗里门扇宽度 mm（0=取洞口一半）")
+    p_op.add_argument("--panels", default="",
+                      help="组合门窗面板序列，如 D900;W1500;D900（仅 kind=COMBO，合计须等于洞口宽）")
 
     p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
     p_room.add_argument("path")
@@ -1176,7 +1178,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.width, args.pos, args.height, args.sill,
                 args.frame, args.no, args.label_side, label_h=args.label_h,
                 hinge=args.hinge, swing=args.swing, leaves=args.leaves,
-                doorpart=args.doorpart)})
+                doorpart=args.doorpart, panels=args.panels or None)})
         elif args.cmd == "room":
             if args.auto:
                 emit({"ok": True, **auto_rooms(
