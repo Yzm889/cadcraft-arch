@@ -3,7 +3,7 @@
 > 交接日期：2026-11-24（晚间按 v1.0.63 状态全面修订；2026-11-25 增补自动合角句柄补丁；首版为同日早间的 v1.0.60 交接）
 > 项目：`cadcraft-arch`（MIT）—— 面向 CADCraft 的自研建筑智能绘图插件
 > 当前分支：`main`；远端：`git@github.com:Yzm889/cadcraft-arch.git`
-> 当前状态：本地 `f52f3b4`，领先 `origin/main` 1 笔（origin 至 `bfaa3d0`）；tags `v1.0.62`、`v1.0.63` 已推送；工作区干净；61 个测试文件，v1.0.63 基线 61/61
+> 当前状态：本次推送后 `main` 与 `origin/main` 一致；tags `v1.0.62`、`v1.0.63` 已推送；工作区干净；61 个测试文件，本轮 61/61 全过
 > 适用对象：接手开发的新同事 / 新 AI 代理 / 换 CAD 平台后的迁移负责人
 
 ---
@@ -60,7 +60,7 @@
 - `tests/test_wall_auto_corner.py` 增加断言：当前墙返回的 `geom_handles` 必须等于重建后块内句柄。
 - README 的测试数从 56 修正为 **61**（实际 `tests/test_*.py` 数量）。
 - 验证：`test_wall_auto_corner`、`test_corner`、`test_axis_auto`、`test_elevator`、`test_wall`、`test_opening`、`test_dim`、`test_audit`、`test_quality_audit`、`test_mcp`、`test_balcony`、`test_ramp`、`test_floor_clone` 均通过；集成样板回读 `audit.count=0 / errors=0 / warning_count=0 / corner_gap=0`。
-- **未在本机重跑 61 文件全量**：2026-11-25 本机提交内存耗尽（`FreeVirtualMemory` 约 41 MB，`cadcraft-cli` 报 `memory allocation failed`），不是代码失败。换机/重启后先按 §8.2 跑全量 61，再 push。
+- **全量回归 61/61 PASS**：2026-11-25 重启后，先跑完 31 个；剩余 30 个按“不同 `test_*.dxf`”分 10 组、每组 3 项并行，30/30 PASS；合计 61/61。并行只用于不同样例文件的测试，不重复跑同一全量批次。
 
 ---
 
