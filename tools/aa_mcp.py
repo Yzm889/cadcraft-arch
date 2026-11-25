@@ -79,6 +79,7 @@ from aa_lib import (  # noqa: E402
     read_sheet_index,
     read_sheet_set,
     create_opening,
+    create_corner_window,
     create_room,
     create_wall,
     create_sheet,
@@ -105,7 +106,7 @@ from aa_lib import (  # noqa: E402
     wall_data,
 )
 
-SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.63"}
+SERVER_INFO = {"name": "cadcraft-arch", "version": "1.0.64"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -397,6 +398,32 @@ TOOLS: list[dict[str, Any]] = [
                            "description": "组合门窗面板序列（仅 kind=COMBO）：[{kind: DOOR/WINDOW, width: mm}, ...] 或 [\"D900\", ...]，合计须等于洞口宽"},
             },
             "required": ["path", "id", "wall", "width", "pos"],
+        },
+    },
+    {
+        "name": "aa_corner_opening",
+        "description": "转角窗：两堵互相垂直、共用端点外墙，从角点向两侧各开一樘纯窗，共享编号，并在角点落 4 线转角柱。只支持 WINDOW 面板；两侧窗长/柱宽/高度可分别给。任一侧失败整图回滚。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "图纸绝对路径"},
+                "id": {"type": "string", "description": "转角窗编号，如 CW01"},
+                "wall_a": {"type": "string", "description": "第一堵墙编号"},
+                "wall_b": {"type": "string", "description": "第二堵墙编号（须与 A 共用端点且垂直）"},
+                "len_a": {"type": "number", "description": "A 侧窗长 mm（从共用角点向墙内）"},
+                "len_b": {"type": "number", "description": "B 侧窗长 mm（从共用角点向墙内）"},
+                "height": {"type": "number", "description": "窗高 mm", "default": 1500},
+                "sill": {"type": "number", "description": "窗台高 mm", "default": 900},
+                "frame": {"type": "number", "description": "窗框厚 mm", "default": 60},
+                "post": {"type": "number", "description": "转角柱宽 mm", "default": 300},
+                "no": {"type": "string", "description": "共用门窗编号，缺省用 id", "default": ""},
+                "panels_a": {"type": "array", "description": "A 侧纯窗面板序列（可选），合计须等于 len_a"},
+                "panels_b": {"type": "array", "description": "B 侧纯窗面板序列（可选），合计须等于 len_b"},
+                "label_side": {"type": "string", "enum": ["in", "out", "auto", "leader"], "default": "in"},
+                "label_h": {"type": "number", "default": 2.5},
+                "floor": {"type": "integer", "default": 1},
+            },
+            "required": ["path", "id", "wall_a", "wall_b", "len_a", "len_b"],
         },
     },
     {
@@ -1923,6 +1950,20 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             hinge=int(a.get("hinge", 1)), swing=int(a.get("swing", 1)),
             leaves=int(a.get("leaves", 0)), doorpart=float(a.get("doorpart", 0) or 0),
             panels=a.get("panels"))}
+
+    if name == "aa_corner_opening":
+        return {"ok": True, **create_corner_window(
+            s, a["id"], a["wall_a"], a["wall_b"],
+            _num(a["len_a"], "len_a"), _num(a["len_b"], "len_b"),
+            height=_num(a.get("height", 1500), "height"),
+            sill=_num(a.get("sill", 900), "sill"),
+            frame=_num(a.get("frame", 60), "frame"),
+            post=_num(a.get("post", 300), "post"),
+            no=a.get("no", "") or "",
+            panels_a=a.get("panels_a"), panels_b=a.get("panels_b"),
+            label_side=a.get("label_side", "in") or "in",
+            label_h=_num(a.get("label_h", 2.5), "label_h"),
+            floor=int(a.get("floor", 1)))}
 
     if name == "aa_openings":
         at = a.get("table_at")

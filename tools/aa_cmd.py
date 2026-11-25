@@ -34,6 +34,7 @@ from aa_lib import (  # noqa: E402
     bind_walls_to_axis,
     auto_rooms,
     create_axis_grid,
+    create_corner_window,
     create_opening,
     create_room,
     create_wall,
@@ -573,6 +574,24 @@ def main(argv: list[str] | None = None) -> int:
                       help="门连窗里门扇宽度 mm（0=取洞口一半）")
     p_op.add_argument("--panels", default="",
                       help="组合门窗面板序列，如 D900;W1500;D900（仅 kind=COMBO，合计须等于洞口宽）")
+
+    p_corner = sub.add_parser("corner-opening", help="转角窗：两堵垂直外墙共用角点")
+    p_corner.add_argument("path")
+    p_corner.add_argument("id")
+    p_corner.add_argument("--wall-a", required=True, help="第一堵墙编号")
+    p_corner.add_argument("--wall-b", required=True, help="第二堵墙编号")
+    p_corner.add_argument("--len-a", type=float, required=True, help="A 侧窗长（从共用角点向墙内）")
+    p_corner.add_argument("--len-b", type=float, required=True, help="B 侧窗长（从共用角点向墙内）")
+    p_corner.add_argument("--height", type=float, default=1500.0)
+    p_corner.add_argument("--sill", type=float, default=900.0)
+    p_corner.add_argument("--frame", type=float, default=60.0)
+    p_corner.add_argument("--post", type=float, default=300.0, help="转角柱宽，默认 300")
+    p_corner.add_argument("--no", default="", help="共用门窗编号，缺省用 id")
+    p_corner.add_argument("--panels-a", default="", help="A 侧窗面板，如 W900;W900")
+    p_corner.add_argument("--panels-b", default="", help="B 侧窗面板，如 W750;W750")
+    p_corner.add_argument("--label-side", default="in", choices=["in", "out", "auto", "leader"])
+    p_corner.add_argument("--label-h", type=float, default=2.5)
+    p_corner.add_argument("--floor", type=int, default=1)
 
     p_room = sub.add_parser("room", help="闭合墙环生成房间；--auto 自动搜环")
     p_room.add_argument("path")
@@ -1179,6 +1198,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.frame, args.no, args.label_side, label_h=args.label_h,
                 hinge=args.hinge, swing=args.swing, leaves=args.leaves,
                 doorpart=args.doorpart, panels=args.panels or None)})
+        elif args.cmd == "corner-opening":
+            emit({"ok": True, **create_corner_window(
+                session, args.id, args.wall_a, args.wall_b,
+                args.len_a, args.len_b, height=args.height, sill=args.sill,
+                frame=args.frame, post=args.post, no=args.no,
+                panels_a=args.panels_a or None, panels_b=args.panels_b or None,
+                label_side=args.label_side, label_h=args.label_h,
+                floor=args.floor)})
         elif args.cmd == "room":
             if args.auto:
                 emit({"ok": True, **auto_rooms(

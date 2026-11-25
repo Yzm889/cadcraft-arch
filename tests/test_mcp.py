@@ -46,7 +46,7 @@ def main() -> int:
     # 2) 工具表完整、每项都有 inputSchema 与 description
     tools = rpc("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 62, names
+    assert len(names) == 63, names
     for n in ("aa_new", "aa_axis", "aa_wall", "aa_opening", "aa_room", "aa_site",
               "aa_roof_detail", "aa_place",
               "aa_room_auto", "aa_split", "aa_merge", "aa_set_wall",
@@ -252,7 +252,7 @@ def main() -> int:
         r1, r2 = json.loads(lines[0]), json.loads(lines[1])
         assert r1["id"] == 1 and r1["result"]["serverInfo"]["name"] == "cadcraft-arch", r1
         assert r1["result"]["serverInfo"]["version"] == aa_mcp.SERVER_INFO["version"], r1
-        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 62, r2
+        assert r2["id"] == 2 and len(r2["result"]["tools"]) == 63, r2
         assert all(lines), lines             # 通知不产生响应，两行正好是 id=1 / id=2
     finally:
         proc.stdin.close()

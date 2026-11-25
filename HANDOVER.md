@@ -1,9 +1,9 @@
 # cadcraft-arch 交接文档
 
-> 交接日期：2026-11-24（晚间按 v1.0.63 状态全面修订；2026-11-25 增补自动合角句柄补丁；首版为同日早间的 v1.0.60 交接）
+> 交接日期：2026-11-25（按 v1.0.64 状态修订；2026-11-25 增补自动合角句柄补丁与 M-OPEN 转角窗；首版为同日早间的 v1.0.60 交接）
 > 项目：`cadcraft-arch`（MIT）—— 面向 CADCraft 的自研建筑智能绘图插件
 > 当前分支：`main`；远端：`git@github.com:Yzm889/cadcraft-arch.git`
-> 当前状态：本次推送后 `main` 与 `origin/main` 一致；tags `v1.0.62`、`v1.0.63` 已推送；工作区干净；61 个测试文件，本轮 61/61 全过
+> 当前状态：v1.0.64 本地已提交 `55d2c45`；tags `v1.0.62`、`v1.0.63` 已推送，`v1.0.64` 待推送；工作区除本轮改动外已还原测试样例；62 个测试文件；新增转角窗与相邻 combo/mcp 用例已过，全量回归受本机内存限制未跑完（见 §1.4）。
 > 适用对象：接手开发的新同事 / 新 AI 代理 / 换 CAD 平台后的迁移负责人
 
 ---
@@ -20,15 +20,15 @@
 
 | 项 | 值 |
 |---|---|
-| README 版本 | **v1.0.63**（M-OPEN 组合门窗/带形窗 + rescale 房间重建修复 + M-DIM 尺寸标注补齐 + M-VERT） |
-| MCP `SERVER_INFO` 版本 | **1.0.63**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 双闸，漂移直接红） |
-| 测试文件 | **61 个**（`tests/test_*.py`），全量约 12 分钟 |
-| MCP 工具 | **62 个** = 59 原子 + 3 事务编排（batch/checkpoint/restore） |
+| README 版本 | **v1.0.64**（M-OPEN 转角窗 + 组合门窗/带形窗 + rescale 房间重建修复 + M-DIM + M-VERT） |
+| MCP `SERVER_INFO` 版本 | **1.0.64**（与 README 一致；`tests/test_mcp.py` 与 `tools/check_version.py` 双闸，漂移直接红） |
+| 测试文件 | **62 个**（`tests/test_*.py`），全量约 12 分钟 |
+| MCP 工具 | **63 个** = 60 原子 + 3 事务编排（batch/checkpoint/restore） |
 | 标准图层 | **22 个**（含电梯层 `AA-ELEVATOR`） |
 | CADCraft | 0.20.1（`cadcraft-cli`） |
 | Python | 3.11.9，仅标准库（无第三方依赖；Pillow 可选） |
-| tags | `v1.0.62`、`v1.0.63`（已推送；此前仓库无 tag） |
-| 最近提交 | `f52f3b4` fix: refresh wall geom handles after auto corner；上一笔功能提交 `6566560` feat: M-OPEN 组合门窗/带形窗 |
+| tags | `v1.0.62`、`v1.0.63`（已推送）；`v1.0.64` 待推送 |
+| 最近提交 | `55d2c45` feat: M-OPEN corner window (v1.0.64)；上一笔文档 `ed0ac3e` |
 | 交付图 | `deliverables/幼儿园教学楼/00–05`（受保护，`git status -- deliverables` 为空） |
 
 ### 1.1 已完成的大块
@@ -37,7 +37,7 @@
 - M-VERT：电梯、坡道、平面阳台（v1.0.60）
 - M-DIM 尺寸标注补齐：门窗定位链 / 墙厚 / 墙角坐标（v1.0.61）
 - rescale 房间重建修复：带 T 接内墙的图改比例不再失败（v1.0.62）
-- M-OPEN 组合门窗 / 带形窗（v1.0.63；转角窗未做）
+- M-OPEN 组合门窗 / 带形窗（v1.0.63）；转角窗（v1.0.64）
 - 集成样板：电梯+坡道+阳台+门窗+房间+尺寸+图框+PNG 同图协同
 
 ### 1.2 本轮变更记录（2026-11-24，四笔提交）
@@ -58,9 +58,18 @@
 - `create_wall(normalize=True)` 自动合角会重建当前墙块，旧图元句柄失效；现在重建后用 `block_geometry` 重新解析并回填 `geom_handles`。
 - `block_geometry` 的每个图元多返回 `handle` 字段；不改变原有几何字段，兼容旧调用。
 - `tests/test_wall_auto_corner.py` 增加断言：当前墙返回的 `geom_handles` 必须等于重建后块内句柄。
-- README 的测试数从 56 修正为 **61**（实际 `tests/test_*.py` 数量）。
+- README 的测试数从 56 修正为 **61**（当时实际 `tests/test_*.py` 数量；v1.0.64 已变为 62）。
 - 验证：`test_wall_auto_corner`、`test_corner`、`test_axis_auto`、`test_elevator`、`test_wall`、`test_opening`、`test_dim`、`test_audit`、`test_quality_audit`、`test_mcp`、`test_balcony`、`test_ramp`、`test_floor_clone` 均通过；集成样板回读 `audit.count=0 / errors=0 / warning_count=0 / corner_gap=0`。
 - **全量回归 61/61 PASS**：2026-11-25 重启后，先跑完 31 个；剩余 30 个按“不同 `test_*.dxf`”分 10 组、每组 3 项并行，30/30 PASS；合计 61/61。并行只用于不同样例文件的测试，不重复跑同一全量批次。
+
+### 1.4 2026-11-25 增补（M-OPEN 转角窗，v1.0.64）
+
+- 新增库函数 `create_corner_window`：两堵垂直外墙共用端点，两侧各一樘纯窗 COMBO 洞口，共享编号，写 `AA_CORNER`；角点落 `AA_CORNER_<id>` 四线转角柱。
+- CLI `corner-opening`、MCP `aa_corner_opening` 同参入口；任一侧失败整图字节回滚。
+- 新增 `tests/test_open_corner.py`（正常/七类拒绝/回滚/CLI/MCP）；新增 `docs/spec-M-OPEN-转角窗.md`。
+- 已知边界：门窗表按两侧边窗分别计数、立面/剖面未做整体展开、转角柱未做 L 形包角。详见 spec §5。
+- 回归：`test_open_corner`、`test_open_combo`、`test_mcp` 通过；全量 `tests/run_all.py` 在 `test_dim_locate` 处因本机 `cadcraft-cli` 内存分配失败中断（`3221226505`），不是断言失败；`test_dim_locate` 单独重跑仍在 `create_opening` 处同因中断。待内存恢复后按 2–3 项一组分批补跑 62 个。
+
 
 ---
 
@@ -147,7 +156,7 @@ cadcraft-arch/
 │  ├─ aa_elevator.lisp   # 电梯 10 LINE
 │  ├─ aa_ramp.lisp       # 坡道 6/8 LINE + 箭头 + 注字
 │  └─ aa_balcony.lisp    # 阳台 6 LINE
-├─ tests/                # 61 个逐文件验收（先测试后实现的产物）
+├─ tests/                # 62 个逐文件验收（先测试后实现的产物）
 ├─ docs/
 │  ├─ spec-M-VERT-电梯坡道阳台.md   # M-VERT 规格（§13 C1 定稿）
 │  ├─ T30-M-VERT-1-电梯实测记录.md  # T30 行为证据
@@ -273,7 +282,7 @@ python tools/build_integration.py
 
 ### 8.1 测试规模
 
-61 个文件，覆盖：轴网/墙/门窗/组合门窗（M-OPEN）/房间/标注/尺寸标注补齐（M-DIM）/rescale 房间重建/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
+62 个文件，覆盖：轴网/墙/门窗/组合门窗/转角窗（M-OPEN）/房间/标注/尺寸标注补齐（M-DIM）/rescale 房间重建/楼梯/电梯/坡道/阳台/屋顶/总平面/详图/图框/质量门禁/MCP/事务回滚。
 
 ### 8.2 推荐跑法
 
@@ -352,9 +361,20 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 
 - 面板三种写法：紧凑串 / `[("DOOR",900),...]` / `[{"kind":"DOOR","width":900},...]`；合计必须等于洞口宽，每面板最小 300（`PANEL_MIN`）。
 - 门面板铰点/开向沿用全局 `hinge/swing`，扇数按面板宽自动（≥1200 双扇）；编号按尺寸自动生成，前缀 **ZM**。
-- **纯窗面板序列就是带形窗**（面板即分格、中梃即窗棂）；**转角窗未做**（涉及墙角材料处理）。
+- **纯窗面板序列就是带形窗**（面板即分格、中梃即窗棂）；转角窗见 §10.4。
 - 面板序列存 `AA_PANELS`；六处内部重建全部透传；立面/剖面按整体洞口画（不逐面板拆）。
 - 回归：`tests/test_open_combo.py`。
+
+### 10.4 M-OPEN 转角窗（v1.0.64）
+
+`corner-opening <path> <id> --wall-a W001 --wall-b W002 --len-a 1800 --len-b 1500`：两堵互相垂直、共用端点的外墙，两侧各一樘纯窗，从角点向墙内延伸；共享编号，角点落 4 线转角柱。
+
+- 库入口 `create_corner_window`；CLI `corner-opening`；MCP `aa_corner_opening`。
+- 两侧洞口仍是 `AA_OPENING_<id>-A/-B`（COMBO + WINDOW 面板），写 `AA_CORNER=<id>`；`AA_POS` 从共用角点换算。
+- 柱块 `AA_CORNER_<id>`：4 条 `AA-OPEN` 线，属性 `AA_WALL1/2`、`AA_OPENING_A/B`、`AA_W1/2`、`AA_POST`、`AA_NO`、`AA_FLOOR`。
+- 拒绝：不共角/重合墙、不垂直、超墙长、柱宽越界、含门面板、块已存在、同墙洞口重叠；失败整图字节回滚。
+- 已知边界：门窗表按两侧边窗分别计数；立面/剖面未做整体转角展开；柱未做 L 形包角。规格见 `docs/spec-M-OPEN-转角窗.md`。
+- 回归：`tests/test_open_corner.py`。
 
 ---
 
@@ -391,12 +411,12 @@ Get-ChildItem tests\test_*.py | ForEach-Object { python $_.FullName; if ($LASTEX
 - [ ] 读本文件 §5.5 / §8.4 / §10（本轮机制、工具坑、功能口径）
 - [ ] 跑 `python tests\test_wall_auto_corner.py` 和 `python tools\build_integration.py`
 - [ ] 确认集成样板 `audit.count=0 / errors=0 / warning_count=0 / corner_gap=0`
-- [ ] 跑全量回归 61 个文件（约 12 分钟），确认 0 失败
+- [ ] 跑全量回归 62 个文件（约 12 分钟），确认 0 失败
 - [ ] `git checkout -- samples/` 还原测试改写的样例
 - [ ] 确认 `git status --short -- deliverables` 为空
 - [ ] 确认无 `.bak` / `.restore.tmp`
 - [ ] `python tools\check_version.py` 通过（README == SERVER_INFO）
-- [ ] 下一个功能默认是 M-OPEN 转角窗（先写测试）
+- [ ] 下一个功能默认是 M-OPEN 转角窗的门窗表合并 / 立面整体洞口（先写测试，见 spec §5 已知边界）
 
 ---
 

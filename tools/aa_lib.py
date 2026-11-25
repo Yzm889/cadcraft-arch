@@ -1748,6 +1748,7 @@ def create_opening(
     leaves: int = 0,
     doorpart: float = 0.0,
     panels=None,
+    corner: str = "",
 ) -> dict[str, Any]:
     """门窗：校验 -> LISP 生成符号 -> block -> insert（贴墙）-> 回读校验。
 
@@ -1929,6 +1930,10 @@ def create_opening(
         att_defs.append(("AA_PANELS", "combo panels", panels_str))
         att_vals["AA_PANELS"] = panels_str
         expect["AA_PANELS"] = panels_str
+    if corner:
+        att_defs.append(("AA_CORNER", "corner window id", str(corner)))
+        att_vals["AA_CORNER"] = str(corner)
+        expect["AA_CORNER"] = str(corner)
 
     att_handles = session.define_attributes(att_defs)
     handle = session.insert_block(block, (0.0, 0.0), handles + att_handles, wall["at"],
@@ -1953,7 +1958,216 @@ def create_opening(
         "leaves": leaves,
         "doorpart": doorpart,
         "panels": panel_list,
+        "corner": str(corner),
         "geom_handles": handles,
+    }
+
+
+def _wall_points(info: dict[str, Any]) -> tuple[tuple[float, float], tuple[float, float]]:
+    """墙中心线两端点（起点 at，终点按 AA_LEN/旋转算）。"""
+    r = float(info["rotation_rad"])
+    p1 = (float(info["at"][0]), float(info["at"][1]))
+    p2 = (p1[0] + math.cos(r) * float(info["length"]),
+          p1[1] + math.sin(r) * float(info["length"]))
+    return p1, p2
+
+
+CORNER_MIN = 600.0
+CORNER_POST_MIN = 100.0
+CORNER_POST_MAX = 600.0
+
+
+def create_corner_window(
+    session: Session,
+    corner_id: str,
+    wall_a: str,
+    wall_b: str,
+    len_a: float,
+    len_b: float,
+    height: float = 1500.0,
+    sill: float = 900.0,
+    frame: float = 60.0,
+    post: float = 300.0,
+    no: str = "",
+    panels_a=None,
+    panels_b=None,
+    label_side: str = "in",
+    label_h: float = 2.5,
+    floor: int = 1,
+) -> dict[str, Any]:
+    """转角窗（M-OPEN）：两堵垂直外墙共用一个转角，两侧各一樘联动窗 + 转角柱。
+
+    口径（见 docs/spec-M-OPEN-转角窗.md）：
+      - 只支持两堵墙**共用端点**且互相垂直，窗从共用角点向墙内延伸 len_a/len_b；
+      - 两侧都是纯窗面板（默认整樘一扇窗；可给 W 面板序列做带形转角窗）；
+      - 同一个编号 no（缺省用 corner_id），两侧洞口都写 AA_CORNER=corner_id；
+      - 转角柱 AA_CORNER_<id> 画 4 条 AA-OPEN 线，尺寸 post，落在墙中心线交点；
+      - 任一侧失败整图字节回滚，不留半成品。
+    """
+    corner_id = str(corner_id or "").strip()
+    if not corner_id:
+        raise CadError("转角窗编号不能为空")
+    if wall_a == wall_b:
+        raise CadError("转角窗需要两堵不同的墙（收到同一堵 %s）" % wall_a)
+    post_block = "AA_CORNER_" + corner_id
+    if session.block_exists(post_block):
+        raise CadError("转角窗 %s 已存在，请换编号" % corner_id)
+    for oid in ("%s-A" % corner_id, "%s-B" % corner_id):
+        if session.block_exists("AA_OPENING_" + oid):
+            raise CadError("转角窗 %s 的边窗 %s 已存在，请换编号" % (corner_id, oid))
+
+    a = wall_info(session, wall_a)
+    b = wall_info(session, wall_b)
+    pa1, pa2 = _wall_points(a)
+    pb1, pb2 = _wall_points(b)
+    if float(a["length"]) <= 0 or float(b["length"]) <= 0:
+        raise CadError("转角窗所在墙长度必须为正")
+
+    def close(p, q, tol=1.0):
+        return math.hypot(p[0] - q[0], p[1] - q[1]) <= tol
+
+    # 找共用端点；必须唯一且是两堵墙的端点（T 接中点不算转角）
+    shared = None
+    a_idx = b_idx = -1
+    for i, p in enumerate((pa1, pa2)):
+        for j, q in enumerate((pb1, pb2)):
+            if close(p, q):
+                if shared is not None:
+                    raise CadError("两堵墙共用两个端点（重合墙），不能做转角窗")
+                shared, a_idx, b_idx = p, i, j
+    if shared is None:
+        raise CadError("两堵墙必须共用一个端点才能做转角窗")
+
+    ra = float(a["rotation_rad"])
+    rb = float(b["rotation_rad"])
+    da = (math.cos(ra), math.sin(ra))
+    db = (math.cos(rb), math.sin(rb))
+    dot = da[0] * db[0] + da[1] * db[1]
+    if abs(dot) > 1e-3:
+        angle = math.degrees(math.acos(max(-1.0, min(1.0, dot))))
+        raise CadError("转角窗两堵墙必须互相垂直（当前夹角 %.1f°）" % angle)
+
+    try:
+        len_a, len_b = float(len_a), float(len_b)
+        post, height, sill, frame = float(post), float(height), float(sill), float(frame)
+    except (TypeError, ValueError):
+        raise CadError("转角窗长度/柱宽/高度/窗台/窗框必须是实数")
+    for name, value in (("窗长 A", len_a), ("窗长 B", len_b),
+                        ("窗高", height), ("窗台高", sill), ("窗框厚", frame)):
+        if value <= 0:
+            raise CadError("%s必须为正实数（收到 %s）" % (name, value))
+    if len_a < CORNER_MIN or len_b < CORNER_MIN:
+        raise CadError("转角窗单侧窗长应 >= %.0f（收到 %.1f / %.1f）"
+                       % (CORNER_MIN, len_a, len_b))
+    if not (CORNER_POST_MIN <= post <= CORNER_POST_MAX):
+        raise CadError("转角柱宽应在 %.0f–%.0f 之间（收到 %.1f）"
+                       % (CORNER_POST_MIN, CORNER_POST_MAX, post))
+    if post > min(len_a, len_b) + 1e-6:
+        raise CadError("转角柱宽 %.1f 超过单侧窗长（%.1f / %.1f）"
+                       % (post, len_a, len_b))
+    if len_a > float(a["length"]) + 1e-6 or len_b > float(b["length"]) + 1e-6:
+        raise CadError("转角窗长度超过墙长（墙 A %.1f / 窗 %.1f；墙 B %.1f / 窗 %.1f）"
+                       % (float(a["length"]), len_a, float(b["length"]), len_b))
+
+    # 共用角点在起点 => 洞口从 0 起，中心 len/2；在终点 => 从墙长倒推
+    pos_a = len_a / 2.0 if a_idx == 0 else float(a["length"]) - len_a / 2.0
+    pos_b = len_b / 2.0 if b_idx == 0 else float(b["length"]) - len_b / 2.0
+
+    def window_panels(p, length, side):
+        plist = _parse_panels(p)
+        if plist:
+            if any(k != "WINDOW" for k, _w in plist):
+                raise CadError("转角窗 %s 侧只支持 WINDOW 面板（收到含门面板）" % side)
+            if abs(sum(w for _k, w in plist) - length) > 0.01:
+                raise CadError("转角窗 %s 侧面板合计 %.1f 与窗长 %.1f 不符"
+                               % (side, sum(w for _k, w in plist), length))
+            return plist
+        return [("WINDOW", length)]
+
+    panels_a = window_panels(panels_a, len_a, "A")
+    panels_b = window_panels(panels_b, len_b, "B")
+    no = str(no or corner_id)
+    if label_side not in ("in", "out", "auto", "leader"):
+        raise CadError("label_side 只能是 in / out / auto / leader（收到 %s）" % label_side)
+
+    backup = _drawing_bytes(session)
+    try:
+        res_a = create_opening(
+            session, "%s-A" % corner_id, wall_a, "COMBO", len_a, pos_a,
+            height=height, sill=sill, frame=frame, no=no,
+            label_side=label_side, label_h=label_h, panels=panels_a,
+            corner=corner_id,
+        )
+        res_b = create_opening(
+            session, "%s-B" % corner_id, wall_b, "COMBO", len_b, pos_b,
+            height=height, sill=sill, frame=frame, no=no,
+            label_side=label_side, label_h=label_h, panels=panels_b,
+            corner=corner_id,
+        )
+
+        session.ensure_layers([LAYERS["opening"]])
+        before = session.snapshot()
+        half = post / 2.0
+        pts = [(-half, -half), (half, -half), (half, half), (-half, half)]
+        body = []
+        for i in range(4):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % 4]
+            body.append('(aa:mkline (list %.4f %.4f) (list %.4f %.4f) "%s")'
+                        % (x1, y1, x2, y2, LAYERS["opening"]))
+        session.lisp("(progn %s (princ \"ok\"))" % " ".join(body),
+                     libraries=("aa_core.lisp",))
+        geom_handles = session.new_handles(before)
+        if len(geom_handles) != 4:
+            raise CadError("转角柱应生成 4 条线，实际 %d 条" % len(geom_handles))
+
+        att_defs = [
+            ("AA_TYPE", "component type", "CORNER_WINDOW"),
+            ("AA_ID", "component id", corner_id),
+            ("AA_WALL1", "host wall A", wall_a),
+            ("AA_WALL2", "host wall B", wall_b),
+            ("AA_OPENING_A", "opening A", "%s-A" % corner_id),
+            ("AA_OPENING_B", "opening B", "%s-B" % corner_id),
+            ("AA_W1", "window length A", "%.4f" % len_a),
+            ("AA_W2", "window length B", "%.4f" % len_b),
+            ("AA_POST", "corner post width", "%.4f" % post),
+            ("AA_NO", "opening mark", no),
+            ("AA_FLOOR", "floor", str(int(floor))),
+            ("AA_ATX", "corner x", "%.4f" % float(shared[0])),
+            ("AA_ATY", "corner y", "%.4f" % float(shared[1])),
+        ]
+        att_vals = {t: v for t, _p, v in att_defs}
+        att_handles = session.define_attributes(att_defs)
+        session.make_block(post_block, (0.0, 0.0), geom_handles + att_handles)
+        handle = session.insert(post_block, (float(shared[0]), float(shared[1])),
+                                att_vals, layer=LAYERS["opening"])
+        session.expect_attributes(post_block, {
+            "AA_TYPE": "CORNER_WINDOW", "AA_ID": corner_id,
+            "AA_WALL1": wall_a, "AA_WALL2": wall_b,
+            "AA_OPENING_A": "%s-A" % corner_id, "AA_OPENING_B": "%s-B" % corner_id,
+            "AA_NO": no,
+        })
+    except Exception as exc:
+        try:
+            _restore_drawing_bytes(session, backup)
+        except Exception as restore_error:
+            raise CadError("转角窗失败且回滚失败：%s；原错误：%s"
+                           % (restore_error, exc)) from exc
+        raise
+
+    return {
+        "block": post_block,
+        "handle": handle,
+        "id": corner_id,
+        "kind": "CORNER_WINDOW",
+        "walls": [wall_a, wall_b],
+        "lengths": [len_a, len_b],
+        "post": post,
+        "no": no,
+        "floor": int(floor),
+        "at": (float(shared[0]), float(shared[1])),
+        "openings": [res_a, res_b],
+        "geom_handles": geom_handles,
     }
 
 
@@ -4582,6 +4796,7 @@ def opening_data(session: Session) -> list[dict[str, Any]]:
                 "pos": float(attrs.get("AA_POS", "0") or 0),
                 "frame": float(attrs.get("AA_FRAME", "0") or 0),
                 "no": attrs.get("AA_NO", ""),
+                "corner": attrs.get("AA_CORNER", ""),
                 "labelside": attrs.get("AA_LABELSIDE", "in") or "in",
                 "label_h": float(attrs.get("AA_LABEL_H", "0") or 0),
                 # 图例参数：老图（v1.0.58 之前）没有这几个属性，按单扇/左铰/+Y 兜底
