@@ -3,7 +3,7 @@
 > 交接日期：2026-11-25（按 v1.0.64 状态修订；2026-11-25 增补自动合角句柄补丁与 M-OPEN 转角窗；首版为同日早间的 v1.0.60 交接）
 > 项目：`cadcraft-arch`（MIT）—— 面向 CADCraft 的自研建筑智能绘图插件
 > 当前分支：`main`；远端：`git@github.com:Yzm889/cadcraft-arch.git`
-> 当前状态：v1.0.64 本地已提交；tags `v1.0.62`、`v1.0.63` 已推送，`v1.0.64` 待推送；工作区除本轮改动外已还原测试样例；62 个测试文件；新增转角窗与相邻 combo/mcp 用例已过，全量回归受本机内存限制未跑完（见 §1.4）。
+> 当前状态：v1.0.64 本地已提交；tags `v1.0.62`、`v1.0.63` 已推送，`v1.0.64` 待推送；工作区除低内存工具改动外已还原测试样例；62 个测试文件；新增转角窗与相邻 combo/mcp 用例已过，全量 62/62 已于 2026-11-25 用低内存串行 runner 跑完（见 §1.5）。
 > 适用对象：接手开发的新同事 / 新 AI 代理 / 换 CAD 平台后的迁移负责人
 
 ---
@@ -68,7 +68,17 @@
 - CLI `corner-opening`、MCP `aa_corner_opening` 同参入口；任一侧失败整图字节回滚。
 - 新增 `tests/test_open_corner.py`（正常/七类拒绝/回滚/CLI/MCP）；新增 `docs/spec-M-OPEN-转角窗.md`。
 - 已知边界：门窗表按两侧边窗分别计数、立面/剖面未做整体展开、转角柱未做 L 形包角。详见 spec §5。
-- 回归：`test_open_corner`、`test_open_combo`、`test_mcp` 通过；全量 `tests/run_all.py` 在 `test_dim_locate` 处因本机 `cadcraft-cli` 内存分配失败中断（`3221226505`），不是断言失败；`test_dim_locate` 单独重跑仍在 `create_opening` 处同因中断。待内存恢复后按 2–3 项一组分批补跑 62 个。
+- 回归：`test_open_corner`、`test_open_combo`、`test_mcp` 通过；全量 `tests/run_all.py` 曾在 `test_dim_locate` 处因本机 `cadcraft-cli` 内存分配失败中断（`3221226505`）。该问题已由低内存串行 runner 解决；2026-11-25 用 `.\tools\RunTestsSafe.ps1` 跑完 62/62，0 FAIL。
+
+### 1.5 2026-11-25 增补（低内存回归与页面文件检查）
+
+- 根因不是物理内存不足，而是 Windows 可提交额度（commit）耗尽：`cadcraft-cli` 报 `memory allocation of 23296 bytes failed`，同时桌面 `dwm/explorer` 也拿不到内存，出现黑屏只剩鼠标。
+- 新增 `tests/run_safe.py`：Windows 下逐个测试串行执行；每个用例前读 `ullAvailPageFile`，低于阈值直接停；每个测试进程树用 Job Object 限制内存；用例间冷却。
+- 新增 `tools/RunTestsSafe.ps1`：包装 `run_safe.py`，默认 `MinAvailMB=2048`、`JobMB=2048`、`Cooldown=5`；这是唯一的全量回归入口，不再使用 `tests/run_all.py`。
+- 新增 `tools/CheckPagefile.ps1`：只读报告物理内存、提交额度、页面文件、C 盘空间；只有 `-Apply` 才修改页面文件（需管理员，改完必须重启）。
+- 2026-11-25 实测：页面文件 `C:\pagefile.sys` 当前 20000 MB / 峰值 793 MB；提交额度 35.2 GB（可用 22.5 GB）；C 盘空闲 84.7 GB；页面文件够用，**未执行 `-Apply`**。
+- 两个 `.ps1` 必须以 **UTF-8 with BOM** 保存，否则 Windows PowerShell 5.1 会把中文按 ANSI 解码并出现语法解析错误；已修正本地文件。
+- 全量结果：62 个 RUN 全部有 PASS，`FAIL_COUNT=0`；测试生成的 `samples/test_*` 已用 `git checkout -- samples` 还原，`deliverables/幼儿园教学楼/00–05` 未改。
 
 
 ---

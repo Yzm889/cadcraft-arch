@@ -9,3 +9,4 @@ samples/*.bak
 .venv/
 .aa_snap/
 .panel_cache/
+tests/_safe_run.log
