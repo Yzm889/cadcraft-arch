@@ -5971,6 +5971,11 @@ def create_wall(
         ref = session.reference(block)
         if ref:
             handle = ref.get("handle", handle)
+        # normalize_around 会删掉并重建墙块，旧图元句柄失效；重新解析块定义。
+        fresh = block_geometry(session.path, block)
+        fresh_handles = [g.get("handle") for g in fresh if g.get("handle")]
+        if fresh_handles:
+            handles = fresh_handles
     bound = (bind_walls_to_axis(session, tol=50.0, only_empty=True)
              if bind_axis and axis_grids(session) else None)
     res = {
@@ -6101,7 +6106,7 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                 elif cur_ents is not None:
                     ent = {"type": val, "pts": [], "lt": None, "layer": None, "txt": None, "r": None,
                            "sx": None, "sy": None, "ex": None, "ey": None,
-                           "a1": None, "a2": None, "sol": {}}
+                           "a1": None, "a2": None, "sol": {}, "h": None}
                     cur_ents.append(ent)
             continue
         if code_n == 2:
@@ -6111,6 +6116,9 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                 cur_name = val
             continue
         if section != "BLOCKS" or ent is None:
+            continue
+        if code_n == 5:
+            ent["h"] = val
             continue
         if ent["type"] == "SOLID":
             # SOLID 的四个角点走 10/11/12/13 + 20/21/22/23（不是常规的 10/20 单点）
@@ -6151,20 +6159,23 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
     out = []
     for e in blocks.get(block_name, []):
         if e["type"] == "LINE" and None not in (e["sx"], e["sy"], e["ex"], e["ey"]):
-            out.append({"type": "LINE", "lt": e["lt"], "layer": e["layer"], "pts": [(e["sx"], e["sy"]), (e["ex"], e["ey"])]})
+            out.append({"type": "LINE", "lt": e["lt"], "layer": e["layer"], "handle": e.get("h"),
+                        "pts": [(e["sx"], e["sy"]), (e["ex"], e["ey"])]})
         elif e["type"] == "LWPOLYLINE":
             pts = [(p[0], p[1]) for p in e["pts"] if p[1] is not None]
             if pts:
-                out.append({"type": "LWPOLYLINE", "lt": e["lt"], "layer": e["layer"], "pts": pts})
+                out.append({"type": "LWPOLYLINE", "lt": e["lt"], "layer": e["layer"],
+                            "handle": e.get("h"), "pts": pts})
         elif e["type"] in ("TEXT", "MTEXT") and e["txt"] is not None:
             at = (e["sx"], e["sy"]) if None not in (e["sx"], e["sy"]) else None
             out.append({"type": e["type"], "text": e["txt"], "layer": e["layer"],
-                        "pts": [at] if at else [], "h": e["r"]})
+                        "handle": e.get("h"), "pts": [at] if at else [], "h": e["r"]})
         elif e["type"] == "CIRCLE" and None not in (e["sx"], e["sy"], e["r"]):
-            out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"], "pts": [(e["sx"], e["sy"])]})
+            out.append({"type": "CIRCLE", "r": e["r"], "layer": e["layer"],
+                        "handle": e.get("h"), "pts": [(e["sx"], e["sy"])]})
         elif e["type"] == "ARC" and None not in (e["sx"], e["sy"], e["r"]):
             out.append({"type": "ARC", "r": e["r"], "layer": e["layer"],
-                        "pts": [(e["sx"], e["sy"])],
+                        "handle": e.get("h"), "pts": [(e["sx"], e["sy"])],
                         "cen": (e["sx"], e["sy"]),
                         "a1": e.get("a1") or 0.0, "a2": e.get("a2") or 0.0})
         elif e["type"] == "SOLID":
@@ -6175,7 +6186,8 @@ def block_geometry(path, block_name: str) -> list[dict[str, Any]]:
                 if "x" in p and "y" in p:
                     pts.append((p["x"], p["y"]))
             if pts:
-                out.append({"type": "SOLID", "layer": e["layer"], "pts": pts})
+                out.append({"type": "SOLID", "layer": e["layer"], "handle": e.get("h"),
+                            "pts": pts})
     return out
 
 

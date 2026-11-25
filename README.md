@@ -71,7 +71,7 @@
 实测环境：CADCraft 0.20.1（`cadcraft-cli`），Windows。测试全部通过：
 
 ```bash
-python tests/run_all.py     # 56 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
+python tests/run_all.py     # 61 tests；逐项跑最稳（批量删除被宿主拦截时会有假失败）
 python tests/test_site.py   # 总平面单项验收（库 / CLI / MCP / 拒绝用例）
 python tests/test_roof_detail.py  # 屋面分格/天沟/坡度注字单项验收
 python tests/test_quality_audit.py  # 图面质量门禁（图签压线/幅面利用率/施工说明术语）

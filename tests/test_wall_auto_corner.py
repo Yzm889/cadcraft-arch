@@ -40,7 +40,11 @@ def main() -> int:
     create_wall(s, "W001", (0.0, 0.0), (6000.0, 0.0), thick=240.0, kind="EXTERNAL")
     create_wall(s, "W002", (6000.0, 0.0), (6000.0, 4000.0), thick=240.0, kind="EXTERNAL")
     create_wall(s, "W003", (6000.0, 4000.0), (0.0, 4000.0), thick=240.0, kind="EXTERNAL")
-    create_wall(s, "W004", (0.0, 4000.0), (0.0, 0.0), thick=240.0, kind="EXTERNAL")
+    r4 = create_wall(s, "W004", (0.0, 4000.0), (0.0, 0.0), thick=240.0, kind="EXTERNAL")
+
+    # 合角会重建当前墙块：返回的图元句柄必须指向重建后的块，不能是旧句柄。
+    fresh = [g.get("handle") for g in block_geometry(path, "AA_WALL_W004") if g.get("handle")]
+    assert r4["geom_handles"] and r4["geom_handles"] == fresh, (r4["geom_handles"], fresh)
 
     lengths = {"W001": 6000.0, "W002": 4000.0, "W003": 6000.0, "W004": 4000.0}
     for wid, ln in lengths.items():
