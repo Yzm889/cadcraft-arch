@@ -1,9 +1,9 @@
 # cadcraft-arch 交接文档
 
-> 交接日期：2026-11-24（晚间按 v1.0.63 状态全面修订；首版为同日早间的 v1.0.60 交接）
+> 交接日期：2026-11-24（晚间按 v1.0.63 状态全面修订；2026-11-25 增补自动合角句柄补丁；首版为同日早间的 v1.0.60 交接）
 > 项目：`cadcraft-arch`（MIT）—— 面向 CADCraft 的自研建筑智能绘图插件
 > 当前分支：`main`；远端：`git@github.com:Yzm889/cadcraft-arch.git`
-> 当前状态：`main` 与 `origin/main` 一致（至 `6566560`）；tags `v1.0.62`、`v1.0.63` 已推送；工作区干净；61 个测试全过
+> 当前状态：本地 `f52f3b4`，领先 `origin/main` 1 笔（origin 至 `bfaa3d0`）；tags `v1.0.62`、`v1.0.63` 已推送；工作区干净；61 个测试文件，v1.0.63 基线 61/61
 > 适用对象：接手开发的新同事 / 新 AI 代理 / 换 CAD 平台后的迁移负责人
 
 ---
@@ -28,7 +28,7 @@
 | CADCraft | 0.20.1（`cadcraft-cli`） |
 | Python | 3.11.9，仅标准库（无第三方依赖；Pillow 可选） |
 | tags | `v1.0.62`、`v1.0.63`（已推送；此前仓库无 tag） |
-| 最近提交 | `6566560` feat: M-OPEN 组合门窗/带形窗 |
+| 最近提交 | `f52f3b4` fix: refresh wall geom handles after auto corner；上一笔功能提交 `6566560` feat: M-OPEN 组合门窗/带形窗 |
 | 交付图 | `deliverables/幼儿园教学楼/00–05`（受保护，`git status -- deliverables` 为空） |
 
 ### 1.1 已完成的大块
@@ -48,6 +48,19 @@
 | `a476ef2` | feat: M-DIM 尺寸标注补齐（v1.0.61，见 §10.1） |
 | `8e2377c` | fix: rescale 房间重建改走搜环子段边界（v1.0.62，见 §10.2） |
 | `6566560` | feat: M-OPEN 组合门窗/带形窗（v1.0.63，见 §10.3） |
+
+### 1.3 2026-11-25 增补（自动合角句柄）
+
+| 提交 | 内容 |
+|---|---|
+| `f52f3b4` | fix: refresh wall geom handles after auto corner |
+
+- `create_wall(normalize=True)` 自动合角会重建当前墙块，旧图元句柄失效；现在重建后用 `block_geometry` 重新解析并回填 `geom_handles`。
+- `block_geometry` 的每个图元多返回 `handle` 字段；不改变原有几何字段，兼容旧调用。
+- `tests/test_wall_auto_corner.py` 增加断言：当前墙返回的 `geom_handles` 必须等于重建后块内句柄。
+- README 的测试数从 56 修正为 **61**（实际 `tests/test_*.py` 数量）。
+- 验证：`test_wall_auto_corner`、`test_corner`、`test_axis_auto`、`test_elevator`、`test_wall`、`test_opening`、`test_dim`、`test_audit`、`test_quality_audit`、`test_mcp`、`test_balcony`、`test_ramp`、`test_floor_clone` 均通过；集成样板回读 `audit.count=0 / errors=0 / warning_count=0 / corner_gap=0`。
+- **未在本机重跑 61 文件全量**：2026-11-25 本机提交内存耗尽（`FreeVirtualMemory` 约 41 MB，`cadcraft-cli` 报 `memory allocation failed`），不是代码失败。换机/重启后先按 §8.2 跑全量 61，再 push。
 
 ---
 
